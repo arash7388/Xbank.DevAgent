@@ -32,7 +32,10 @@ public sealed class ReferenceDocumentService(
 
     public async Task<ReferenceCollectionInfo> CreateAsync(
         IFormFileCollection files,
+        string embeddingProvider,
         string embeddingApiKey,
+        string qdrantUrl,
+        string qdrantApiKey,
         CancellationToken cancellationToken)
     {
         if (files.Count is 0 or > MaxFiles)
@@ -40,10 +43,8 @@ public sealed class ReferenceDocumentService(
             throw new ArgumentException($"Attach between 1 and {MaxFiles} supported files.");
         }
 
-        if (string.IsNullOrWhiteSpace(embeddingApiKey))
-        {
-            throw new ArgumentException("An OpenAI API key is required to create embeddings for attached documents.");
-        }
+        EmbeddingConfiguration embedding = CreateEmbeddingConfiguration(embeddingProvider, embeddingApiKey);
+        QdrantConfiguration qdrant = CreateQdrantConfiguration(qdrantUrl, qdrantApiKey);
 
         long totalBytes = 0;
         List<ReferenceChunk> chunks = [];
@@ -70,10 +71,6 @@ public sealed class ReferenceDocumentService(
             throw new ArgumentException("The attached files did not contain indexable text.");
         }
 
-        EmbeddingConfiguration embedding = new(
-            options.Value.EmbeddingEndpoint,
-            options.Value.EmbeddingModel,
-            embeddingApiKey.Trim());
         List<float[]> vectors = [];
         foreach (ReferenceChunk[] batch in chunks.Chunk(32))
         {
@@ -89,19 +86,19 @@ public sealed class ReferenceDocumentService(
         string collectionName = $"maf_refs_{id:N}";
         try
         {
-            await CreateQdrantCollectionAsync(collectionName, vectors[0].Length, cancellationToken);
-            await UpsertAsync(collectionName, chunks, vectors, cancellationToken);
+            await CreateQdrantCollectionAsync(qdrant, collectionName, vectors[0].Length, cancellationToken);
+            await UpsertAsync(qdrant, collectionName, chunks, vectors, cancellationToken);
         }
         catch
         {
-            await DeleteQdrantCollectionAsync(collectionName, CancellationToken.None);
+            await DeleteQdrantCollectionAsync(qdrant, collectionName, CancellationToken.None);
             throw;
         }
 
-        ReferenceCollection collection = new(id, collectionName, embedding, files.Count, chunks.Count);
+        ReferenceCollection collection = new(id, collectionName, embedding, qdrant, files.Count, chunks.Count);
         if (!_collections.TryAdd(id, collection))
         {
-            await DeleteQdrantCollectionAsync(collectionName, CancellationToken.None);
+            await DeleteQdrantCollectionAsync(qdrant, collectionName, CancellationToken.None);
             throw new InvalidOperationException("Unable to allocate the reference-document collection.");
         }
 
@@ -119,7 +116,7 @@ public sealed class ReferenceDocumentService(
     {
         if (_collections.TryRemove(id, out ReferenceCollection? collection))
         {
-            await DeleteQdrantCollectionAsync(collection.QdrantCollectionName, cancellationToken);
+            await DeleteQdrantCollectionAsync(collection.Qdrant, collection.QdrantCollectionName, cancellationToken);
         }
     }
 
@@ -139,7 +136,8 @@ public sealed class ReferenceDocumentService(
             HttpMethod.Post,
             $"collections/{collection.QdrantCollectionName}/points/query",
             new { query = vector, limit = Math.Clamp(maxResults, 1, 8), with_payload = true, with_vector = false },
-            cancellationToken);
+            cancellationToken,
+            collection.Qdrant);
         JsonElement result = response.RootElement.GetProperty("result");
         JsonElement points = result.ValueKind == JsonValueKind.Array
             ? result
@@ -169,12 +167,25 @@ public sealed class ReferenceDocumentService(
         CancellationToken cancellationToken)
     {
         using HttpClient client = httpClientFactory.CreateClient("embeddings");
-        using HttpRequestMessage request = new(HttpMethod.Post, BuildUri(embedding.Endpoint, "embeddings"));
-        request.Headers.Authorization = new("Bearer", embedding.ApiKey);
+        string path = embedding.Provider == EmbeddingProvider.Ollama ? "api/embed" : "embeddings";
+        using HttpRequestMessage request = new(HttpMethod.Post, BuildUri(embedding.Endpoint, path));
+        if (!string.IsNullOrWhiteSpace(embedding.ApiKey))
+        {
+            request.Headers.Authorization = new("Bearer", embedding.ApiKey);
+        }
+
         request.Content = JsonContent(new { model = embedding.Model, input = inputs });
         using HttpResponseMessage response = await client.SendAsync(request, cancellationToken);
         await EnsureSuccessAsync(response, "Embedding request");
         using JsonDocument payload = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
+        if (embedding.Provider == EmbeddingProvider.Ollama)
+        {
+            return payload.RootElement.GetProperty("embeddings")
+                .EnumerateArray()
+                .Select(item => item.EnumerateArray().Select(value => value.GetSingle()).ToArray())
+                .ToList();
+        }
+
         return payload.RootElement.GetProperty("data")
             .EnumerateArray()
             .OrderBy(item => item.GetProperty("index").GetInt32())
@@ -182,16 +193,22 @@ public sealed class ReferenceDocumentService(
             .ToList();
     }
 
-    private async Task CreateQdrantCollectionAsync(string collectionName, int vectorSize, CancellationToken cancellationToken)
+    private async Task CreateQdrantCollectionAsync(
+        QdrantConfiguration qdrant,
+        string collectionName,
+        int vectorSize,
+        CancellationToken cancellationToken)
     {
         using JsonDocument ignored = await QdrantJsonAsync(
             HttpMethod.Put,
             $"collections/{collectionName}",
             new { vectors = new { size = vectorSize, distance = "Cosine" } },
-            cancellationToken);
+            cancellationToken,
+            qdrant);
     }
 
     private async Task UpsertAsync(
+        QdrantConfiguration qdrant,
         string collectionName,
         IReadOnlyList<ReferenceChunk> chunks,
         IReadOnlyList<float[]> vectors,
@@ -213,7 +230,8 @@ public sealed class ReferenceDocumentService(
                 HttpMethod.Put,
                 $"collections/{collectionName}/points?wait=true",
                 body,
-                cancellationToken);
+                cancellationToken,
+                qdrant);
         }
     }
 
@@ -221,16 +239,17 @@ public sealed class ReferenceDocumentService(
         HttpMethod method,
         string path,
         object body,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        QdrantConfiguration qdrant)
     {
         using HttpClient client = httpClientFactory.CreateClient("qdrant");
-        using HttpRequestMessage request = new(method, BuildUri(options.Value.QdrantUrl, path))
+        using HttpRequestMessage request = new(method, BuildUri(qdrant.Url, path))
         {
             Content = JsonContent(body),
         };
-        if (!string.IsNullOrWhiteSpace(options.Value.QdrantApiKey))
+        if (!string.IsNullOrWhiteSpace(qdrant.ApiKey))
         {
-            request.Headers.Add("api-key", options.Value.QdrantApiKey);
+            request.Headers.Add("api-key", qdrant.ApiKey);
         }
 
         using HttpResponseMessage response = await client.SendAsync(request, cancellationToken);
@@ -238,15 +257,18 @@ public sealed class ReferenceDocumentService(
         return await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
     }
 
-    private async Task DeleteQdrantCollectionAsync(string collectionName, CancellationToken cancellationToken)
+    private async Task DeleteQdrantCollectionAsync(
+        QdrantConfiguration qdrant,
+        string collectionName,
+        CancellationToken cancellationToken)
     {
         try
         {
             using HttpClient client = httpClientFactory.CreateClient("qdrant");
-            using HttpRequestMessage request = new(HttpMethod.Delete, BuildUri(options.Value.QdrantUrl, $"collections/{collectionName}"));
-            if (!string.IsNullOrWhiteSpace(options.Value.QdrantApiKey))
+            using HttpRequestMessage request = new(HttpMethod.Delete, BuildUri(qdrant.Url, $"collections/{collectionName}"));
+            if (!string.IsNullOrWhiteSpace(qdrant.ApiKey))
             {
-                request.Headers.Add("api-key", options.Value.QdrantApiKey);
+                request.Headers.Add("api-key", qdrant.ApiKey);
             }
 
             using HttpResponseMessage response = await client.SendAsync(request, cancellationToken);
@@ -368,14 +390,74 @@ public sealed class ReferenceDocumentService(
         throw new InvalidOperationException($"{operation} failed ({(int)response.StatusCode}): {details[..Math.Min(details.Length, 500)]}");
     }
 
-    private sealed record EmbeddingConfiguration(string Endpoint, string Model, string ApiKey);
+    private EmbeddingConfiguration CreateEmbeddingConfiguration(string provider, string apiKey)
+    {
+        return provider.Trim().ToLowerInvariant() switch
+        {
+            "ollama" => new(
+                EmbeddingProvider.Ollama,
+                options.Value.OllamaEndpoint,
+                options.Value.OllamaEmbeddingModel,
+                null),
+            "openai" when !string.IsNullOrWhiteSpace(apiKey) => new(
+                EmbeddingProvider.OpenAi,
+                options.Value.OpenAiEmbeddingEndpoint,
+                options.Value.OpenAiEmbeddingModel,
+                apiKey.Trim()),
+            "openai" => throw new ArgumentException("An OpenAI API key is required when OpenAI embeddings are selected."),
+            _ => throw new ArgumentException("The embedding provider must be either 'ollama' or 'openai'."),
+        };
+    }
+
+    private QdrantConfiguration CreateQdrantConfiguration(string url, string apiKey)
+    {
+        string effectiveUrl = string.IsNullOrWhiteSpace(url) ? options.Value.QdrantUrl : url.Trim();
+        if (!Uri.TryCreate(effectiveUrl, UriKind.Absolute, out Uri? uri) ||
+            uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo) ||
+            !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+        {
+            throw new ArgumentException("Qdrant URL must be an absolute HTTP(S) URL without credentials, query, or fragment.");
+        }
+
+        bool isLoopback = uri.IsLoopback || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
+        bool isQdrantCloud = uri.Host.EndsWith(".cloud.qdrant.io", StringComparison.OrdinalIgnoreCase);
+        if ((!isLoopback && !isQdrantCloud) || (!isLoopback && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new ArgumentException("Qdrant must use HTTPS Qdrant Cloud or a local loopback endpoint.");
+        }
+
+        string effectiveApiKey = string.IsNullOrWhiteSpace(apiKey)
+            ? options.Value.QdrantApiKey ?? string.Empty
+            : apiKey.Trim();
+        if (isQdrantCloud && string.IsNullOrWhiteSpace(effectiveApiKey))
+        {
+            throw new ArgumentException("A Qdrant Cloud database API key is required for a Qdrant Cloud endpoint.");
+        }
+
+        return new(uri.GetLeftPart(UriPartial.Authority), effectiveApiKey);
+    }
+
+    private enum EmbeddingProvider
+    {
+        OpenAi,
+        Ollama,
+    }
+
+    private sealed record EmbeddingConfiguration(
+        EmbeddingProvider Provider,
+        string Endpoint,
+        string Model,
+        string? ApiKey);
 
     private sealed record ReferenceCollection(
         Guid Id,
         string QdrantCollectionName,
         EmbeddingConfiguration Embedding,
+        QdrantConfiguration Qdrant,
         int FileCount,
         int ChunkCount);
+
+    private sealed record QdrantConfiguration(string Url, string ApiKey);
 
     private sealed record ReferenceChunk(Guid Id, string FileName, int Index, string Text);
 

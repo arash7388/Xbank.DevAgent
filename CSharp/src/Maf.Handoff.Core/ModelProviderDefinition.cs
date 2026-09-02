@@ -10,7 +10,9 @@ public sealed record ModelProviderDefinition(
     int MaxOutputTokens,
     bool Thinking,
     string? ReasoningEffort,
-    IReadOnlyList<string>? SupportsReasoningEffort)
+    IReadOnlyList<string>? SupportsReasoningEffort,
+    decimal? InputCostPerMillionTokens = null,
+    decimal? OutputCostPerMillionTokens = null)
 {
     private const int MaximumDeclaredTokens = 2_000_000;
 
@@ -37,6 +39,8 @@ public sealed record ModelProviderDefinition(
 
         ValidateTokenLimit(MaxInputTokens, nameof(MaxInputTokens));
         ValidateTokenLimit(MaxOutputTokens, nameof(MaxOutputTokens));
+        ValidateTokenPrice(InputCostPerMillionTokens, nameof(InputCostPerMillionTokens));
+        ValidateTokenPrice(OutputCostPerMillionTokens, nameof(OutputCostPerMillionTokens));
 
         if (!Thinking && !string.IsNullOrEmpty(reasoningEffort))
         {
@@ -99,6 +103,14 @@ public sealed record ModelProviderDefinition(
         if (value < 1 || value > MaximumDeclaredTokens)
         {
             throw new ConfigurationException($"Provider {name} must be between 1 and {MaximumDeclaredTokens:N0}.");
+        }
+    }
+
+    private static void ValidateTokenPrice(decimal? value, string name)
+    {
+        if (value is < 0 or > 1_000_000)
+        {
+            throw new ConfigurationException($"Provider {name} must be between 0 and 1,000,000 USD per million tokens.");
         }
     }
 }

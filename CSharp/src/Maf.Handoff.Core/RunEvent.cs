@@ -7,7 +7,8 @@ public sealed record RunEvent(
     string? Source = null,
     string? Target = null,
     string? Status = null,
-    string? Category = null)
+    string? Category = null,
+    TokenUsageSummary? Usage = null)
 {
     public DateTimeOffset OccurredAt { get; init; } = DateTimeOffset.UtcNow;
 
@@ -26,6 +27,15 @@ public sealed record RunEvent(
 
     public static RunEvent Decision(string text, string status) =>
         new("decision", Text: text, Status: status, Category: "terminal");
+
+    public static RunEvent TokenUsage(TokenUsageSummary usage) => new(
+        "usage",
+        Text: usage.HasUsage
+            ? $"Token usage: {usage.InputTokens:N0} input, {usage.OutputTokens:N0} output, {usage.TotalTokens:N0} total." +
+              (usage.EstimatedCostUsd is decimal cost ? $" Estimated cost: ${cost:F4}." : " Cost estimate unavailable: enter input and output rates for every model used.")
+            : "The provider did not return token-usage metadata for this run.",
+        Category: "usage",
+        Usage: usage);
 
     public static RunEvent Error(string message) => new("error", Text: message, Status: "failed");
 }

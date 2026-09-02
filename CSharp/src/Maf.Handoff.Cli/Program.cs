@@ -15,7 +15,7 @@ try
 
     await foreach (RunEvent runEvent in runner.RunAsync(task))
     {
-        if (runEvent.Type is "handoff" or "run_finished" or "error")
+        if (runEvent.Type is "handoff" or "usage" or "run_finished" or "error")
         {
             Console.Error.WriteLine(JsonSerializer.Serialize(runEvent));
         }

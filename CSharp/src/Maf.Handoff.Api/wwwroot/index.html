@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20260901-5">
+  <link rel="stylesheet" href="/styles.css?v=20260902-2">
 </head>
 <body>
   <header class="app-header">
@@ -116,6 +116,12 @@
         </fieldset>
 
         <fieldset>
+          <legend>Usage pricing (optional)</legend>
+          <p class="field-guide">Enter the current USD price per million input and output tokens for each agent model. Provider-reported token counts are always shown; dollar estimates need both rates.</p>
+          <div id="usage-pricing" class="usage-pricing-grid"></div>
+        </fieldset>
+
+        <fieldset>
           <legend>Instruction</legend>
           <label for="task">Requested code change</label>
           <textarea id="task" name="task" rows="7" maxlength="20000" required
@@ -136,8 +142,22 @@
               <input id="reference-folder" type="file" multiple webkitdirectory directory>
             </div>
           </div>
-          <label for="embedding-api-key">OpenAI embedding API key</label>
-          <input id="embedding-api-key" name="embeddingApiKey" type="password" autocomplete="off" placeholder="Uses the OpenAI provider key above if left blank">
+          <label for="qdrant-url">Qdrant endpoint</label>
+          <input id="qdrant-url" name="qdrantUrl" type="url" autocomplete="off"
+                 placeholder="https://your-cluster.cloud.qdrant.io">
+          <label for="qdrant-api-key">Qdrant database API key</label>
+          <input id="qdrant-api-key" name="qdrantApiKey" type="password" autocomplete="off"
+                 placeholder="Required for Qdrant Cloud; not stored">
+          <label for="embedding-provider">Embedding provider</label>
+          <select id="embedding-provider" name="embeddingProvider">
+            <option value="ollama" selected>Local Ollama — no API key</option>
+            <option value="openai">OpenAI embeddings</option>
+          </select>
+          <div id="embedding-api-key-field" hidden>
+            <label for="embedding-api-key">OpenAI embedding API key</label>
+            <input id="embedding-api-key" name="embeddingApiKey" type="password" autocomplete="off" placeholder="Uses the OpenAI provider key above if left blank">
+          </div>
+          <p id="embedding-provider-guide" class="field-guide">Uses local Ollama with the configured embedding model. No API key is sent.</p>
           <p id="reference-status" class="field-guide" aria-live="polite">No reference documents attached.</p>
         </fieldset>
 
@@ -161,6 +181,7 @@
         </div>
       </div>
       <div id="run-error" class="run-error" role="alert" hidden></div>
+      <section id="usage-summary" class="usage-summary" aria-live="polite" hidden></section>
       <div id="empty-activity" class="empty-state">
         <strong>Ready for a repository</strong>
         <p>Submit a change request to start cloning and handoff orchestration.</p>
@@ -208,6 +229,6 @@
     </form>
   </dialog>
 
-  <script src="/app.js?v=20260901-13" defer></script>
+  <script src="/app.js?v=20260902-2" defer></script>
 </body>
 </html>

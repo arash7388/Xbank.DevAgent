@@ -39,6 +39,11 @@ app.Use(async (context, next) =>
     {
         await WriteErrorAsync(context, StatusCodes.Status409Conflict, exception.Message);
     }
+    catch (HttpRequestException exception)
+    {
+        await WriteErrorAsync(context, StatusCodes.Status503ServiceUnavailable,
+            $"The configured document service could not be reached: {exception.Message}");
+    }
 });
 
 app.UseDefaultFiles();
@@ -72,7 +77,10 @@ app.MapPost("/api/reference-collections", async (
     IFormCollection form = await request.ReadFormAsync(cancellationToken);
     ReferenceCollectionInfo collection = await documents.CreateAsync(
         form.Files,
+        form["embeddingProvider"].ToString(),
         form["embeddingApiKey"].ToString(),
+        form["qdrantUrl"].ToString(),
+        form["qdrantApiKey"].ToString(),
         cancellationToken);
     return Results.Created($"/api/reference-collections/{collection.Id}", collection);
 });

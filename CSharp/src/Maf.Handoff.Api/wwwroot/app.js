@@ -1,5 +1,6 @@
 const form = document.querySelector('#run-form');
 const agentModels = document.querySelector('#agent-models');
+const usagePricing = document.querySelector('#usage-pricing');
 const providerKeys = Object.fromEntries(
   [...document.querySelectorAll('[data-provider-key]')].map(input => [input.dataset.providerKey, input]));
 const runButton = document.querySelector('#run-button');
@@ -16,6 +17,7 @@ const elapsedTimerValue = elapsedTimer.querySelector('time');
 const sessionLabel = document.querySelector('#session-label');
 const emptyActivity = document.querySelector('#empty-activity');
 const activity = document.querySelector('#activity');
+const usageSummary = document.querySelector('#usage-summary');
 const diff = document.querySelector('#diff code');
 const diffSummary = document.querySelector('#diff-summary');
 const dialog = document.querySelector('#approval-dialog');
@@ -28,7 +30,12 @@ const setupHeading = document.querySelector('.setup-panel > .section-heading');
 const activityHeading = document.querySelector('.activity-panel > .section-heading');
 const referenceFilesInput = document.querySelector('#reference-files');
 const referenceFolderInput = document.querySelector('#reference-folder');
+const qdrantUrlInput = document.querySelector('#qdrant-url');
+const qdrantApiKeyInput = document.querySelector('#qdrant-api-key');
+const embeddingProviderInput = document.querySelector('#embedding-provider');
 const embeddingApiKeyInput = document.querySelector('#embedding-api-key');
+const embeddingApiKeyField = document.querySelector('#embedding-api-key-field');
+const embeddingProviderGuide = document.querySelector('#embedding-provider-guide');
 const referenceStatus = document.querySelector('#reference-status');
 
 let sessionId = null;
@@ -162,6 +169,49 @@ function createAgentModelCard(agent) {
   syncAgentCard(card, agent.model, agent.effort);
 }
 
+function createUsagePricingCard(agent) {
+  const card = document.createElement('section');
+  card.className = 'usage-price-card';
+  card.dataset.usageAgent = agent.id;
+  const title = document.createElement('h3');
+  title.textContent = agent.name;
+  const model = document.createElement('p');
+  model.dataset.field = 'pricing-model';
+  const inputLabel = document.createElement('label');
+  inputLabel.textContent = 'Input USD / 1M tokens';
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = '0';
+  input.step = '0.0001';
+  input.inputMode = 'decimal';
+  input.placeholder = 'Optional';
+  input.dataset.field = 'input-cost';
+  input.setAttribute('aria-label', `${agent.name} input token price in USD per million tokens`);
+  const outputLabel = document.createElement('label');
+  outputLabel.textContent = 'Output USD / 1M tokens';
+  const output = document.createElement('input');
+  output.type = 'number';
+  output.min = '0';
+  output.step = '0.0001';
+  output.inputMode = 'decimal';
+  output.placeholder = 'Optional';
+  output.dataset.field = 'output-cost';
+  output.setAttribute('aria-label', `${agent.name} output token price in USD per million tokens`);
+  card.append(title, model, inputLabel, input, outputLabel, output);
+  usagePricing.append(card);
+  syncUsagePricingCard(agent.id);
+}
+
+function syncUsagePricingCard(agentId) {
+  const modelCard = agentModels.querySelector(`[data-agent="${agentId}"]`);
+  const priceCard = usagePricing.querySelector(`[data-usage-agent="${agentId}"]`);
+  if (!modelCard || !priceCard) return;
+  const provider = providerCatalog[modelCard.querySelector('[data-field="provider"]').value];
+  const model = modelCard.querySelector('[data-field="model"]').value;
+  priceCard.querySelector('[data-field="pricing-model"]').textContent = `${provider?.name || 'Provider'} · ${model || 'No model selected'}`;
+  priceCard.hidden = !isAgentCardEnabled(modelCard);
+}
+
 function syncAgentCard(card, preferredModel = null, preferredEffort = null) {
   const providerSelect = card.querySelector('[data-field="provider"]');
   const modelSelect = card.querySelector('[data-field="model"]');
@@ -192,6 +242,7 @@ function syncAgentCard(card, preferredModel = null, preferredEffort = null) {
   }
   syncRequiredProviderKeys();
   syncAgentCardEnabled(card);
+  syncUsagePricingCard(card.dataset.agent);
 }
 
 function isAgentCardEnabled(card) {
@@ -212,6 +263,7 @@ if (providerCatalog[requestedProvider]) {
   agentCatalog.forEach(agent => { agent.provider = requestedProvider; agent.model = null; agent.effort = null; });
 }
 agentCatalog.forEach(createAgentModelCard);
+agentCatalog.forEach(createUsagePricingCard);
 runButton.disabled = true;
 
 async function loadDefaultPrompts() {
@@ -270,6 +322,18 @@ document.querySelector('#copy-planner-settings').addEventListener('click', () =>
 
 referenceFilesInput.addEventListener('change', renderReferenceStatus);
 referenceFolderInput.addEventListener('change', renderReferenceStatus);
+embeddingProviderInput.addEventListener('change', syncEmbeddingProvider);
+
+function syncEmbeddingProvider() {
+  const usesOpenAi = embeddingProviderInput.value === 'openai';
+  embeddingApiKeyField.hidden = !usesOpenAi;
+  embeddingApiKeyInput.required = false;
+  embeddingProviderGuide.textContent = usesOpenAi
+    ? 'Uses OpenAI embeddings. Enter a key below or reuse the OpenAI provider key above.'
+    : 'Uses local Ollama with the configured embedding model. No API key is sent.';
+}
+
+syncEmbeddingProvider();
 
 function selectedReferenceFiles() {
   const files = [...referenceFilesInput.files, ...referenceFolderInput.files];
@@ -298,11 +362,31 @@ async function uploadReferenceDocuments() {
   const files = selectedReferenceFiles();
   if (!files.length) return null;
 
-  const apiKey = embeddingApiKeyInput.value.trim() || providerKeys.openai.value.trim();
-  if (!apiKey) throw new Error('An OpenAI embedding API key is required when reference documents are attached.');
+  if (!qdrantUrlInput || !qdrantApiKeyInput) {
+    throw new Error('The reference-document form is out of date. Restart the API, then reload this page.');
+  }
+
+  const provider = embeddingProviderInput.value;
+  const qdrantUrl = qdrantUrlInput.value.trim();
+  const qdrantApiKey = qdrantApiKeyInput.value.trim();
+  if (!qdrantUrl) {
+    throw new Error('A Qdrant endpoint is required when reference documents are attached. Paste your Qdrant Cloud cluster URL.');
+  }
+  if (new URL(qdrantUrl).hostname.endsWith('.cloud.qdrant.io') && !qdrantApiKey) {
+    throw new Error('A Qdrant Cloud database API key is required when reference documents are attached.');
+  }
+  const apiKey = provider === 'openai'
+    ? embeddingApiKeyInput.value.trim() || providerKeys.openai.value.trim()
+    : '';
+  if (provider === 'openai' && !apiKey) {
+    throw new Error('An OpenAI embedding API key is required when OpenAI embeddings are selected.');
+  }
 
   renderReferenceStatus(`Indexing ${files.length} reference ${files.length === 1 ? 'file' : 'files'}…`);
   const body = new FormData();
+  body.append('qdrantUrl', qdrantUrl);
+  body.append('qdrantApiKey', qdrantApiKey);
+  body.append('embeddingProvider', provider);
   body.append('embeddingApiKey', apiKey);
   files.forEach(file => body.append('files', file, file.webkitRelativePath || file.name));
   const response = await fetch('/api/reference-collections', { method: 'POST', body });
@@ -371,6 +455,9 @@ function readAgentConfigurations() {
     const model = card.querySelector('[data-field="model"]').value;
     const effort = card.querySelector('[data-field="effort"]');
     const prompt = card.querySelector('[data-field="prompt"]').value.trim();
+    const priceCard = usagePricing.querySelector(`[data-usage-agent="${card.dataset.agent}"]`);
+    const inputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), `${card.dataset.agent} input price`);
+    const outputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), `${card.dataset.agent} output price`);
     const preset = providerCatalog[providerId];
     const apiKey = providerKeys[providerId].value.trim();
     if (!apiKey) throw new Error(`An API key for ${preset.name} is required by the ${card.dataset.agent} agent.`);
@@ -389,9 +476,18 @@ function readAgentConfigurations() {
         thinking: preset.thinking,
         reasoningEffort: effort.disabled ? null : effort.value,
         supportsReasoningEffort: preset.supportsReasoningEffort,
+        inputCostPerMillionTokens,
+        outputCostPerMillionTokens,
       },
     }];
   }));
+}
+
+function readTokenPrice(input, label) {
+  if (!input.value.trim()) return null;
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${label} must be a non-negative number.`);
+  return value;
 }
 
 cancelButton.addEventListener('click', async () => {
@@ -473,6 +569,7 @@ function render(snapshot) {
   sessionLabel.textContent = `${shortRepo(snapshot.repositoryUrl)} · ${snapshot.baseBranch}`;
   setStatus(snapshot.status);
   renderEvents(snapshot.events || []);
+  renderUsage(snapshot.usage);
   renderDiff(snapshot.diff || '');
   if (snapshot.error) showRunError(snapshot.error);
   else clearRunError();
@@ -504,7 +601,7 @@ function render(snapshot) {
 }
 
 function renderEvents(events) {
-  const fingerprint = JSON.stringify(events.map(e => [e.type, e.agent, e.text, e.source, e.target, e.status, e.category, e.occurredAt]));
+  const fingerprint = JSON.stringify(events.map(e => [e.type, e.agent, e.text, e.source, e.target, e.status, e.category, e.usage, e.occurredAt]));
   if (fingerprint === eventFingerprint) return;
   eventFingerprint = fingerprint;
   updateTeamMap(events);
@@ -516,7 +613,7 @@ function renderEvents(events) {
     element.className = `event ${entry.type}`;
     const header = document.createElement('header');
     const name = document.createElement('strong');
-    const labels = { handoff: 'Handoff', message: 'Agent response', tool: 'Tool activity', trace: 'Workflow trace', decision: 'Terminal decision', error: 'Error' };
+    const labels = { handoff: 'Handoff', message: 'Agent response', tool: 'Tool activity', trace: 'Workflow trace', usage: 'Token usage', decision: 'Terminal decision', error: 'Error' };
     name.textContent = entry.agent || labels[entry.type] || entry.type.replaceAll('_', ' ');
     const metadata = document.createElement('span');
     metadata.className = 'event-metadata';
@@ -534,6 +631,29 @@ function renderEvents(events) {
     return element;
   }));
   activity.scrollTop = 0;
+}
+
+function renderUsage(summary) {
+  if (!summary || !summary.hasUsage) {
+    usageSummary.hidden = true;
+    usageSummary.replaceChildren();
+    return;
+  }
+  const heading = document.createElement('header');
+  const title = document.createElement('h3');
+  title.textContent = 'Token usage';
+  const total = document.createElement('strong');
+  total.textContent = `${formatNumber(summary.totalTokens)} total tokens`;
+  heading.append(title, total);
+  const details = document.createElement('p');
+  const cost = summary.estimatedCostUsd == null
+    ? 'Cost estimate unavailable — add input and output USD-per-million rates for every model used.'
+    : `Estimated cost: ${formatUsd(summary.estimatedCostUsd)}.`;
+  const agents = summary.byAgent.map(item =>
+    `${item.agent}: ${formatNumber(item.inputTokens)} in / ${formatNumber(item.outputTokens)} out${item.estimatedCostUsd == null ? '' : ` (${formatUsd(item.estimatedCostUsd)})`}`).join(' · ');
+  details.textContent = `${formatNumber(summary.inputTokens)} input · ${formatNumber(summary.outputTokens)} output. ${cost} ${agents}`;
+  usageSummary.replaceChildren(heading, details);
+  usageSummary.hidden = false;
 }
 
 function updateTeamMap(events) {
@@ -633,6 +753,8 @@ function resetOutput() {
   generatePrButton.hidden = true;
   pullRequestLink.hidden = true;
   updateTeamMap([]);
+  usageSummary.hidden = true;
+  usageSummary.replaceChildren();
   resetElapsedTimer();
   clearRunError();
 }
@@ -727,4 +849,12 @@ function escapeHtml(value) {
 function formatBytes(value) {
   if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat().format(value || 0);
+}
+
+function formatUsd(value) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value);
 }

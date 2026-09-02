@@ -20,6 +20,12 @@ reasoning-effort selector. All agents default to DeepSeek `deepseek-v4-flash` wi
 but can be configured individually. Provider credentials are entered once and reused only by agents
 assigned to that provider. Endpoints and capability metadata remain internal.
 
+At the end of every run, the activity view and session response show provider-reported input/output
+tokens for every participating agent and the run total. To calculate an estimated USD cost, enter the
+current input and output price per million tokens for each agent model in **Usage pricing**. Rates are
+intentionally not hard-coded because provider pricing changes; when a rate or provider usage metadata
+is unavailable, the workbench reports the token count without inventing a dollar amount.
+
 ## Safety model
 
 - Only HTTPS `github.com/{owner}/{repository}` URLs are accepted.
@@ -56,16 +62,26 @@ docker compose -f docker-compose.qdrant.yml up -d
 ```
 
 The UI accepts files or a folder containing text, Markdown, CSV, JSON, XML, YAML, HTML, source files,
-and DOCX. It creates embeddings with OpenAI's `text-embedding-3-small` model (using the separate
-embedding key or the OpenAI provider key already entered for an agent), then exposes a read-only
-`search_attached_documents` tool to every agent. Each attachment set is limited to 50 files, 5 MB per
-file, and 25 MB total. PDF/OCR ingestion is intentionally not included yet, so convert scanned PDFs to
-text or DOCX before attaching them.
+and DOCX. Local Ollama is the default embedding provider and needs no API key. Install it and pull the
+configured model before attaching files:
 
-The default Qdrant endpoint is `http://127.0.0.1:6333`. Configure another endpoint, its API key, or a
-different OpenAI-compatible embeddings endpoint with `Rag__QdrantUrl`, `Rag__QdrantApiKey`,
-`Rag__EmbeddingEndpoint`, and `Rag__EmbeddingModel` environment variables. Do not expose an unsecured
-Qdrant endpoint on a network.
+```powershell
+ollama pull embeddinggemma
+```
+
+OpenAI's `text-embedding-3-small` remains available as an optional embedding provider, using the
+separate embedding key or the OpenAI provider key already entered for an agent. Retrieval is exposed
+to every agent through a read-only `search_attached_documents` tool. Each attachment set is limited to
+50 files, 5 MB per file, and 25 MB total. PDF/OCR ingestion is intentionally not included yet, so
+convert scanned PDFs to text or DOCX before attaching them.
+
+Enter the Qdrant Cloud cluster URL and database API key in the reference-document form; they stay only
+in server memory for the temporary collection. The default Qdrant endpoint is `http://127.0.0.1:6333`
+and the default Ollama endpoint is `http://127.0.0.1:11434`. Configure another endpoint, its API key,
+or different embedding models with
+`Rag__QdrantUrl`, `Rag__QdrantApiKey`, `Rag__OllamaEndpoint`, `Rag__OllamaEmbeddingModel`,
+`Rag__OpenAiEmbeddingEndpoint`, and `Rag__OpenAiEmbeddingModel` environment variables. Do not expose
+an unsecured Qdrant or Ollama endpoint on a network.
 
 The UI requests:
 
@@ -130,9 +146,14 @@ See [the architecture](docs/architecture.md).
   "maxOutputTokens": 160000,
   "thinking": true,
   "reasoningEffort": "high",
-  "supportsReasoningEffort": ["low", "medium", "high", "max"]
+  "supportsReasoningEffort": ["low", "medium", "high", "max"],
+  "inputCostPerMillionTokens": 0.25,
+  "outputCostPerMillionTokens": 1.00
 }
 ```
+
+Pricing fields are optional and deliberately supplied by the caller so the cost estimate can use the
+rates applicable to its account and date.
 
 ## References
 

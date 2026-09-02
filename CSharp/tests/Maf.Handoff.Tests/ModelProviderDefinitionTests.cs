@@ -52,6 +52,19 @@ public sealed class ModelProviderDefinitionTests
         Assert.Contains("supportsReasoningEffort", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void RejectsNegativeTokenPricing()
+    {
+        ModelProviderDefinition provider = DeepSeekProvider("https://api.deepseek.com") with
+        {
+            InputCostPerMillionTokens = -0.01m,
+        };
+
+        ConfigurationException exception = Assert.Throws<ConfigurationException>(provider.NormalizeAndValidate);
+
+        Assert.Contains("InputCostPerMillionTokens", exception.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("http://api.deepseek.com")]
     [InlineData("https://user:secret@api.deepseek.com")]

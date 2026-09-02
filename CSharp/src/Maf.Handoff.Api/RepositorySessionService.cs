@@ -243,6 +243,7 @@ public sealed class RepositorySessionService(
         private string _status = "cloning";
         private string _diff = string.Empty;
         private string? _error;
+        private TokenUsageSummary? _usage;
         private ApprovalResult? _approval;
         private PullRequestResult? _pullRequest;
 
@@ -274,6 +275,11 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
+                if (runEvent.Usage is not null)
+                {
+                    _usage = runEvent.Usage;
+                }
+
                 if (runEvent.Type == "message" && _events.LastOrDefault() is RunEvent previous &&
                     previous.Type == "message" && previous.Agent == runEvent.Agent)
                 {
@@ -464,7 +470,8 @@ public sealed class RepositorySessionService(
                     _diff,
                     _error,
                     _approval,
-                    _pullRequest);
+                    _pullRequest,
+                    _usage);
             }
         }
 
@@ -519,4 +526,5 @@ public sealed record SessionSnapshot(
     string Diff,
     string? Error,
     ApprovalResult? Approval,
-    PullRequestResult? PullRequest);
+    PullRequestResult? PullRequest,
+    TokenUsageSummary? Usage);

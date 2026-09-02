@@ -43,6 +43,8 @@ public sealed class HandoffWorkflowRunner
 
         WorkflowBundle bundle;
         WorkflowSettings workflowSettings;
+        IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent;
+        TokenUsageCollector usageCollector;
         if (_settingsByAgent is not null)
         {
             Dictionary<string, IChatClient> clients = [];
@@ -60,13 +62,24 @@ public sealed class HandoffWorkflowRunner
             }
 
             workflowSettings = _settingsByAgent[AgentNames.Intake];
-            bundle = HandoffWorkflowFactory.Create(clients, _settingsByAgent, _workspace, _referenceDocuments);
+            settingsByAgent = _settingsByAgent;
+            usageCollector = new(settingsByAgent);
+            clients = clients.ToDictionary(
+                pair => pair.Key,
+                pair => (IChatClient)new UsageTrackingChatClient(pair.Value, pair.Key, usageCollector),
+                StringComparer.Ordinal);
+            bundle = HandoffWorkflowFactory.Create(clients, settingsByAgent, _workspace, _referenceDocuments);
         }
         else
         {
             workflowSettings = _settings ?? throw new ConfigurationException("Workflow model settings are required.");
             IChatClient effectiveChatClient = _chatClient ?? ModelChatClientFactory.Create(workflowSettings);
-            bundle = HandoffWorkflowFactory.Create(effectiveChatClient, workflowSettings, _workspace, _referenceDocuments);
+            settingsByAgent = AgentNames.All.ToDictionary(name => name, _ => workflowSettings);
+            usageCollector = new(settingsByAgent);
+            Dictionary<string, IChatClient> clients = AgentNames.All.ToDictionary(
+                name => name,
+                name => (IChatClient)new UsageTrackingChatClient(effectiveChatClient, name, usageCollector));
+            bundle = HandoffWorkflowFactory.Create(clients, settingsByAgent, _workspace, _referenceDocuments);
         }
         string status = "stopped_without_release_approval";
         string? activeAgent = null;
@@ -179,16 +192,19 @@ public sealed class HandoffWorkflowRunner
                     break;
 
                 case WorkflowErrorEvent error:
+                    yield return RunEvent.TokenUsage(usageCollector.Snapshot());
                     yield return RunEvent.Error(error.Exception?.Message ?? "The workflow failed.");
                     yield break;
 
                 case ExecutorFailedEvent failed:
                     string failure = failed.Data?.GetBaseException().Message ?? "No error details were provided.";
+                    yield return RunEvent.TokenUsage(usageCollector.Snapshot());
                     yield return RunEvent.Error($"Executor '{failed.ExecutorId}' failed: {failure}");
                     yield break;
             }
         }
 
+        yield return RunEvent.TokenUsage(usageCollector.Snapshot());
         yield return RunEvent.Decision(
             status == "completed"
                 ? "Release manager approved the proposed change."

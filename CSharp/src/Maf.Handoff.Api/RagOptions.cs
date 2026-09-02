@@ -8,9 +8,13 @@ public sealed class RagOptions
 
     public string? QdrantApiKey { get; init; }
 
-    public string EmbeddingEndpoint { get; init; } = "https://api.openai.com/v1";
+    public string OpenAiEmbeddingEndpoint { get; init; } = "https://api.openai.com/v1";
 
-    public string EmbeddingModel { get; init; } = "text-embedding-3-small";
+    public string OpenAiEmbeddingModel { get; init; } = "text-embedding-3-small";
+
+    public string OllamaEndpoint { get; init; } = "http://127.0.0.1:11434";
+
+    public string OllamaEmbeddingModel { get; init; } = "embeddinggemma";
 
     public int CollectionLifetimeMinutes { get; init; } = 30;
 }
