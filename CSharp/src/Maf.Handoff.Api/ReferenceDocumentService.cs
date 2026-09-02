@@ -95,7 +95,7 @@ public sealed class ReferenceDocumentService(
             throw;
         }
 
-        ReferenceCollection collection = new(id, collectionName, embedding, qdrant, files.Count, chunks.Count);
+        ReferenceCollection collection = new(id, collectionName, embedding, qdrant, chunks, files.Count, chunks.Count);
         if (!_collections.TryAdd(id, collection))
         {
             await DeleteQdrantCollectionAsync(qdrant, collectionName, CancellationToken.None);
@@ -131,6 +131,43 @@ public sealed class ReferenceDocumentService(
             return "Reference-document search requires a query between 1 and 2,000 characters.";
         }
 
+        DocumentSearchRoute route = DocumentSearchRouter.Route(query);
+        return route.Method == DocumentSearchMethod.Exact
+            ? ExactSearch(collection, query, maxResults)
+            : await SemanticSearchAsync(collection, query, maxResults, cancellationToken);
+    }
+
+    private static string ExactSearch(ReferenceCollection collection, string query, int maxResults)
+    {
+        string phrase = query.Trim().Trim('"', '`').Trim();
+        string[] terms = phrase.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        int limit = Math.Clamp(maxResults, 1, 8);
+        ReferenceChunk[] matches = collection.Chunks
+            .Select(chunk => new
+            {
+                Chunk = chunk,
+                FileHits = CountOccurrences(chunk.FileName, phrase),
+                PhraseHits = CountOccurrences(chunk.Text, phrase),
+                TermHits = terms.Sum(term => CountOccurrences(chunk.Text, term)),
+            })
+            .Where(match => match.FileHits > 0 || match.PhraseHits > 0 ||
+                (terms.Length > 0 && terms.All(term => ContainsOrdinalIgnoreCase(match.Chunk.Text, term))))
+            .OrderByDescending(match => match.FileHits * 10_000 + match.PhraseHits * 1_000 + match.TermHits)
+            .ThenBy(match => match.Chunk.FileName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(match => match.Chunk.Index)
+            .Take(limit)
+            .Select(match => match.Chunk)
+            .ToArray();
+
+        return FormatResults(matches, "exact keyword");
+    }
+
+    private async Task<string> SemanticSearchAsync(
+        ReferenceCollection collection,
+        string query,
+        int maxResults,
+        CancellationToken cancellationToken)
+    {
         float[] vector = (await EmbedAsync([query.Trim()], collection.Embedding, cancellationToken))[0];
         using JsonDocument response = await QdrantJsonAsync(
             HttpMethod.Post,
@@ -142,24 +179,60 @@ public sealed class ReferenceDocumentService(
         JsonElement points = result.ValueKind == JsonValueKind.Array
             ? result
             : result.GetProperty("points");
-        StringBuilder output = new();
-        int number = 0;
+        List<ReferenceChunk> matches = [];
         foreach (JsonElement point in points.EnumerateArray())
         {
             JsonElement payload = point.GetProperty("payload");
             string file = payload.GetProperty("file").GetString() ?? "unknown file";
             int chunk = payload.GetProperty("chunk").GetInt32();
             string text = payload.GetProperty("text").GetString() ?? string.Empty;
-            number++;
-            output.Append("[Reference ").Append(number).Append(": ").Append(file)
-                .Append(", chunk ").Append(chunk + 1).AppendLine("]")
-                .AppendLine(text.Trim()).AppendLine();
+            matches.Add(new(Guid.Empty, file, chunk, text));
         }
 
-        return output.Length == 0
-            ? "No relevant attached-document excerpts were found."
-            : output.ToString();
+        return FormatResults(matches, "semantic");
     }
+
+    private static string FormatResults(IReadOnlyList<ReferenceChunk> matches, string method)
+    {
+        if (matches.Count == 0)
+        {
+            return $"No relevant attached-document excerpts were found using {method} search.";
+        }
+
+        StringBuilder output = new($"[Search method: {method}]\n");
+        for (int index = 0; index < matches.Count; index++)
+        {
+            ReferenceChunk match = matches[index];
+            output.Append("[Reference ").Append(index + 1).Append(": ").Append(match.FileName)
+                .Append(", chunk ").Append(match.Index + 1).AppendLine("]")
+                .AppendLine(match.Text.Trim()).AppendLine();
+        }
+
+        return output.ToString();
+    }
+
+    private static int CountOccurrences(string source, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return 0;
+        }
+
+        int count = 0;
+        for (int start = 0; ; start += value.Length)
+        {
+            int found = source.IndexOf(value, start, StringComparison.OrdinalIgnoreCase);
+            if (found < 0)
+            {
+                return count;
+            }
+
+            count++;
+        }
+    }
+
+    private static bool ContainsOrdinalIgnoreCase(string source, string value) =>
+        source.Contains(value, StringComparison.OrdinalIgnoreCase);
 
     private async Task<List<float[]>> EmbedAsync(
         IReadOnlyList<string> inputs,
@@ -454,6 +527,7 @@ public sealed class ReferenceDocumentService(
         string QdrantCollectionName,
         EmbeddingConfiguration Embedding,
         QdrantConfiguration Qdrant,
+        IReadOnlyList<ReferenceChunk> Chunks,
         int FileCount,
         int ChunkCount);
 

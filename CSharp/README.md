@@ -71,8 +71,10 @@ ollama pull embeddinggemma
 
 OpenAI's `text-embedding-3-small` remains available as an optional embedding provider, using the
 separate embedding key or the OpenAI provider key already entered for an agent. Retrieval is exposed
-to every agent through a read-only `search_attached_documents` tool. Each attachment set is limited to
-50 files, 5 MB per file, and 25 MB total. PDF/OCR ingestion is intentionally not included yet, so
+to every agent through a read-only `search_documents` tool. Its built-in router uses exact keyword
+matching for quoted text, identifiers, paths, and code symbols; it uses Qdrant vector search for
+natural-language questions. Each attachment set is limited to 50 files, 5 MB per file, and 25 MB total.
+PDF/OCR ingestion is intentionally not included yet, so
 convert scanned PDFs to text or DOCX before attaching them.
 
 Enter the Qdrant Cloud cluster URL and database API key in the reference-document form; they stay only
