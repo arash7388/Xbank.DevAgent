@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Repository Change Workbench</title>
+  <link rel="stylesheet" href="/styles.css?v=20260901-5">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Repository Change Workbench</h1>
+      <p>Microsoft Agent Framework handoff team</p>
+    </div>
+    <div id="connection" class="connection"><span></span> Local service</div>
+  </header>
+
+  <nav class="steps" aria-label="Workflow stages">
+    <div data-step="setup" class="step active"><b>1</b><span>Connect</span></div>
+    <div data-step="running" class="step"><b>2</b><span>Agent work</span></div>
+    <div data-step="review" class="step"><b>3</b><span>Review diff</span></div>
+    <div data-step="finish" class="step"><b>4</b><span>Commit or push</span></div>
+  </nav>
+
+  <main class="workspace">
+    <section class="setup-panel" data-workflow-panel="setup" aria-labelledby="setup-title">
+      <div class="section-heading">
+        <div>
+          <h2 id="setup-title">Change request</h2>
+          <p>Credentials stay in server memory for this run.</p>
+        </div>
+      </div>
+
+      <section class="team-map" aria-labelledby="team-map-title">
+        <div class="team-map-heading">
+          <div>
+            <h3 id="team-map-title">Agent handoff map</h3>
+            <p>The normal delivery path runs left to right; dotted paths return work for remediation.</p>
+          </div>
+          <div class="team-map-legend" aria-label="Diagram legend">
+            <span class="normal">Normal handoff</span>
+            <span class="remediation">Remediation loop</span>
+          </div>
+        </div>
+        <div class="team-map-canvas">
+          <svg id="team-map" viewBox="0 0 1120 330" role="img" aria-labelledby="team-map-title team-map-description">
+            <desc id="team-map-description">Intake hands work to Planner, then Developer, Reviewer, Security, and Release manager. Review, security, and release may return work to the Planner or Developer to resolve issues.</desc>
+            <defs>
+              <marker id="handoff-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker>
+            </defs>
+            <g class="handoff-edge normal" data-edge="intake-planner"><path d="M 205 75 H 270" /></g>
+            <g class="handoff-edge normal" data-edge="planner-developer"><path d="M 420 75 H 485" /></g>
+            <g class="handoff-edge normal" data-edge="developer-reviewer"><path d="M 560 110 V 195" /></g>
+            <g class="handoff-edge normal" data-edge="reviewer-security"><path d="M 635 230 H 700" /></g>
+            <g class="handoff-edge normal" data-edge="security-release_manager"><path d="M 850 230 H 915" /></g>
+            <g class="handoff-edge remediation" data-edge="reviewer-developer"><path d="M 535 195 C 425 170, 425 135, 535 110" /></g>
+            <g class="handoff-edge remediation" data-edge="security-developer"><path d="M 700 255 C 670 318, 490 318, 540 110" /></g>
+            <g class="handoff-edge remediation" data-edge="release_manager-planner"><path d="M 990 265 C 900 325, 345 325, 345 110" /></g>
+            <g class="handoff-edge remediation" data-edge="release_manager-developer"><path d="M 930 195 C 850 135, 680 135, 590 110" /></g>
+            <g class="map-node intake" data-agent="intake"><rect x="55" y="40" width="150" height="70" rx="14" /><text x="130" y="70">Intake</text><text class="node-role" x="130" y="91">Route request</text></g>
+            <g class="map-node planner" data-agent="planner"><rect x="270" y="40" width="150" height="70" rx="14" /><text x="345" y="70">Planner</text><text class="node-role" x="345" y="91">Plan &amp; criteria</text></g>
+            <g class="map-node developer" data-agent="developer"><rect x="485" y="40" width="150" height="70" rx="14" /><text x="560" y="70">Developer</text><text class="node-role" x="560" y="91">Build &amp; verify</text></g>
+            <g class="map-node reviewer" data-agent="reviewer"><rect x="485" y="195" width="150" height="70" rx="14" /><text x="560" y="225">Reviewer</text><text class="node-role" x="560" y="246">Quality gate</text></g>
+            <g class="map-node security" data-agent="security"><rect x="700" y="195" width="150" height="70" rx="14" /><text x="775" y="225">Security</text><text class="node-role" x="775" y="246">Security gate</text></g>
+            <g class="map-node release-manager" data-agent="release_manager"><rect x="915" y="195" width="150" height="70" rx="14" /><text x="990" y="225">Release manager</text><text class="node-role" x="990" y="246">Evidence gate</text></g>
+          </svg>
+        </div>
+      </section>
+
+      <form id="run-form">
+        <fieldset>
+          <legend>Repository</legend>
+          <label for="repository">GitHub repository URL</label>
+          <input id="repository" name="repository" type="url" required
+                 value="https://github.com/arash7388/JiraCommenter.git"
+                 placeholder="https://github.com/owner/repository">
+          <div class="two-columns">
+            <div>
+              <label for="branch">Base branch</label>
+              <input id="branch" name="branch" value="master" required>
+            </div>
+            <div>
+              <label for="github-token">GitHub token</label>
+              <input id="github-token" name="githubToken" type="password"
+                     autocomplete="off" placeholder="Required for private repos or push">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <div class="legend-row">
+            <legend>Agent models</legend>
+            <button id="copy-planner-settings" class="text-button" type="button">Apply planner model to all</button>
+          </div>
+          <p class="field-guide">Enable only the planning, review, and security stages you need. Intake, Developer, and the final Release Manager remain required so each run has a valid start, implementation stage, and approval gate.</p>
+          <div id="agent-models" class="agent-model-grid"></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Provider credentials</legend>
+          <p class="field-guide">Only keys for providers selected above are required. Entering one provider key switches all agents to that provider; you can then adjust individual cards. Keys remain in server memory for this run.</p>
+          <div class="credential-grid">
+            <div>
+              <label for="openai-key">OpenAI API key</label>
+              <input id="openai-key" data-provider-key="openai" type="password" autocomplete="off" placeholder="OpenAI API key">
+            </div>
+            <div>
+              <label for="deepseek-key">DeepSeek API key</label>
+              <input id="deepseek-key" data-provider-key="deepseek" type="password" autocomplete="off" placeholder="DeepSeek API key">
+            </div>
+            <div>
+              <label for="claude-key">Claude API key</label>
+              <input id="claude-key" data-provider-key="claude" type="password" autocomplete="off" placeholder="Anthropic API key">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Instruction</legend>
+          <label for="task">Requested code change</label>
+          <textarea id="task" name="task" rows="7" maxlength="20000" required
+                    placeholder="Example: Add pagination to the orders endpoint and include tests for empty and final pages.">change the bitbuecket projectkey to :"abc"</textarea>
+          <p class="field-guide">Include expected behavior, constraints, and tests. The agent edits only an isolated clone.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Reference documents (optional)</legend>
+          <p class="field-guide">Attach supporting material for this run. Files are embedded into a temporary Qdrant collection, available to agents through search, and removed after the run. Supported: text, Markdown, CSV, JSON, XML, YAML, HTML, source files, and DOCX.</p>
+          <div class="two-columns">
+            <div>
+              <label for="reference-files">Files</label>
+              <input id="reference-files" type="file" multiple accept=".txt,.md,.csv,.json,.jsonc,.xml,.yml,.yaml,.toml,.html,.htm,.docx,.cs,.js,.ts,.tsx,.jsx,.py,.java,.sql,.ps1,.sh">
+            </div>
+            <div>
+              <label for="reference-folder">Folder</label>
+              <input id="reference-folder" type="file" multiple webkitdirectory directory>
+            </div>
+          </div>
+          <label for="embedding-api-key">OpenAI embedding API key</label>
+          <input id="embedding-api-key" name="embeddingApiKey" type="password" autocomplete="off" placeholder="Uses the OpenAI provider key above if left blank">
+          <p id="reference-status" class="field-guide" aria-live="polite">No reference documents attached.</p>
+        </fieldset>
+
+        <div id="form-error" class="form-error" role="alert" hidden></div>
+        <div class="form-actions">
+          <button id="run-button" class="primary" type="submit">Start agent run</button>
+          <button id="cancel-button" class="secondary" type="button" hidden>Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="activity-panel" data-workflow-panel="running" aria-labelledby="activity-title" hidden>
+      <div class="section-heading">
+        <div>
+          <h2 id="activity-title">Agent activity</h2>
+          <p id="session-label">No active session</p>
+        </div>
+        <div class="run-meta">
+          <span id="elapsed-timer" class="elapsed-timer" hidden aria-live="off"><span aria-hidden="true"></span><b>Elapsed</b> <time>00:00</time></span>
+          <span id="status-badge" class="status idle">Idle</span>
+        </div>
+      </div>
+      <div id="run-error" class="run-error" role="alert" hidden></div>
+      <div id="empty-activity" class="empty-state">
+        <strong>Ready for a repository</strong>
+        <p>Submit a change request to start cloning and handoff orchestration.</p>
+      </div>
+      <div id="activity" class="activity" aria-live="polite" aria-label="Agent activity log"></div>
+    </section>
+
+    <section class="diff-panel" data-workflow-panel="review finish" aria-labelledby="diff-title" hidden>
+      <div class="section-heading diff-heading">
+        <div>
+          <h2 id="diff-title">Proposed diff</h2>
+          <p id="diff-summary">Waiting for agent changes</p>
+        </div>
+        <div class="review-actions">
+          <a id="pull-request-link" class="button-link" target="_blank" rel="noopener noreferrer" hidden>View PR</a>
+          <button id="generate-pr-button" class="secondary" type="button" hidden>Generate PR</button>
+          <button id="reject-button" class="danger" type="button" hidden>Reject</button>
+          <button id="approve-button" class="primary" type="button" hidden>Approve</button>
+        </div>
+      </div>
+      <pre id="diff" class="diff"><code>No diff available.</code></pre>
+    </section>
+  </main>
+
+  <dialog id="approval-dialog">
+    <form id="approval-form" method="dialog">
+      <div class="dialog-header">
+        <h2>Approve repository change</h2>
+        <button id="close-dialog" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <p>The approved patch will be committed to a new branch. The base branch is never updated directly.</p>
+      <label for="target-branch">New branch</label>
+      <input id="target-branch" required>
+      <label for="commit-message">Commit message</label>
+      <input id="commit-message" value="Apply agent-proposed change" maxlength="200" required>
+      <label class="check-row" for="push-branch">
+        <input id="push-branch" type="checkbox">
+        <span>Push the new branch to GitHub</span>
+      </label>
+      <p class="field-guide">Push requires a GitHub token with repository contents write permission.</p>
+      <div class="dialog-actions">
+        <button id="dialog-cancel" class="secondary" type="button">Cancel</button>
+        <button class="primary" type="submit">Commit approved diff</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js?v=20260901-13" defer></script>
+</body>
+</html>

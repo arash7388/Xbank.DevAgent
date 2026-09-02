@@ -1,0 +1,395 @@
+using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
+using DocumentFormat.OpenXml.Packaging;
+using Maf.Handoff.Core;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
+
+namespace Maf.Handoff.Api;
+
+/// <summary>
+/// Indexes one set of user-supplied references in a temporary Qdrant collection. Source files are
+/// processed in memory only; the collection is deleted after use or after its short safety lifetime.
+/// </summary>
+public sealed class ReferenceDocumentService(
+    IHttpClientFactory httpClientFactory,
+    IOptions<RagOptions> options)
+{
+    private const int MaxFiles = 50;
+    private const long MaxFileBytes = 5 * 1024 * 1024;
+    private const long MaxTotalBytes = 25 * 1024 * 1024;
+    private const int MaxDocumentCharacters = 400_000;
+    private const int ChunkCharacters = 2_000;
+    private const int ChunkOverlapCharacters = 300;
+    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".txt", ".md", ".csv", ".json", ".jsonc", ".xml", ".yml", ".yaml", ".toml",
+        ".html", ".htm", ".docx", ".cs", ".js", ".ts", ".tsx", ".jsx", ".py", ".java",
+        ".sql", ".ps1", ".sh",
+    };
+    private readonly ConcurrentDictionary<Guid, ReferenceCollection> _collections = new();
+
+    public async Task<ReferenceCollectionInfo> CreateAsync(
+        IFormFileCollection files,
+        string embeddingApiKey,
+        CancellationToken cancellationToken)
+    {
+        if (files.Count is 0 or > MaxFiles)
+        {
+            throw new ArgumentException($"Attach between 1 and {MaxFiles} supported files.");
+        }
+
+        if (string.IsNullOrWhiteSpace(embeddingApiKey))
+        {
+            throw new ArgumentException("An OpenAI API key is required to create embeddings for attached documents.");
+        }
+
+        long totalBytes = 0;
+        List<ReferenceChunk> chunks = [];
+        foreach (IFormFile file in files)
+        {
+            ValidateFile(file);
+            totalBytes += file.Length;
+            if (totalBytes > MaxTotalBytes)
+            {
+                throw new ArgumentException($"Attached files exceed the {MaxTotalBytes / 1024 / 1024} MB total limit.");
+            }
+
+            string path = NormalizeRelativePath(file.FileName);
+            string text = await ExtractTextAsync(file, cancellationToken);
+            int chunkIndex = 0;
+            foreach (string chunk in Chunk(text))
+            {
+                chunks.Add(new(Guid.NewGuid(), path, chunkIndex++, chunk));
+            }
+        }
+
+        if (chunks.Count == 0)
+        {
+            throw new ArgumentException("The attached files did not contain indexable text.");
+        }
+
+        EmbeddingConfiguration embedding = new(
+            options.Value.EmbeddingEndpoint,
+            options.Value.EmbeddingModel,
+            embeddingApiKey.Trim());
+        List<float[]> vectors = [];
+        foreach (ReferenceChunk[] batch in chunks.Chunk(32))
+        {
+            vectors.AddRange(await EmbedAsync(batch.Select(chunk => chunk.Text).ToArray(), embedding, cancellationToken));
+        }
+
+        if (vectors.Count != chunks.Count || vectors.Count == 0)
+        {
+            throw new InvalidOperationException("The embedding service returned an incomplete embedding response.");
+        }
+
+        Guid id = Guid.NewGuid();
+        string collectionName = $"maf_refs_{id:N}";
+        try
+        {
+            await CreateQdrantCollectionAsync(collectionName, vectors[0].Length, cancellationToken);
+            await UpsertAsync(collectionName, chunks, vectors, cancellationToken);
+        }
+        catch
+        {
+            await DeleteQdrantCollectionAsync(collectionName, CancellationToken.None);
+            throw;
+        }
+
+        ReferenceCollection collection = new(id, collectionName, embedding, files.Count, chunks.Count);
+        if (!_collections.TryAdd(id, collection))
+        {
+            await DeleteQdrantCollectionAsync(collectionName, CancellationToken.None);
+            throw new InvalidOperationException("Unable to allocate the reference-document collection.");
+        }
+
+        _ = DeleteAfterLifetimeAsync(id, TimeSpan.FromMinutes(Math.Clamp(options.Value.CollectionLifetimeMinutes, 5, 120)));
+        return new(id, files.Count, chunks.Count, files.Select(file => NormalizeRelativePath(file.FileName)).ToArray());
+    }
+
+    public bool Exists(Guid id) => _collections.ContainsKey(id);
+
+    public IReferenceDocumentSearch GetSearch(Guid id) => _collections.TryGetValue(id, out ReferenceCollection? collection)
+        ? new QdrantReferenceDocumentSearch(this, collection)
+        : throw new ArgumentException("The attached document collection was not found or has expired.");
+
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        if (_collections.TryRemove(id, out ReferenceCollection? collection))
+        {
+            await DeleteQdrantCollectionAsync(collection.QdrantCollectionName, cancellationToken);
+        }
+    }
+
+    private async Task<string> SearchAsync(
+        ReferenceCollection collection,
+        string query,
+        int maxResults,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(query) || query.Length > 2_000)
+        {
+            return "Reference-document search requires a query between 1 and 2,000 characters.";
+        }
+
+        float[] vector = (await EmbedAsync([query.Trim()], collection.Embedding, cancellationToken))[0];
+        using JsonDocument response = await QdrantJsonAsync(
+            HttpMethod.Post,
+            $"collections/{collection.QdrantCollectionName}/points/query",
+            new { query = vector, limit = Math.Clamp(maxResults, 1, 8), with_payload = true, with_vector = false },
+            cancellationToken);
+        JsonElement result = response.RootElement.GetProperty("result");
+        JsonElement points = result.ValueKind == JsonValueKind.Array
+            ? result
+            : result.GetProperty("points");
+        StringBuilder output = new();
+        int number = 0;
+        foreach (JsonElement point in points.EnumerateArray())
+        {
+            JsonElement payload = point.GetProperty("payload");
+            string file = payload.GetProperty("file").GetString() ?? "unknown file";
+            int chunk = payload.GetProperty("chunk").GetInt32();
+            string text = payload.GetProperty("text").GetString() ?? string.Empty;
+            number++;
+            output.Append("[Reference ").Append(number).Append(": ").Append(file)
+                .Append(", chunk ").Append(chunk + 1).AppendLine("]")
+                .AppendLine(text.Trim()).AppendLine();
+        }
+
+        return output.Length == 0
+            ? "No relevant attached-document excerpts were found."
+            : output.ToString();
+    }
+
+    private async Task<List<float[]>> EmbedAsync(
+        IReadOnlyList<string> inputs,
+        EmbeddingConfiguration embedding,
+        CancellationToken cancellationToken)
+    {
+        using HttpClient client = httpClientFactory.CreateClient("embeddings");
+        using HttpRequestMessage request = new(HttpMethod.Post, BuildUri(embedding.Endpoint, "embeddings"));
+        request.Headers.Authorization = new("Bearer", embedding.ApiKey);
+        request.Content = JsonContent(new { model = embedding.Model, input = inputs });
+        using HttpResponseMessage response = await client.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "Embedding request");
+        using JsonDocument payload = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
+        return payload.RootElement.GetProperty("data")
+            .EnumerateArray()
+            .OrderBy(item => item.GetProperty("index").GetInt32())
+            .Select(item => item.GetProperty("embedding").EnumerateArray().Select(value => value.GetSingle()).ToArray())
+            .ToList();
+    }
+
+    private async Task CreateQdrantCollectionAsync(string collectionName, int vectorSize, CancellationToken cancellationToken)
+    {
+        using JsonDocument ignored = await QdrantJsonAsync(
+            HttpMethod.Put,
+            $"collections/{collectionName}",
+            new { vectors = new { size = vectorSize, distance = "Cosine" } },
+            cancellationToken);
+    }
+
+    private async Task UpsertAsync(
+        string collectionName,
+        IReadOnlyList<ReferenceChunk> chunks,
+        IReadOnlyList<float[]> vectors,
+        CancellationToken cancellationToken)
+    {
+        IEnumerable<(ReferenceChunk Chunk, float[] Vector)> points = chunks.Zip(vectors);
+        foreach ((ReferenceChunk chunk, float[] vector)[] batch in points.Chunk(64))
+        {
+            object body = new
+            {
+                points = batch.Select(item => new
+                {
+                    id = item.chunk.Id,
+                    vector = item.vector,
+                    payload = new { file = item.chunk.FileName, chunk = item.chunk.Index, text = item.chunk.Text },
+                }),
+            };
+            using JsonDocument ignored = await QdrantJsonAsync(
+                HttpMethod.Put,
+                $"collections/{collectionName}/points?wait=true",
+                body,
+                cancellationToken);
+        }
+    }
+
+    private async Task<JsonDocument> QdrantJsonAsync(
+        HttpMethod method,
+        string path,
+        object body,
+        CancellationToken cancellationToken)
+    {
+        using HttpClient client = httpClientFactory.CreateClient("qdrant");
+        using HttpRequestMessage request = new(method, BuildUri(options.Value.QdrantUrl, path))
+        {
+            Content = JsonContent(body),
+        };
+        if (!string.IsNullOrWhiteSpace(options.Value.QdrantApiKey))
+        {
+            request.Headers.Add("api-key", options.Value.QdrantApiKey);
+        }
+
+        using HttpResponseMessage response = await client.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "Qdrant request");
+        return await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+    }
+
+    private async Task DeleteQdrantCollectionAsync(string collectionName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using HttpClient client = httpClientFactory.CreateClient("qdrant");
+            using HttpRequestMessage request = new(HttpMethod.Delete, BuildUri(options.Value.QdrantUrl, $"collections/{collectionName}"));
+            if (!string.IsNullOrWhiteSpace(options.Value.QdrantApiKey))
+            {
+                request.Headers.Add("api-key", options.Value.QdrantApiKey);
+            }
+
+            using HttpResponseMessage response = await client.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
+            {
+                await EnsureSuccessAsync(response, "Qdrant cleanup request");
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // The short-lived collection may be removed by the scheduled cleanup later.
+        }
+    }
+
+    private async Task DeleteAfterLifetimeAsync(Guid id, TimeSpan lifetime)
+    {
+        await Task.Delay(lifetime);
+        await DeleteAsync(id);
+    }
+
+    private static async Task<string> ExtractTextAsync(IFormFile file, CancellationToken cancellationToken)
+    {
+        string extension = Path.GetExtension(file.FileName);
+        if (extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+        {
+            await using MemoryStream stream = new();
+            await file.CopyToAsync(stream, cancellationToken);
+            stream.Position = 0;
+            using WordprocessingDocument document = WordprocessingDocument.Open(stream, false);
+            string text = document.MainDocumentPart?.Document?.Body?.InnerText ?? string.Empty;
+            return LimitText(text);
+        }
+
+        await using Stream input = file.OpenReadStream();
+        using StreamReader reader = new(input, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
+        return LimitText(await reader.ReadToEndAsync(cancellationToken));
+    }
+
+    private static IEnumerable<string> Chunk(string text)
+    {
+        string normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+        for (int start = 0; start < normalized.Length;)
+        {
+            int length = Math.Min(ChunkCharacters, normalized.Length - start);
+            int end = start + length;
+            if (end < normalized.Length)
+            {
+                int breakAt = normalized.LastIndexOf('\n', end - 1, Math.Min(length, 500));
+                if (breakAt > start + 250)
+                {
+                    end = breakAt;
+                }
+            }
+
+            string chunk = normalized[start..end].Trim();
+            if (!string.IsNullOrWhiteSpace(chunk))
+            {
+                yield return chunk;
+            }
+
+            if (end >= normalized.Length)
+            {
+                yield break;
+            }
+
+            start = Math.Max(end - ChunkOverlapCharacters, start + 1);
+        }
+    }
+
+    private static void ValidateFile(IFormFile file)
+    {
+        if (file.Length is <= 0 or > MaxFileBytes)
+        {
+            throw new ArgumentException($"'{file.FileName}' must contain text and be no larger than {MaxFileBytes / 1024 / 1024} MB.");
+        }
+
+        if (!SupportedExtensions.Contains(Path.GetExtension(file.FileName)))
+        {
+            throw new ArgumentException($"'{file.FileName}' is not a supported reference-document format.");
+        }
+
+        _ = NormalizeRelativePath(file.FileName);
+    }
+
+    private static string NormalizeRelativePath(string path)
+    {
+        string normalized = path.Replace('\\', '/').Trim('/');
+        if (string.IsNullOrWhiteSpace(normalized) || normalized.Length > 240 || Path.IsPathRooted(path) ||
+            normalized.Split('/').Any(segment => segment is "" or "." or ".."))
+        {
+            throw new ArgumentException("Attached document names must be safe relative paths.");
+        }
+
+        return normalized;
+    }
+
+    private static string LimitText(string text) => text.Length <= MaxDocumentCharacters
+        ? text
+        : text[..MaxDocumentCharacters];
+
+    private static Uri BuildUri(string baseUrl, string path) => new(
+        $"{baseUrl.TrimEnd('/')}/{path.TrimStart('/')}", UriKind.Absolute);
+
+    private static StringContent JsonContent(object value) => new(
+        JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");
+
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response, string operation)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        string details = await response.Content.ReadAsStringAsync();
+        throw new InvalidOperationException($"{operation} failed ({(int)response.StatusCode}): {details[..Math.Min(details.Length, 500)]}");
+    }
+
+    private sealed record EmbeddingConfiguration(string Endpoint, string Model, string ApiKey);
+
+    private sealed record ReferenceCollection(
+        Guid Id,
+        string QdrantCollectionName,
+        EmbeddingConfiguration Embedding,
+        int FileCount,
+        int ChunkCount);
+
+    private sealed record ReferenceChunk(Guid Id, string FileName, int Index, string Text);
+
+    private sealed class QdrantReferenceDocumentSearch(
+        ReferenceDocumentService owner,
+        ReferenceCollection collection) : IReferenceDocumentSearch
+    {
+        public Task<string> SearchAsync(string query, int maxResults, CancellationToken cancellationToken = default) =>
+            owner.SearchAsync(collection, query, maxResults, cancellationToken);
+    }
+}
+
+public sealed record ReferenceCollectionInfo(
+    Guid Id,
+    int FileCount,
+    int ChunkCount,
+    IReadOnlyList<string> Files);

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "maf-handoff-workflow"
+version = "0.1.0"
+description = "A production-oriented multi-agent handoff workflow built with Microsoft Agent Framework."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "agent-framework-foundry>=1.11.0,<2",
+  "agent-framework-orchestrations>=1.1.1,<2",
+  "azure-identity>=1.25.0,<2",
+  "fastapi>=0.116.0,<1",
+  "python-dotenv>=1.1.0,<2",
+  "uvicorn[standard]>=0.35.0,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28.0,<1",
+  "pytest>=8.4.0,<10",
+  "pytest-asyncio>=1.1.0,<2",
+  "ruff>=0.12.0,<1",
+]
+
+[project.scripts]
+maf-handoff = "maf_handoff.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/maf_handoff"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
