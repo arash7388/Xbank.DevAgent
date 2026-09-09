@@ -37,6 +37,7 @@ public static class AgentTeamFactory
 
         return new(
             CreateAgent(Get(clients, AgentNames.Intake), Get(settingsByAgent, AgentNames.Intake), AgentNames.Intake, "Intake, constraints, and routing.", AgentPrompts.Intake, readTools),
+            CreateOptionalAgent(clients, settingsByAgent, AgentNames.Jira, "Read-only Jira issue and project context retrieval.", AgentPrompts.Jira, tools: null),
             CreateOptionalAgent(clients, settingsByAgent, AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, readTools),
             CreateAgent(developerClient, Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, developerTools),
             CreateOptionalAgent(clients, settingsByAgent, AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, readTools),

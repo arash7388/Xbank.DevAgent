@@ -8,7 +8,7 @@ flowchart TB
     GIT --> CLONE[Isolated temporary clone]
 
     SS --> RUN[Handoff workflow runner]
-    RUN --> PROFILES[Six agent model profiles]
+    RUN --> PROFILES[Seven agent model profiles]
     PROFILES --> PROVIDER[Provider validation and URL normalization]
     PROVIDER --> CLIENT[One IChatClient per agent]
     CLIENT --> OPENAI[OpenAI / DeepSeek chat completions]
@@ -16,7 +16,8 @@ flowchart TB
     RUN --> FLOW[Microsoft Agent Framework HandoffBuilder]
 
     subgraph Agents
-      O[Intake] --> P[Planner]
+      O[Intake] --> J[Jira]
+      J --> P[Planner]
       P --> D[Developer]
       D --> R[Reviewer]
       R -->|changes| D
@@ -46,11 +47,12 @@ flowchart TB
 
 ## Lifecycle
 
-1. The API validates all six agent provider/model/reasoning profiles and creates an opaque session
+1. The API validates the configured agent provider/model/reasoning profiles and creates an opaque session
    identifier.
 2. Git validates the repository and branch and clones into a random directory under the configured
    temporary workspace.
-3. The planner, developer, reviewer, security agent, and release manager use scoped repository tools.
+3. The Jira agent retrieves read-only delivery context, while the planner, developer, reviewer, security agent,
+   and release manager use their scoped repository tools.
 4. Agent events and the current state are exposed through session polling without returning secrets.
 5. The UI renders the exact diff and pauses at `awaiting_approval`.
 6. Reject leaves the clone uncommitted. Approve creates a new branch and commit; push requires a

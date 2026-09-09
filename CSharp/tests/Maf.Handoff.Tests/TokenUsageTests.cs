@@ -21,7 +21,8 @@ public sealed class TokenUsageTests
             ReasoningEffort: null,
             SupportsReasoningEffort: [],
             InputCostPerMillionTokens: 2m,
-            OutputCostPerMillionTokens: 8m);
+            OutputCostPerMillionTokens: 8m,
+            CachedInputCostPerMillionTokens: 0.5m);
         WorkflowSettings settings = new("https://example.test", "test-model", "key", Provider: provider);
         TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
         {
@@ -32,7 +33,9 @@ public sealed class TokenUsageTests
         collector.Record(AgentNames.Intake, new UsageDetails
         {
             InputTokenCount = 1_200,
+            CachedInputTokenCount = 200,
             OutputTokenCount = 300,
+            ReasoningTokenCount = 100,
             TotalTokenCount = 1_500,
         });
         collector.Record(AgentNames.Developer, new UsageDetails
@@ -47,7 +50,9 @@ public sealed class TokenUsageTests
         Assert.Equal(2_000, summary.InputTokens);
         Assert.Equal(1_000, summary.OutputTokens);
         Assert.Equal(3_000, summary.TotalTokens);
-        Assert.Equal(0.012m, summary.EstimatedCostUsd);
+        Assert.Equal(200, summary.CachedInputTokens);
+        Assert.Equal(100, summary.ReasoningTokens);
+        Assert.Equal(0.0117m, summary.EstimatedCostUsd);
         Assert.Collection(summary.ByAgent,
             intake => Assert.Equal(AgentNames.Intake, intake.Agent),
             developer => Assert.Equal(AgentNames.Developer, developer.Agent));

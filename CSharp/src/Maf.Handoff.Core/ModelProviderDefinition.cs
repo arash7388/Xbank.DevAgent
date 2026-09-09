@@ -12,7 +12,8 @@ public sealed record ModelProviderDefinition(
     string? ReasoningEffort,
     IReadOnlyList<string>? SupportsReasoningEffort,
     decimal? InputCostPerMillionTokens = null,
-    decimal? OutputCostPerMillionTokens = null)
+    decimal? OutputCostPerMillionTokens = null,
+    decimal? CachedInputCostPerMillionTokens = null)
 {
     private const int MaximumDeclaredTokens = 2_000_000;
 
@@ -41,6 +42,7 @@ public sealed record ModelProviderDefinition(
         ValidateTokenLimit(MaxOutputTokens, nameof(MaxOutputTokens));
         ValidateTokenPrice(InputCostPerMillionTokens, nameof(InputCostPerMillionTokens));
         ValidateTokenPrice(OutputCostPerMillionTokens, nameof(OutputCostPerMillionTokens));
+        ValidateTokenPrice(CachedInputCostPerMillionTokens, nameof(CachedInputCostPerMillionTokens));
 
         if (!Thinking && !string.IsNullOrEmpty(reasoningEffort))
         {

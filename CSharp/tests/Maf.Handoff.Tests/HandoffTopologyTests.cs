@@ -5,6 +5,13 @@ namespace Maf.Handoff.Tests;
 public sealed class HandoffTopologyTests
 {
     [Fact]
+    public void IntakeRoutesThroughJira()
+    {
+        Assert.Equal(["jira"], HandoffTopology.Edges["intake"]);
+        Assert.Equal(["planner"], HandoffTopology.Edges["jira"]);
+    }
+
+    [Fact]
     public void DeveloperCannotBypassReviewer()
     {
         IReadOnlyList<string> targets = HandoffTopology.Edges["developer"];

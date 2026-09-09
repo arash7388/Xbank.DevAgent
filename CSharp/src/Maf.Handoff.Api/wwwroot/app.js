@@ -1,6 +1,7 @@
 const form = document.querySelector('#run-form');
 const agentModels = document.querySelector('#agent-models');
 const usagePricing = document.querySelector('#usage-pricing');
+const pricingStatus = document.querySelector('#pricing-status');
 const providerKeys = Object.fromEntries(
   [...document.querySelectorAll('[data-provider-key]')].map(input => [input.dataset.providerKey, input]));
 const runButton = document.querySelector('#run-button');
@@ -37,6 +38,8 @@ const embeddingApiKeyInput = document.querySelector('#embedding-api-key');
 const embeddingApiKeyField = document.querySelector('#embedding-api-key-field');
 const embeddingProviderGuide = document.querySelector('#embedding-provider-guide');
 const referenceStatus = document.querySelector('#reference-status');
+const connectionStepButton = document.querySelector('#connection-step-button');
+const runStepButton = document.querySelector('#run-step-button');
 
 let sessionId = null;
 let pollTimer = null;
@@ -44,6 +47,67 @@ let elapsedTimerInterval = null;
 let runStartedAt = null;
 let elapsedStoppedAt = null;
 let eventFingerprint = '';
+
+function initializeSetupSteps() {
+  const repositorySettings = document.querySelector('#repository').closest('fieldset');
+  const agentSettings = document.querySelector('#agent-models').closest('fieldset');
+  const providerSettings = document.querySelector('#openai-key').closest('fieldset');
+  const pricingSettings = document.querySelector('#usage-pricing').closest('fieldset');
+  const instructionSettings = document.querySelector('#task').closest('fieldset');
+  const referenceSettings = referenceFilesInput.closest('fieldset');
+  const formError = document.querySelector('#form-error');
+  const formActions = form.querySelector('.form-actions');
+
+  const connectionSettings = document.createElement('section');
+  connectionSettings.id = 'connection-settings';
+  connectionSettings.className = 'setup-step-content';
+  connectionSettings.setAttribute('role', 'tabpanel');
+  connectionSettings.setAttribute('aria-labelledby', 'connection-step-button');
+
+  const runSettings = document.createElement('section');
+  runSettings.id = 'run-settings';
+  runSettings.className = 'setup-step-content';
+  runSettings.setAttribute('role', 'tabpanel');
+  runSettings.setAttribute('aria-labelledby', 'run-step-button');
+
+  form.prepend(connectionSettings, runSettings);
+  connectionSettings.append(repositorySettings, providerSettings);
+
+  const qdrantSettings = document.createElement('fieldset');
+  qdrantSettings.className = 'qdrant-settings';
+  const qdrantLegend = document.createElement('legend');
+  qdrantLegend.textContent = 'Qdrant and embeddings';
+  const qdrantGuide = document.createElement('p');
+  qdrantGuide.className = 'field-guide';
+  qdrantGuide.textContent = 'Used only when reference documents are attached in Run setup.';
+  qdrantSettings.append(qdrantLegend, qdrantGuide);
+  [
+    document.querySelector('label[for="qdrant-url"]'), qdrantUrlInput,
+    document.querySelector('label[for="qdrant-api-key"]'), qdrantApiKeyInput,
+    document.querySelector('label[for="embedding-provider"]'), embeddingProviderInput,
+    embeddingApiKeyField, embeddingProviderGuide,
+  ].forEach(element => qdrantSettings.append(element));
+  connectionSettings.append(qdrantSettings, pricingSettings);
+
+  runSettings.append(teamMapSection, agentSettings, instructionSettings, referenceSettings, formError, formActions);
+  setSetupStep('connection');
+}
+
+function setSetupStep(step) {
+  const isConnection = step === 'connection';
+  const connectionSettings = document.querySelector('#connection-settings');
+  const runSettings = document.querySelector('#run-settings');
+  connectionSettings.hidden = !isConnection;
+  runSettings.hidden = isConnection;
+  connectionStepButton.classList.toggle('active', isConnection);
+  runStepButton.classList.toggle('active', !isConnection);
+  connectionStepButton.setAttribute('aria-selected', String(isConnection));
+  runStepButton.setAttribute('aria-selected', String(!isConnection));
+}
+
+initializeSetupSteps();
+connectionStepButton.addEventListener('click', () => setSetupStep('connection'));
+runStepButton.addEventListener('click', () => setSetupStep('run'));
 
 const eventDateFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -70,6 +134,11 @@ const providerCatalog = {
     name: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions',
     toolCalling: true, vision: true, maxInputTokens: 128000, maxOutputTokens: 160000,
     thinking: true, reasoningEffort: 'high', supportsReasoningEffort: ['low', 'medium', 'high', 'max'],
+    // Conservative fallback values; replaced from DeepSeek's pricing page on load.
+    defaultPricing: {
+      'deepseek-v4-flash': { cachedInput: 0.014, input: 0.44, output: 1.32 },
+      'deepseek-v4-pro': { cachedInput: 0.044, input: 1.32, output: 3.96 },
+    },
     models: [
       ['deepseek-v4-flash', 'deepseek-v4-flash'],
       ['deepseek-v4-pro', 'deepseek-v4-pro'],
@@ -88,6 +157,7 @@ const providerCatalog = {
 
 const agentCatalog = [
   { id: 'intake', name: 'Intake', description: 'Intake and routing', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high', required: true },
+  { id: 'jira', name: 'Jira', description: 'Read-only Jira issue and project context', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
   { id: 'planner', name: 'Planner', description: 'Architecture and acceptance criteria', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
   { id: 'developer', name: 'Developer', description: 'Implementation and remediation', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high', required: true },
   { id: 'reviewer', name: 'Reviewer', description: 'Correctness and quality gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
@@ -178,7 +248,7 @@ function createUsagePricingCard(agent) {
   const model = document.createElement('p');
   model.dataset.field = 'pricing-model';
   const inputLabel = document.createElement('label');
-  inputLabel.textContent = 'Input USD / 1M tokens';
+  inputLabel.textContent = 'Uncached input USD / 1M';
   const input = document.createElement('input');
   input.type = 'number';
   input.min = '0';
@@ -187,6 +257,16 @@ function createUsagePricingCard(agent) {
   input.placeholder = 'Optional';
   input.dataset.field = 'input-cost';
   input.setAttribute('aria-label', `${agent.name} input token price in USD per million tokens`);
+  const cachedInputLabel = document.createElement('label');
+  cachedInputLabel.textContent = 'Cached input USD / 1M';
+  const cachedInput = document.createElement('input');
+  cachedInput.type = 'number';
+  cachedInput.min = '0';
+  cachedInput.step = '0.0001';
+  cachedInput.inputMode = 'decimal';
+  cachedInput.placeholder = 'Optional';
+  cachedInput.dataset.field = 'cached-input-cost';
+  cachedInput.setAttribute('aria-label', `${agent.name} cached input token price in USD per million tokens`);
   const outputLabel = document.createElement('label');
   outputLabel.textContent = 'Output USD / 1M tokens';
   const output = document.createElement('input');
@@ -197,7 +277,7 @@ function createUsagePricingCard(agent) {
   output.placeholder = 'Optional';
   output.dataset.field = 'output-cost';
   output.setAttribute('aria-label', `${agent.name} output token price in USD per million tokens`);
-  card.append(title, model, inputLabel, input, outputLabel, output);
+  card.append(title, model, inputLabel, input, cachedInputLabel, cachedInput, outputLabel, output);
   usagePricing.append(card);
   syncUsagePricingCard(agent.id);
 }
@@ -209,7 +289,18 @@ function syncUsagePricingCard(agentId) {
   const provider = providerCatalog[modelCard.querySelector('[data-field="provider"]').value];
   const model = modelCard.querySelector('[data-field="model"]').value;
   priceCard.querySelector('[data-field="pricing-model"]').textContent = `${provider?.name || 'Provider'} · ${model || 'No model selected'}`;
+  const defaultPricing = provider?.defaultPricing?.[model];
+  syncDefaultTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), defaultPricing?.input);
+  syncDefaultTokenPrice(priceCard.querySelector('[data-field="cached-input-cost"]'), defaultPricing?.cachedInput);
+  syncDefaultTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), defaultPricing?.output);
   priceCard.hidden = !isAgentCardEnabled(modelCard);
+}
+
+function syncDefaultTokenPrice(input, nextDefault) {
+  const previousDefault = input.dataset.defaultPrice;
+  const canReplace = input.value === '' || input.value === previousDefault;
+  input.dataset.defaultPrice = nextDefault == null ? '' : String(nextDefault);
+  if (canReplace) input.value = input.dataset.defaultPrice;
 }
 
 function syncAgentCard(card, preferredModel = null, preferredEffort = null) {
@@ -275,9 +366,25 @@ async function loadDefaultPrompts() {
   });
 }
 
-loadDefaultPrompts()
+async function loadDeepSeekPricing() {
+  try {
+    const snapshot = await api('/api/providers/deepseek/pricing');
+    providerCatalog.deepseek.defaultPricing = Object.fromEntries(snapshot.models.map(price => [price.model, {
+      cachedInput: price.cachedInputUsdPerMillion,
+      input: price.inputUsdPerMillion,
+      output: price.outputUsdPerMillion,
+    }]));
+    agentCatalog.forEach(agent => syncUsagePricingCard(agent.id));
+    const effective = new Date(snapshot.effectiveAt).toLocaleString();
+    pricingStatus.textContent = `DeepSeek ${snapshot.priceBand} prices loaded from the provider at ${effective}. Prices remain editable.`;
+  } catch (error) {
+    pricingStatus.textContent = `Could not refresh DeepSeek pricing; using conservative fallback prices. ${error.message}`;
+  }
+}
+
+Promise.all([loadDefaultPrompts(), loadDeepSeekPricing()])
   .then(() => { runButton.disabled = false; })
-  .catch(error => showError(`Could not load default agent prompts: ${error.message}`));
+  .catch(error => showError(`Could not initialize the run form: ${error.message}`));
 
 function syncRequiredProviderKeys() {
   const selected = new Set(
@@ -457,6 +564,7 @@ function readAgentConfigurations() {
     const prompt = card.querySelector('[data-field="prompt"]').value.trim();
     const priceCard = usagePricing.querySelector(`[data-usage-agent="${card.dataset.agent}"]`);
     const inputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), `${card.dataset.agent} input price`);
+    const cachedInputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="cached-input-cost"]'), `${card.dataset.agent} cached input price`);
     const outputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), `${card.dataset.agent} output price`);
     const preset = providerCatalog[providerId];
     const apiKey = providerKeys[providerId].value.trim();
@@ -477,6 +585,7 @@ function readAgentConfigurations() {
         reasoningEffort: effort.disabled ? null : effort.value,
         supportsReasoningEffort: preset.supportsReasoningEffort,
         inputCostPerMillionTokens,
+        cachedInputCostPerMillionTokens,
         outputCostPerMillionTokens,
       },
     }];
@@ -569,7 +678,7 @@ function render(snapshot) {
   sessionLabel.textContent = `${shortRepo(snapshot.repositoryUrl)} · ${snapshot.baseBranch}`;
   setStatus(snapshot.status);
   renderEvents(snapshot.events || []);
-  renderUsage(snapshot.usage);
+  renderUsage(snapshot.usage, snapshot.status);
   renderDiff(snapshot.diff || '');
   if (snapshot.error) showRunError(snapshot.error);
   else clearRunError();
@@ -633,7 +742,7 @@ function renderEvents(events) {
   activity.scrollTop = 0;
 }
 
-function renderUsage(summary) {
+function renderUsage(summary, status) {
   if (!summary || !summary.hasUsage) {
     usageSummary.hidden = true;
     usageSummary.replaceChildren();
@@ -641,17 +750,20 @@ function renderUsage(summary) {
   }
   const heading = document.createElement('header');
   const title = document.createElement('h3');
-  title.textContent = 'Token usage';
+  const finished = status === 'awaiting_approval' || isTerminal(status);
+  title.textContent = finished ? 'Final token cost' : 'Token usage and cost';
   const total = document.createElement('strong');
-  total.textContent = `${formatNumber(summary.totalTokens)} total tokens`;
+  total.textContent = summary.estimatedCostUsd == null
+    ? 'Cost unavailable'
+    : formatUsd(summary.estimatedCostUsd);
   heading.append(title, total);
   const details = document.createElement('p');
   const cost = summary.estimatedCostUsd == null
     ? 'Cost estimate unavailable — add input and output USD-per-million rates for every model used.'
     : `Estimated cost: ${formatUsd(summary.estimatedCostUsd)}.`;
   const agents = summary.byAgent.map(item =>
-    `${item.agent}: ${formatNumber(item.inputTokens)} in / ${formatNumber(item.outputTokens)} out${item.estimatedCostUsd == null ? '' : ` (${formatUsd(item.estimatedCostUsd)})`}`).join(' · ');
-  details.textContent = `${formatNumber(summary.inputTokens)} input · ${formatNumber(summary.outputTokens)} output. ${cost} ${agents}`;
+    `${item.agent}: ${formatNumber(item.inputTokens)} in (${formatNumber(item.cachedInputTokens)} cached) / ${formatNumber(item.outputTokens)} out (${formatNumber(item.reasoningTokens)} reasoning)${item.estimatedCostUsd == null ? '' : ` (${formatUsd(item.estimatedCostUsd)})`}`).join(' · ');
+  details.textContent = `${formatNumber(summary.totalTokens)} total tokens · ${formatNumber(summary.inputTokens)} input (${formatNumber(summary.cachedInputTokens)} cached) · ${formatNumber(summary.outputTokens)} output (${formatNumber(summary.reasoningTokens)} reasoning). ${cost} ${agents}`;
   usageSummary.replaceChildren(heading, details);
   usageSummary.hidden = false;
 }
@@ -732,7 +844,11 @@ function setActiveStep(active) {
   workflowPanels.forEach(panel => {
     panel.hidden = !panel.dataset.workflowPanel.split(' ').includes(active);
   });
-  (active === 'running' ? activityHeading : setupHeading)?.after(teamMapSection);
+  if (active === 'running') {
+    activityHeading?.after(teamMapSection);
+  } else {
+    document.querySelector('#run-settings')?.prepend(teamMapSection);
+  }
 }
 
 function setBusy(value) {

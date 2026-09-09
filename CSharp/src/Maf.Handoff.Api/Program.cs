@@ -11,6 +11,11 @@ builder.Services.AddHttpClient<GitHubPullRequestClient>(client =>
 builder.Services.Configure<RagOptions>(builder.Configuration.GetSection(RagOptions.SectionName));
 builder.Services.AddHttpClient("qdrant", client => client.Timeout = TimeSpan.FromSeconds(45));
 builder.Services.AddHttpClient("embeddings", client => client.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddHttpClient<DeepSeekPricingService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("maf-repository-workbench/1.0");
+});
 builder.Services.AddSingleton<ReferenceDocumentService>();
 builder.Services.AddSingleton<RepositorySessionService>();
 
@@ -63,6 +68,10 @@ app.MapGet("/api/agents/default-prompts", () => Results.Ok(AgentPrompts.Defaults
 
 app.MapPost("/api/providers/validate", (ModelProviderDefinition provider) =>
     Results.Ok(provider.NormalizeAndValidate()));
+
+app.MapGet("/api/providers/deepseek/pricing", async (
+    DeepSeekPricingService pricing,
+    CancellationToken cancellationToken) => Results.Ok(await pricing.GetCurrentAsync(cancellationToken)));
 
 app.MapPost("/api/reference-collections", async (
     HttpRequest request,

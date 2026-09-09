@@ -31,7 +31,8 @@ public static class HandoffWorkflowFactory
 
     private static WorkflowBundle Create(AgentTeam team, WorkflowSettings settings)
     {
-        AIAgent firstImplementationStage = team.Planner ?? team.Developer;
+        AIAgent planningOrImplementationStage = team.Planner ?? team.Developer;
+        AIAgent firstImplementationStage = team.Jira ?? planningOrImplementationStage;
         AIAgent nextAfterDeveloper = team.Reviewer ?? team.Security ?? team.ReleaseManager;
         AIAgent nextAfterReviewer = team.Security ?? team.ReleaseManager;
 
@@ -45,6 +46,14 @@ public static class HandoffWorkflowFactory
         {
             builder.WithHandoff(team.Planner, team.Developer,
                 "Route to the developer after the repository-backed plan and acceptance criteria are complete.");
+        }
+
+        if (team.Jira is not null)
+        {
+            builder.WithHandoff(team.Jira, planningOrImplementationStage,
+                team.Planner is null
+                    ? "Route to the developer after the requested Jira context has been retrieved."
+                    : "Route to the planner after the requested Jira context has been retrieved and summarized.");
         }
 
         builder.WithHandoff(team.Developer, nextAfterDeveloper,

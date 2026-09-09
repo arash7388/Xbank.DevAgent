@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20260902-2">
+  <link rel="stylesheet" href="/styles.css?v=20260909-1">
 </head>
 <body>
   <header class="app-header">
@@ -16,7 +16,7 @@
   </header>
 
   <nav class="steps" aria-label="Workflow stages">
-    <div data-step="setup" class="step active"><b>1</b><span>Connect</span></div>
+    <div data-step="setup" class="step active"><b>1</b><span>Connection</span></div>
     <div data-step="running" class="step"><b>2</b><span>Agent work</span></div>
     <div data-step="review" class="step"><b>3</b><span>Review diff</span></div>
     <div data-step="finish" class="step"><b>4</b><span>Commit or push</span></div>
@@ -26,9 +26,14 @@
     <section class="setup-panel" data-workflow-panel="setup" aria-labelledby="setup-title">
       <div class="section-heading">
         <div>
-          <h2 id="setup-title">Change request</h2>
-          <p>Credentials stay in server memory for this run.</p>
+          <h2 id="setup-title">Set up a run</h2>
+          <p>Connect services first, then configure the agents and change request.</p>
         </div>
+      </div>
+
+      <div class="setup-step-nav" role="tablist" aria-label="Run setup steps">
+        <button id="connection-step-button" class="setup-step-button active" type="button" role="tab" aria-controls="connection-settings" aria-selected="true"><b>1</b> Connection</button>
+        <button id="run-step-button" class="setup-step-button" type="button" role="tab" aria-controls="run-settings" aria-selected="false"><b>2</b> Run setup</button>
       </div>
 
       <section class="team-map" aria-labelledby="team-map-title">
@@ -43,26 +48,28 @@
           </div>
         </div>
         <div class="team-map-canvas">
-          <svg id="team-map" viewBox="0 0 1120 330" role="img" aria-labelledby="team-map-title team-map-description">
-            <desc id="team-map-description">Intake hands work to Planner, then Developer, Reviewer, Security, and Release manager. Review, security, and release may return work to the Planner or Developer to resolve issues.</desc>
+          <svg id="team-map" viewBox="0 0 1335 330" role="img" aria-labelledby="team-map-title team-map-description">
+            <desc id="team-map-description">Intake hands work to Jira, then Planner, Developer, Reviewer, Security, and Release manager. Review, security, and release may return work to the Planner or Developer to resolve issues.</desc>
             <defs>
               <marker id="handoff-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker>
             </defs>
-            <g class="handoff-edge normal" data-edge="intake-planner"><path d="M 205 75 H 270" /></g>
-            <g class="handoff-edge normal" data-edge="planner-developer"><path d="M 420 75 H 485" /></g>
-            <g class="handoff-edge normal" data-edge="developer-reviewer"><path d="M 560 110 V 195" /></g>
-            <g class="handoff-edge normal" data-edge="reviewer-security"><path d="M 635 230 H 700" /></g>
-            <g class="handoff-edge normal" data-edge="security-release_manager"><path d="M 850 230 H 915" /></g>
-            <g class="handoff-edge remediation" data-edge="reviewer-developer"><path d="M 535 195 C 425 170, 425 135, 535 110" /></g>
-            <g class="handoff-edge remediation" data-edge="security-developer"><path d="M 700 255 C 670 318, 490 318, 540 110" /></g>
-            <g class="handoff-edge remediation" data-edge="release_manager-planner"><path d="M 990 265 C 900 325, 345 325, 345 110" /></g>
-            <g class="handoff-edge remediation" data-edge="release_manager-developer"><path d="M 930 195 C 850 135, 680 135, 590 110" /></g>
+            <g class="handoff-edge normal" data-edge="intake-jira"><path d="M 205 75 H 270" /></g>
+            <g class="handoff-edge normal" data-edge="jira-planner"><path d="M 420 75 H 485" /></g>
+            <g class="handoff-edge normal" data-edge="planner-developer"><path d="M 635 75 H 700" /></g>
+            <g class="handoff-edge normal" data-edge="developer-reviewer"><path d="M 775 110 V 195" /></g>
+            <g class="handoff-edge normal" data-edge="reviewer-security"><path d="M 850 230 H 915" /></g>
+            <g class="handoff-edge normal" data-edge="security-release_manager"><path d="M 1065 230 H 1130" /></g>
+            <g class="handoff-edge remediation" data-edge="reviewer-developer"><path d="M 750 195 C 640 170, 640 135, 750 110" /></g>
+            <g class="handoff-edge remediation" data-edge="security-developer"><path d="M 915 255 C 885 318, 705 318, 755 110" /></g>
+            <g class="handoff-edge remediation" data-edge="release_manager-planner"><path d="M 1205 265 C 1115 325, 560 325, 560 110" /></g>
+            <g class="handoff-edge remediation" data-edge="release_manager-developer"><path d="M 1145 195 C 1065 135, 895 135, 805 110" /></g>
             <g class="map-node intake" data-agent="intake"><rect x="55" y="40" width="150" height="70" rx="14" /><text x="130" y="70">Intake</text><text class="node-role" x="130" y="91">Route request</text></g>
-            <g class="map-node planner" data-agent="planner"><rect x="270" y="40" width="150" height="70" rx="14" /><text x="345" y="70">Planner</text><text class="node-role" x="345" y="91">Plan &amp; criteria</text></g>
-            <g class="map-node developer" data-agent="developer"><rect x="485" y="40" width="150" height="70" rx="14" /><text x="560" y="70">Developer</text><text class="node-role" x="560" y="91">Build &amp; verify</text></g>
-            <g class="map-node reviewer" data-agent="reviewer"><rect x="485" y="195" width="150" height="70" rx="14" /><text x="560" y="225">Reviewer</text><text class="node-role" x="560" y="246">Quality gate</text></g>
-            <g class="map-node security" data-agent="security"><rect x="700" y="195" width="150" height="70" rx="14" /><text x="775" y="225">Security</text><text class="node-role" x="775" y="246">Security gate</text></g>
-            <g class="map-node release-manager" data-agent="release_manager"><rect x="915" y="195" width="150" height="70" rx="14" /><text x="990" y="225">Release manager</text><text class="node-role" x="990" y="246">Evidence gate</text></g>
+            <g class="map-node jira" data-agent="jira"><rect x="270" y="40" width="150" height="70" rx="14" /><text x="345" y="70">Jira</text><text class="node-role" x="345" y="91">Issue context</text></g>
+            <g class="map-node planner" data-agent="planner"><rect x="485" y="40" width="150" height="70" rx="14" /><text x="560" y="70">Planner</text><text class="node-role" x="560" y="91">Plan &amp; criteria</text></g>
+            <g class="map-node developer" data-agent="developer"><rect x="700" y="40" width="150" height="70" rx="14" /><text x="775" y="70">Developer</text><text class="node-role" x="775" y="91">Build &amp; verify</text></g>
+            <g class="map-node reviewer" data-agent="reviewer"><rect x="700" y="195" width="150" height="70" rx="14" /><text x="775" y="225">Reviewer</text><text class="node-role" x="775" y="246">Quality gate</text></g>
+            <g class="map-node security" data-agent="security"><rect x="915" y="195" width="150" height="70" rx="14" /><text x="990" y="225">Security</text><text class="node-role" x="990" y="246">Security gate</text></g>
+            <g class="map-node release-manager" data-agent="release_manager"><rect x="1130" y="195" width="150" height="70" rx="14" /><text x="1205" y="225">Release manager</text><text class="node-role" x="1205" y="246">Evidence gate</text></g>
           </svg>
         </div>
       </section>
@@ -92,7 +99,7 @@
             <legend>Agent models</legend>
             <button id="copy-planner-settings" class="text-button" type="button">Apply planner model to all</button>
           </div>
-          <p class="field-guide">Enable only the planning, review, and security stages you need. Intake, Developer, and the final Release Manager remain required so each run has a valid start, implementation stage, and approval gate.</p>
+          <p class="field-guide">Enable the Jira, planning, review, and security stages you need. Intake, Developer, and the final Release Manager remain required so each run has a valid start, implementation stage, and approval gate.</p>
           <div id="agent-models" class="agent-model-grid"></div>
         </fieldset>
 
@@ -117,7 +124,7 @@
 
         <fieldset>
           <legend>Usage pricing (optional)</legend>
-          <p class="field-guide">Enter the current USD price per million input and output tokens for each agent model. Provider-reported token counts are always shown; dollar estimates need both rates.</p>
+          <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Provider-reported token counts are always shown; prices remain editable.</p>
           <div id="usage-pricing" class="usage-pricing-grid"></div>
         </fieldset>
 
@@ -229,6 +236,6 @@
     </form>
   </dialog>
 
-  <script src="/app.js?v=20260902-2" defer></script>
+  <script src="/app.js?v=20260909-3" defer></script>
 </body>
 </html>

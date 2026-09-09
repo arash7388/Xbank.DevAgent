@@ -8,7 +8,9 @@ public sealed record AgentTokenUsage(
     string Agent,
     string Model,
     long InputTokens,
+    long CachedInputTokens,
     long OutputTokens,
+    long ReasoningTokens,
     long TotalTokens,
     decimal? EstimatedCostUsd);
 
@@ -16,13 +18,15 @@ public sealed record AgentTokenUsage(
 public sealed record TokenUsageSummary(
     IReadOnlyList<AgentTokenUsage> ByAgent,
     long InputTokens,
+    long CachedInputTokens,
     long OutputTokens,
+    long ReasoningTokens,
     long TotalTokens,
     decimal? EstimatedCostUsd)
 {
     public bool HasUsage => ByAgent.Count > 0;
 
-    public static TokenUsageSummary Empty { get; } = new([], 0, 0, 0, null);
+    public static TokenUsageSummary Empty { get; } = new([], 0, 0, 0, 0, 0, null);
 }
 
 /// <summary>
@@ -43,7 +47,9 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
         long? reportedInput = usage.InputTokenCount;
         long? reportedOutput = usage.OutputTokenCount;
         long input = reportedInput ?? 0;
+        long cachedInput = Math.Clamp(usage.CachedInputTokenCount ?? 0, 0, input);
         long output = reportedOutput ?? 0;
+        long reasoning = Math.Clamp(usage.ReasoningTokenCount ?? 0, 0, output);
         long total = usage.TotalTokenCount ?? input + output;
         if (input == 0 && output == 0 && total == 0)
         {
@@ -55,7 +61,9 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
             : throw new ConfigurationException($"Model configuration for agent '{agent}' is required.");
         _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).Add(
             input,
+            cachedInput,
             output,
+            reasoning,
             total,
             reportedInput.HasValue && reportedOutput.HasValue);
     }
@@ -69,28 +77,34 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
             .Select(pair => pair.Value.Snapshot(pair.Key))
             .ToArray();
         long input = byAgent.Sum(item => item.InputTokens);
+        long cachedInput = byAgent.Sum(item => item.CachedInputTokens);
         long output = byAgent.Sum(item => item.OutputTokens);
+        long reasoning = byAgent.Sum(item => item.ReasoningTokens);
         long total = byAgent.Sum(item => item.TotalTokens);
         decimal? cost = byAgent.All(item => item.EstimatedCostUsd.HasValue)
             ? byAgent.Sum(item => item.EstimatedCostUsd ?? 0m)
             : null;
-        return new(byAgent, input, output, total, cost);
+        return new(byAgent, input, cachedInput, output, reasoning, total, cost);
     }
 
     private sealed class MutableAgentUsage(string model, ModelProviderDefinition? provider)
     {
         private readonly Lock _lock = new();
         private long _input;
+        private long _cachedInput;
         private long _output;
+        private long _reasoning;
         private long _total;
         private bool _hasCompletePricingBreakdown = true;
 
-        internal void Add(long input, long output, long total, bool hasCompletePricingBreakdown)
+        internal void Add(long input, long cachedInput, long output, long reasoning, long total, bool hasCompletePricingBreakdown)
         {
             lock (_lock)
             {
                 _input += input;
+                _cachedInput += cachedInput;
                 _output += output;
+                _reasoning += reasoning;
                 _total += total;
                 _hasCompletePricingBreakdown &= hasCompletePricingBreakdown;
             }
@@ -103,9 +117,11 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
                 decimal? cost = _hasCompletePricingBreakdown &&
                     provider?.InputCostPerMillionTokens is decimal inputRate &&
                     provider.OutputCostPerMillionTokens is decimal outputRate
-                    ? (_input / 1_000_000m * inputRate) + (_output / 1_000_000m * outputRate)
+                    ? ((_input - _cachedInput) / 1_000_000m * inputRate) +
+                      (_cachedInput / 1_000_000m * (provider.CachedInputCostPerMillionTokens ?? inputRate)) +
+                      (_output / 1_000_000m * outputRate)
                     : null;
-                return new(agent, model, _input, _output, _total, cost);
+                return new(agent, model, _input, _cachedInput, _output, _reasoning, _total, cost);
             }
         }
     }

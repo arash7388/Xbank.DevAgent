@@ -58,7 +58,8 @@ public static class HandoffTopology
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> Edges { get; } =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
         {
-            ["intake"] = ["planner"],
+            ["intake"] = ["jira"],
+            ["jira"] = ["planner"],
             ["planner"] = ["developer"],
             ["developer"] = ["reviewer"],
             ["reviewer"] = ["developer", "security"],

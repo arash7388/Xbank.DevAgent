@@ -5,7 +5,7 @@
       "name": "C#: MAF Workbench (Debug)",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build-api-debug",
+      "preLaunchTask": "build-csharp-debug",
       "program": "${workspaceFolder}/CSharp/src/Maf.Handoff.Api/bin/Debug/net10.0/Maf.Handoff.Api.dll",
       "args": [],
       "cwd": "${workspaceFolder}/CSharp/src/Maf.Handoff.Api",

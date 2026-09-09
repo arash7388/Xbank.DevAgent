@@ -90,6 +90,13 @@ h1, h2, p { margin: 0; }
   gap: 12px; padding: 15px 18px; border-bottom: 1px solid var(--line);
 }
 .setup-panel > .section-heading { padding: 0 0 15px; border: 0; min-height: 0; }
+.setup-step-nav { display: flex; gap: 8px; margin: 4px 0 2px; padding: 5px; border: 1px solid #d9e2f0; border-radius: 12px; background: #f6f9ff; }
+.setup-step-button { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 11px; color: #526078; background: transparent; font-size: 12px; box-shadow: none; }
+.setup-step-button b { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid #acb8ca; border-radius: 50%; font-size: 10px; }
+.setup-step-button.active { color: #174fae; background: #fff; border-color: #c9dafa; box-shadow: 0 2px 6px #274a8320; }
+.setup-step-button.active b { color: #fff; border-color: var(--blue); background: var(--blue); }
+.setup-step-content { min-width: 0; }
+.qdrant-settings { padding-top: 0; }
 .section-heading h2 { font-size: 16px; font-weight: 680; }
 .section-heading p { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .run-meta { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
@@ -122,6 +129,7 @@ h1, h2, p { margin: 0; }
 .map-node text { fill: #25324a; font-size: 14px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .map-node .node-role { fill: #68768b; font-size: 10px; font-weight: 500; }
 .map-node.intake rect { fill: #eaf3ff; stroke: #2878f0; }
+.map-node.jira rect { fill: #fff8dd; stroke: #bd8300; }
 .map-node.planner rect { fill: #f2edff; stroke: #8156e8; }
 .map-node.developer rect { fill: #fff0e7; stroke: #e46b2d; }
 .map-node.reviewer rect { fill: #e5fbf7; stroke: #0c9a91; }

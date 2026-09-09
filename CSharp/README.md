@@ -22,9 +22,10 @@ assigned to that provider. Endpoints and capability metadata remain internal.
 
 At the end of every run, the activity view and session response show provider-reported input/output
 tokens for every participating agent and the run total. To calculate an estimated USD cost, enter the
-current input and output price per million tokens for each agent model in **Usage pricing**. Rates are
-intentionally not hard-coded because provider pricing changes; when a rate or provider usage metadata
-is unavailable, the workbench reports the token count without inventing a dollar amount.
+current input and output price per million tokens for each agent model in **Usage pricing**. DeepSeek
+models are prefilled with their peak, cache-miss rates because the provider usage response does not
+separate cache hits or pricing time bands; these defaults remain editable. When a rate or provider
+usage metadata is unavailable, the workbench reports the token count without inventing a dollar amount.
 
 ## Safety model
 
@@ -98,9 +99,10 @@ branch when necessary, then creates a pull request into the selected base branch
 repository with no push or pull request, the GitHub token may be omitted. Provider API keys are
 always required and are never reused as GitHub credentials.
 
-The session API accepts an `agents` object keyed by the stable names `intake`, `planner`,
+The session API accepts an `agents` object keyed by the stable names `intake`, `jira`, `planner`,
 `developer`, `reviewer`, `security`, and `release_manager`. Every entry contains an independent
-`provider` definition and `apiKey`; all six entries are required. For example, the planner entry is:
+`provider` definition and `apiKey`. Intake, developer, and release manager are required; Jira,
+planner, reviewer, and security are optional. For example, the planner entry is:
 
 ```json
 {

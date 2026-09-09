@@ -28,6 +28,7 @@ public sealed class AgentTeamFactoryTests
         AgentTeam team = AgentTeamFactory.Create(clients, settingsByAgent);
 
         Assert.Null(team.Planner);
+        Assert.Null(team.Jira);
         Assert.Null(team.Reviewer);
         Assert.Null(team.Security);
         Assert.Equal(AgentNames.Required, team.All.Select(agent => agent.Name));
@@ -45,8 +46,27 @@ public sealed class AgentTeamFactoryTests
 
         Assert.NotNull(bundle.Workflow);
         Assert.Null(bundle.Team.Planner);
+        Assert.Null(bundle.Team.Jira);
         Assert.Null(bundle.Team.Reviewer);
         Assert.Null(bundle.Team.Security);
+    }
+
+    [Fact]
+    public void AddsOptionalJiraAgentWithoutGrantingRepositoryTools()
+    {
+        WorkflowSettings settings = new("https://example.test", "test-model", "test-key");
+        RecordingChatClient client = new();
+        Dictionary<string, IChatClient> clients = AgentNames.Required
+            .Append(AgentNames.Jira)
+            .ToDictionary(name => name, _ => (IChatClient)client);
+        Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required
+            .Append(AgentNames.Jira)
+            .ToDictionary(name => name, _ => settings);
+
+        AgentTeam team = AgentTeamFactory.Create(clients, settingsByAgent);
+
+        Assert.NotNull(team.Jira);
+        Assert.Equal(AgentNames.Jira, team.Jira.Name);
     }
 
     [Fact]

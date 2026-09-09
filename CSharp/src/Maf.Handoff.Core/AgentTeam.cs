@@ -4,6 +4,7 @@ namespace Maf.Handoff.Core;
 
 public sealed record AgentTeam(
     AIAgent Intake,
+    AIAgent? Jira,
     AIAgent? Planner,
     AIAgent Developer,
     AIAgent? Reviewer,
@@ -11,7 +12,7 @@ public sealed record AgentTeam(
     AIAgent ReleaseManager)
 {
     public IReadOnlyList<AIAgent> All =>
-        new AIAgent?[] { Intake, Planner, Developer, Reviewer, Security, ReleaseManager }
+        new AIAgent?[] { Intake, Jira, Planner, Developer, Reviewer, Security, ReleaseManager }
             .OfType<AIAgent>()
             .ToArray();
 }
