@@ -18,6 +18,7 @@ builder.Services.AddHttpClient<DeepSeekPricingService>(client =>
 });
 builder.Services.AddSingleton<ReferenceDocumentService>();
 builder.Services.AddSingleton<RepositorySessionService>();
+builder.Services.AddSingleton<CodeGraphService>();
 
 WebApplication app = builder.Build();
 
@@ -35,7 +36,7 @@ app.Use(async (context, next) =>
     {
         await WriteErrorAsync(context, StatusCodes.Status404NotFound, exception.Message);
     }
-    catch (Exception exception) when (exception is ArgumentException or ConfigurationException)
+    catch (Exception exception) when (exception is ArgumentException or ConfigurationException or Microsoft.Data.Sqlite.SqliteException)
     {
         await WriteErrorAsync(context, StatusCodes.Status400BadRequest, exception.Message);
     }
@@ -65,6 +66,33 @@ app.UseStaticFiles(new StaticFileOptions
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", provider = "openai-compatible" }));
 
 app.MapGet("/api/agents/default-prompts", () => Results.Ok(AgentPrompts.Defaults));
+
+app.MapGet("/api/agents/tools", () => Results.Ok(AgentToolCatalog.ByAgent));
+
+app.MapGet("/api/codegraph/config", (CodeGraphService codeGraph) => Results.Ok(codeGraph.GetConfiguration()));
+
+app.MapPost("/api/codegraph/index", (CodeGraphIndexRequest request, CodeGraphService codeGraph) =>
+    Results.Accepted("/api/codegraph/index/status", codeGraph.StartIndex(request)));
+
+app.MapGet("/api/codegraph/index/status", (CodeGraphService codeGraph) => Results.Ok(codeGraph.GetIndexStatus()));
+
+app.MapGet("/api/codegraph/database", (string dbPath, CodeGraphService codeGraph) =>
+    Results.Ok(codeGraph.GetDatabaseOverview(dbPath)));
+
+app.MapGet("/api/codegraph/tables/{table}", (string table, string dbPath, int? limit, int? offset, string? search, CodeGraphService codeGraph) =>
+    Results.Ok(codeGraph.GetTable(dbPath, table, limit ?? 50, offset ?? 0, search)));
+
+app.MapPost("/api/codegraph/tools/find-symbol", (CodeGraphFindSymbolRequest request, CodeGraphService codeGraph) =>
+    Results.Ok(codeGraph.FindSymbol(request)));
+
+app.MapPost("/api/codegraph/tools/get-neighbors", (CodeGraphNeighborsRequest request, CodeGraphService codeGraph) =>
+    Results.Ok(codeGraph.GetNeighbors(request)));
+
+app.MapPost("/api/codegraph/tools/get-context", (CodeGraphContextRequest request, CodeGraphService codeGraph) =>
+    Results.Ok(new { content = codeGraph.GetContext(request) }));
+
+app.MapPost("/api/codegraph/tools/get-context-by-id", (CodeGraphContextByIdRequest request, CodeGraphService codeGraph) =>
+    Results.Ok(new { content = codeGraph.GetContextById(request) }));
 
 app.MapPost("/api/providers/validate", (ModelProviderDefinition provider) =>
     Results.Ok(provider.NormalizeAndValidate()));

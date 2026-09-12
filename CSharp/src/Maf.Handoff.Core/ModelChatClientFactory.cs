@@ -23,9 +23,11 @@ public static class ModelChatClientFactory
         {
             // The provider-native adapter writes TextReasoningContent back to DeepSeek's
             // reasoning_content field on every assistant tool-call turn.
-            return new DeepSeekClient(settings.ApiKey)
+            IChatClient deepSeekClient = new DeepSeekClient(settings.ApiKey)
                 .GetChatClient(settings.Model)
                 .AsIChatClient();
+            return new DeepSeekToolHistoryChatClient(
+                new DeepSeekUsagePreservingChatClient(deepSeekClient));
         }
 
         OpenAIClient openAiClient = new(

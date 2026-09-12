@@ -23,7 +23,7 @@ public sealed record AgentModelConfiguration(
             maxTotalMessages,
             maxAgentTurns,
             provider,
-            Prompt?.Trim())
+            string.IsNullOrWhiteSpace(Prompt) ? null : Prompt.Trim())
         {
             MaxReviewerRemediationCycles = maxReviewerRemediationCycles,
         };

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20260909-1">
+  <link rel="stylesheet" href="/styles.css?v=20260909-2">
 </head>
 <body>
   <header class="app-header">
@@ -12,6 +12,10 @@
       <h1>Repository Change Workbench</h1>
       <p>Microsoft Agent Framework handoff team</p>
     </div>
+    <nav class="app-mode-nav" aria-label="Workbench views">
+      <button class="app-mode active" type="button" data-app-mode="workflow" aria-pressed="true">Agent workflow</button>
+      <button class="app-mode" type="button" data-app-mode="codegraph" aria-pressed="false">Code graph</button>
+    </nav>
     <div id="connection" class="connection"><span></span> Local service</div>
   </header>
 
@@ -23,6 +27,95 @@
   </nav>
 
   <main class="workspace">
+    <section id="codegraph-panel" class="codegraph-panel" hidden>
+      <div class="section-heading">
+        <div>
+          <h2>CodeGraph MCP workbench</h2>
+          <p>Index a local C# solution or project, invoke the four graph tools, and inspect the SQLite data.</p>
+        </div>
+        <span id="codegraph-index-badge" class="status idle">Idle</span>
+      </div>
+
+      <div class="codegraph-content">
+        <section class="codegraph-card codegraph-index-card">
+          <div class="card-heading">
+            <div><h3>Index source</h3><p>CodeGraph runs locally and writes directly to the selected SQLite database.</p></div>
+            <button id="codegraph-refresh" class="secondary" type="button">Refresh database</button>
+          </div>
+          <form id="codegraph-index-form">
+            <div class="codegraph-paths">
+              <div>
+                <label for="codegraph-source">Solution or project address</label>
+                <input id="codegraph-source" required placeholder="E:\Projects\MyApp\MyApp.sln">
+              </div>
+              <div>
+                <label for="codegraph-db">SQLite database address</label>
+                <input id="codegraph-db" required placeholder="E:\Projects\MyApp\codegraph.db">
+              </div>
+            </div>
+            <div class="codegraph-index-actions">
+              <label class="check-row" for="codegraph-incremental"><input id="codegraph-incremental" type="checkbox" checked><span>Incremental index</span></label>
+              <label class="check-row" for="codegraph-external"><input id="codegraph-external" type="checkbox"><span>Include external symbols</span></label>
+              <label class="check-row" for="codegraph-restore"><input id="codegraph-restore" type="checkbox" checked><span>Restore dependencies first</span></label>
+              <button id="codegraph-index-button" class="primary" type="submit">Start indexing</button>
+            </div>
+          </form>
+          <div id="codegraph-error" class="form-error" role="alert" hidden></div>
+          <pre id="codegraph-index-log" class="codegraph-log" hidden></pre>
+        </section>
+
+        <section id="codegraph-overview" class="codegraph-card" hidden>
+          <div class="card-heading"><div><h3>Database overview</h3><p id="codegraph-db-meta"></p></div></div>
+          <div id="codegraph-counts" class="codegraph-counts"></div>
+          <div class="codegraph-summary-grid">
+            <div><h4>Node kinds</h4><div id="codegraph-node-kinds"></div></div>
+            <div><h4>Edge kinds</h4><div id="codegraph-edge-kinds"></div></div>
+          </div>
+        </section>
+
+        <section class="codegraph-card">
+          <div class="card-heading"><div><h3>MCP tools</h3><p>Search first to obtain an exact symbol ID, then inspect neighbors or precise context.</p></div></div>
+          <div class="codegraph-tool-tabs" role="tablist" aria-label="CodeGraph tools">
+            <button class="codegraph-tool-tab active" type="button" data-codegraph-tool="find_symbol">find_symbol</button>
+            <button class="codegraph-tool-tab" type="button" data-codegraph-tool="get_neighbors">get_neighbors</button>
+            <button class="codegraph-tool-tab" type="button" data-codegraph-tool="get_context">get_context</button>
+            <button class="codegraph-tool-tab" type="button" data-codegraph-tool="get_context_by_id">get_context_by_id</button>
+          </div>
+          <form id="codegraph-tool-form" class="codegraph-tool-form">
+            <div>
+              <label id="codegraph-query-label" for="codegraph-query">Symbol name</label>
+              <input id="codegraph-query" required placeholder="OrderService">
+            </div>
+            <div>
+              <label for="codegraph-limit">Limit / max nodes</label>
+              <input id="codegraph-limit" type="number" min="1" max="250" value="15">
+            </div>
+            <div id="codegraph-budget-group" hidden>
+              <label for="codegraph-budget">Token budget</label>
+              <input id="codegraph-budget" type="number" min="250" max="20000" value="5000">
+            </div>
+            <button class="primary" type="submit">Run tool</button>
+          </form>
+          <div id="codegraph-tool-result" class="codegraph-result"><p>Choose a tool and run it against an indexed database.</p></div>
+        </section>
+
+        <section class="codegraph-card">
+          <div class="card-heading"><div><h3>SQLite table browser</h3><p>Browse useful graph, ownership, and evidence tables with server-side paging.</p></div></div>
+          <form id="codegraph-table-form" class="codegraph-table-controls">
+            <select id="codegraph-table" aria-label="Database table"></select>
+            <input id="codegraph-table-search" placeholder="Filter text columns">
+            <button class="secondary" type="submit">Load table</button>
+          </form>
+          <div id="codegraph-table-result" class="codegraph-table-wrap"><p>No table loaded.</p></div>
+          <div class="codegraph-pager">
+            <button id="codegraph-table-prev" class="secondary" type="button" disabled>Previous</button>
+            <span id="codegraph-table-page">Rows 1–50</span>
+            <button id="codegraph-table-next" class="secondary" type="button" disabled>Next</button>
+          </div>
+        </section>
+      </div>
+    </section>
+
     <section class="setup-panel" data-workflow-panel="setup" aria-labelledby="setup-title">
       <div class="section-heading">
         <div>
@@ -89,7 +182,7 @@
             <div>
               <label for="github-token">GitHub token</label>
               <input id="github-token" name="githubToken" type="password"
-                     autocomplete="off" placeholder="Required for private repos or push">
+                     autocomplete="off" placeholder="Uses the server-local default when blank">
             </div>
           </div>
         </fieldset>
@@ -100,6 +193,7 @@
             <button id="copy-planner-settings" class="text-button" type="button">Apply planner model to all</button>
           </div>
           <p class="field-guide">Enable the Jira, planning, review, and security stages you need. Intake, Developer, and the final Release Manager remain required so each run has a valid start, implementation stage, and approval gate.</p>
+          <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Each agent's current model pricing appears below its prompt and remains editable.</p>
           <div id="agent-models" class="agent-model-grid"></div>
         </fieldset>
 
@@ -120,12 +214,6 @@
               <input id="claude-key" data-provider-key="claude" type="password" autocomplete="off" placeholder="Anthropic API key">
             </div>
           </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Usage pricing (optional)</legend>
-          <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Provider-reported token counts are always shown; prices remain editable.</p>
-          <div id="usage-pricing" class="usage-pricing-grid"></div>
         </fieldset>
 
         <fieldset>
@@ -209,6 +297,7 @@
           <button id="approve-button" class="primary" type="button" hidden>Approve</button>
         </div>
       </div>
+      <section id="final-usage-summary" class="usage-summary final-usage-summary" aria-live="polite" hidden></section>
       <pre id="diff" class="diff"><code>No diff available.</code></pre>
     </section>
   </main>
@@ -236,6 +325,6 @@
     </form>
   </dialog>
 
-  <script src="/app.js?v=20260909-3" defer></script>
+  <script src="/app.js?v=20260912-2" defer></script>
 </body>
 </html>

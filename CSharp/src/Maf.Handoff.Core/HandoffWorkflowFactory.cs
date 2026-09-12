@@ -10,9 +10,17 @@ public static class HandoffWorkflowFactory
         IChatClient chatClient,
         WorkflowSettings settings,
         RepositoryWorkspace? workspace = null,
-        IReferenceDocumentSearch? referenceDocuments = null)
+        IReferenceDocumentSearch? referenceDocuments = null,
+        ICodeGraphTools? codeGraphTools = null,
+        CodeGraphAudit? codeGraphAudit = null)
     {
-        AgentTeam team = AgentTeamFactory.Create(chatClient, settings, workspace, referenceDocuments);
+        AgentTeam team = AgentTeamFactory.Create(
+            chatClient,
+            settings,
+            workspace,
+            referenceDocuments,
+            codeGraphTools,
+            codeGraphAudit);
         return Create(team, settings);
     }
 
@@ -20,9 +28,17 @@ public static class HandoffWorkflowFactory
         IReadOnlyDictionary<string, IChatClient> clients,
         IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent,
         RepositoryWorkspace? workspace = null,
-        IReferenceDocumentSearch? referenceDocuments = null)
+        IReferenceDocumentSearch? referenceDocuments = null,
+        ICodeGraphTools? codeGraphTools = null,
+        CodeGraphAudit? codeGraphAudit = null)
     {
-        AgentTeam team = AgentTeamFactory.Create(clients, settingsByAgent, workspace, referenceDocuments);
+        AgentTeam team = AgentTeamFactory.Create(
+            clients,
+            settingsByAgent,
+            workspace,
+            referenceDocuments,
+            codeGraphTools,
+            codeGraphAudit);
         WorkflowSettings workflowSettings = settingsByAgent.TryGetValue(AgentNames.Intake, out WorkflowSettings? value)
             ? value
             : throw new ConfigurationException("Model configuration for agent 'intake' is required.");

@@ -15,6 +15,13 @@ SDK base endpoint. DeepSeek agents preserve the selected reasoning level and ret
 OpenAI reasoning values are passed through its Chat Completions options. Tool calling is mandatory
 for this handoff topology.
 
+For repositories containing tracked C# source, planner, developer, reviewer, and security agents also
+receive a protected CodeGraph policy and the read-only `find_symbol`, `get_context`,
+`get_context_by_id`, and `get_neighbors` tools. The server chooses the CodeGraph database and fails
+the workflow closed when it is unavailable. Each protected agent must complete a fresh relationship
+check before every handoff. Caller-supplied agent text is appended only as lower-priority additional
+guidance; it never replaces the server-owned role or CodeGraph instructions.
+
 Each agent has an independent OpenAI, DeepSeek, or Claude provider selector, model selector, and
 reasoning-effort selector. All agents default to DeepSeek `deepseek-v4-flash` with high reasoning,
 but can be configured individually. Provider credentials are entered once and reused only by agents
@@ -53,6 +60,10 @@ dotnet run --project src/Maf.Handoff.Api --urls http://127.0.0.1:8080
 ```
 
 Open `http://127.0.0.1:8080`.
+
+Configure the protected graph database with `CodeGraph__DatabasePath`; it defaults to
+`E:\CodeGraph\codegraph.db`. The database must contain an up-to-date index for the C# repository the
+agents will inspect. `CodeGraph__RootPath` controls the local CodeGraph indexer used by the workbench.
 
 ### Reference-document RAG
 

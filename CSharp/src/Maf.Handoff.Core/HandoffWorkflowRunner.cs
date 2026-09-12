@@ -12,27 +12,32 @@ public sealed class HandoffWorkflowRunner
     private readonly RepositoryWorkspace? _workspace;
     private readonly IChatClient? _chatClient;
     private readonly IReferenceDocumentSearch? _referenceDocuments;
+    private readonly ICodeGraphTools? _codeGraphTools;
 
     public HandoffWorkflowRunner(
         WorkflowSettings settings,
         RepositoryWorkspace? workspace = null,
         IChatClient? chatClient = null,
-        IReferenceDocumentSearch? referenceDocuments = null)
+        IReferenceDocumentSearch? referenceDocuments = null,
+        ICodeGraphTools? codeGraphTools = null)
     {
         _settings = settings;
         _workspace = workspace;
         _chatClient = chatClient;
         _referenceDocuments = referenceDocuments;
+        _codeGraphTools = codeGraphTools;
     }
 
     public HandoffWorkflowRunner(
         IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent,
         RepositoryWorkspace? workspace = null,
-        IReferenceDocumentSearch? referenceDocuments = null)
+        IReferenceDocumentSearch? referenceDocuments = null,
+        ICodeGraphTools? codeGraphTools = null)
     {
         _settingsByAgent = settingsByAgent;
         _workspace = workspace;
         _referenceDocuments = referenceDocuments;
+        _codeGraphTools = codeGraphTools;
     }
 
     public async IAsyncEnumerable<RunEvent> RunAsync(
@@ -45,6 +50,7 @@ public sealed class HandoffWorkflowRunner
         WorkflowSettings workflowSettings;
         IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent;
         TokenUsageCollector usageCollector;
+        CodeGraphAudit codeGraphAudit = new();
         if (_settingsByAgent is not null)
         {
             Dictionary<string, IChatClient> clients = [];
@@ -68,7 +74,13 @@ public sealed class HandoffWorkflowRunner
                 pair => pair.Key,
                 pair => (IChatClient)new UsageTrackingChatClient(pair.Value, pair.Key, usageCollector),
                 StringComparer.Ordinal);
-            bundle = HandoffWorkflowFactory.Create(clients, settingsByAgent, _workspace, _referenceDocuments);
+            bundle = HandoffWorkflowFactory.Create(
+                clients,
+                settingsByAgent,
+                _workspace,
+                _referenceDocuments,
+                _codeGraphTools,
+                codeGraphAudit);
         }
         else
         {
@@ -79,7 +91,13 @@ public sealed class HandoffWorkflowRunner
             Dictionary<string, IChatClient> clients = AgentNames.All.ToDictionary(
                 name => name,
                 name => (IChatClient)new UsageTrackingChatClient(effectiveChatClient, name, usageCollector));
-            bundle = HandoffWorkflowFactory.Create(clients, settingsByAgent, _workspace, _referenceDocuments);
+            bundle = HandoffWorkflowFactory.Create(
+                clients,
+                settingsByAgent,
+                _workspace,
+                _referenceDocuments,
+                _codeGraphTools,
+                codeGraphAudit);
         }
         string status = "stopped_without_release_approval";
         string? activeAgent = null;
@@ -205,6 +223,14 @@ public sealed class HandoffWorkflowRunner
         }
 
         yield return RunEvent.TokenUsage(usageCollector.Snapshot());
+        foreach (CodeGraphToolEvidence evidence in codeGraphAudit.Snapshot())
+        {
+            yield return RunEvent.Trace(
+                evidence.Agent,
+                $"Protected CodeGraph evidence: {evidence.Tool} inspected '{evidence.Subject}'.",
+                "codegraph");
+        }
+
         yield return RunEvent.Decision(
             status == "completed"
                 ? "Release manager approved the proposed change."

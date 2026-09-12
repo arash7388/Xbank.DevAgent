@@ -37,6 +37,12 @@ public sealed partial class RepositoryWorkspace
 
     public string BaseBranch { get; }
 
+    /// <summary>Returns whether the cloned repository tracks at least one C# source file.</summary>
+    public bool ContainsCSharpSource() => ListFiles().Split(
+        '\n',
+        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Any(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+
     public static async Task<RepositoryWorkspace> CloneAsync(
         string repositoryUrl,
         string baseBranch,

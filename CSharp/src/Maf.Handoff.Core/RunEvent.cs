@@ -30,10 +30,12 @@ public sealed record RunEvent(
 
     public static RunEvent TokenUsage(TokenUsageSummary usage) => new(
         "usage",
-        Text: usage.HasUsage
-            ? $"Token usage: {usage.InputTokens:N0} input ({usage.CachedInputTokens:N0} cached), {usage.OutputTokens:N0} output ({usage.ReasoningTokens:N0} reasoning), {usage.TotalTokens:N0} total." +
+        Text: usage.HasRequests && usage.HasUsage
+            ? $"AI requests: {usage.LlmRequestCount:N0}. Token usage: {usage.InputTokens:N0} input ({usage.CachedInputTokens:N0} cached), {usage.OutputTokens:N0} output ({usage.ReasoningTokens:N0} reasoning), {usage.TotalTokens:N0} total." +
               (usage.EstimatedCostUsd is decimal cost ? $" Estimated cost: ${cost:F4}." : " Cost estimate unavailable: enter input and output rates for every model used.")
-            : "The provider did not return token-usage metadata for this run.",
+            : usage.HasRequests
+                ? $"AI requests: {usage.LlmRequestCount:N0}. The provider did not return token-usage metadata for this run."
+                : "No AI provider requests were sent for this run.",
         Category: "usage",
         Usage: usage);
 

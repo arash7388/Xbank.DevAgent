@@ -30,6 +30,7 @@ public sealed class TokenUsageTests
             [AgentNames.Developer] = settings,
         });
 
+        collector.RecordRequest(AgentNames.Intake);
         collector.Record(AgentNames.Intake, new UsageDetails
         {
             InputTokenCount = 1_200,
@@ -38,6 +39,7 @@ public sealed class TokenUsageTests
             ReasoningTokenCount = 100,
             TotalTokenCount = 1_500,
         });
+        collector.RecordRequest(AgentNames.Developer);
         collector.Record(AgentNames.Developer, new UsageDetails
         {
             InputTokenCount = 800,
@@ -47,6 +49,7 @@ public sealed class TokenUsageTests
 
         TokenUsageSummary summary = collector.Snapshot();
 
+        Assert.Equal(2, summary.LlmRequestCount);
         Assert.Equal(2_000, summary.InputTokens);
         Assert.Equal(1_000, summary.OutputTokens);
         Assert.Equal(3_000, summary.TotalTokens);
@@ -67,6 +70,7 @@ public sealed class TokenUsageTests
             [AgentNames.Intake] = settings,
         });
 
+        collector.RecordRequest(AgentNames.Intake);
         collector.Record(AgentNames.Intake, new UsageDetails
         {
             InputTokenCount = 10,
@@ -79,6 +83,25 @@ public sealed class TokenUsageTests
         Assert.True(summary.HasUsage);
         Assert.Null(summary.EstimatedCostUsd);
         Assert.Null(summary.ByAgent[0].EstimatedCostUsd);
+    }
+
+    [Fact]
+    public void CountsRequestsWhenTheProviderOmitsUsage()
+    {
+        WorkflowSettings settings = new("https://example.test", "test-model", "key");
+        TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
+        {
+            [AgentNames.Intake] = settings,
+        });
+
+        collector.RecordRequest(AgentNames.Intake);
+
+        TokenUsageSummary summary = collector.Snapshot();
+
+        Assert.True(summary.HasRequests);
+        Assert.False(summary.HasUsage);
+        Assert.Equal(1, summary.LlmRequestCount);
+        Assert.Equal(1, Assert.Single(summary.ByAgent).LlmRequestCount);
     }
 
     [Fact]
@@ -97,6 +120,7 @@ public sealed class TokenUsageTests
         await client.GetResponseAsync([new ChatMessage(ChatRole.User, "Hello")]);
 
         AgentTokenUsage usage = Assert.Single(collector.Snapshot().ByAgent);
+        Assert.Equal(1, usage.LlmRequestCount);
         Assert.Equal(42, usage.InputTokens);
         Assert.Equal(17, usage.OutputTokens);
         Assert.Equal(59, usage.TotalTokens);

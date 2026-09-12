@@ -1,6 +1,5 @@
 const form = document.querySelector('#run-form');
 const agentModels = document.querySelector('#agent-models');
-const usagePricing = document.querySelector('#usage-pricing');
 const pricingStatus = document.querySelector('#pricing-status');
 const providerKeys = Object.fromEntries(
   [...document.querySelectorAll('[data-provider-key]')].map(input => [input.dataset.providerKey, input]));
@@ -19,6 +18,7 @@ const sessionLabel = document.querySelector('#session-label');
 const emptyActivity = document.querySelector('#empty-activity');
 const activity = document.querySelector('#activity');
 const usageSummary = document.querySelector('#usage-summary');
+const finalUsageSummary = document.querySelector('#final-usage-summary');
 const diff = document.querySelector('#diff code');
 const diffSummary = document.querySelector('#diff-summary');
 const dialog = document.querySelector('#approval-dialog');
@@ -52,7 +52,6 @@ function initializeSetupSteps() {
   const repositorySettings = document.querySelector('#repository').closest('fieldset');
   const agentSettings = document.querySelector('#agent-models').closest('fieldset');
   const providerSettings = document.querySelector('#openai-key').closest('fieldset');
-  const pricingSettings = document.querySelector('#usage-pricing').closest('fieldset');
   const instructionSettings = document.querySelector('#task').closest('fieldset');
   const referenceSettings = referenceFilesInput.closest('fieldset');
   const formError = document.querySelector('#form-error');
@@ -87,7 +86,7 @@ function initializeSetupSteps() {
     document.querySelector('label[for="embedding-provider"]'), embeddingProviderInput,
     embeddingApiKeyField, embeddingProviderGuide,
   ].forEach(element => qdrantSettings.append(element));
-  connectionSettings.append(qdrantSettings, pricingSettings);
+  connectionSettings.append(qdrantSettings);
 
   runSettings.append(teamMapSection, agentSettings, instructionSettings, referenceSettings, formError, formActions);
   setSetupStep('connection');
@@ -156,13 +155,13 @@ const providerCatalog = {
 };
 
 const agentCatalog = [
-  { id: 'intake', name: 'Intake', description: 'Intake and routing', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high', required: true },
-  { id: 'jira', name: 'Jira', description: 'Read-only Jira issue and project context', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
-  { id: 'planner', name: 'Planner', description: 'Architecture and acceptance criteria', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
-  { id: 'developer', name: 'Developer', description: 'Implementation and remediation', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high', required: true },
-  { id: 'reviewer', name: 'Reviewer', description: 'Correctness and quality gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
-  { id: 'security', name: 'Security', description: 'Threat modeling and security gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
-  { id: 'release_manager', name: 'Release manager', description: 'Final evidence gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'high', required: true },
+  { id: 'intake', name: 'Intake', description: 'Intake and routing', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', required: true },
+  { id: 'jira', name: 'Jira', description: 'Read-only Jira issue and project context', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', enabled: false },
+  { id: 'planner', name: 'Planner', description: 'Architecture and acceptance criteria', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low' },
+  { id: 'developer', name: 'Developer', description: 'Implementation and remediation', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', required: true },
+  { id: 'reviewer', name: 'Reviewer', description: 'Correctness and quality gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low' },
+  { id: 'security', name: 'Security', description: 'Threat modeling and security gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', enabled: false },
+  { id: 'release_manager', name: 'Release manager', description: 'Final evidence gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', required: true },
 ];
 
 function createAgentModelCard(agent) {
@@ -179,7 +178,7 @@ function createAgentModelCard(agent) {
   const enabledInput = document.createElement('input');
   enabledInput.type = 'checkbox';
   enabledInput.dataset.field = 'enabled';
-  enabledInput.checked = true;
+  enabledInput.checked = agent.enabled !== false;
   enabledInput.disabled = Boolean(agent.required);
   enabledInput.setAttribute('aria-label', `${agent.name} enabled`);
   const enabledText = document.createElement('span');
@@ -188,6 +187,13 @@ function createAgentModelCard(agent) {
   header.append(title, enabledLabel);
   const description = document.createElement('p');
   description.textContent = agent.description;
+  const tools = document.createElement('details');
+  tools.className = 'agent-tools';
+  tools.dataset.field = 'tools';
+  const toolsSummary = document.createElement('summary');
+  toolsSummary.textContent = 'Available tools · loading…';
+  const toolsList = document.createElement('ul');
+  tools.append(toolsSummary, toolsList);
   const controls = document.createElement('div');
   controls.className = 'agent-model-controls';
 
@@ -221,32 +227,38 @@ function createAgentModelCard(agent) {
   modelSelect.setAttribute('aria-label', `${agent.name} model`);
 
   const promptLabel = document.createElement('label');
-  promptLabel.textContent = 'Agent prompt';
+  promptLabel.textContent = 'Additional agent guidance (optional)';
   const promptInput = document.createElement('textarea');
   promptInput.dataset.field = 'prompt';
   promptInput.dataset.configField = '';
   promptInput.className = 'agent-prompt';
-  promptInput.required = true;
   promptInput.maxLength = 50000;
-  promptInput.rows = 8;
-  promptInput.setAttribute('aria-label', `${agent.name} prompt`);
+  promptInput.rows = 4;
+  promptInput.placeholder = 'Added below the protected server-owned role and CodeGraph policies; cannot override them.';
+  promptInput.setAttribute('aria-label', `${agent.name} additional guidance`);
 
   controls.append(providerGroup, effortGroup);
-  card.append(header, description, controls, modelLabel, modelSelect, promptLabel, promptInput);
+  card.append(header, description, tools, controls, modelLabel, modelSelect, promptLabel, promptInput);
   providerSelect.addEventListener('change', () => syncAgentCard(card));
+  modelSelect.addEventListener('change', () => syncUsagePricingCard(agent.id, true));
+  effortSelect.addEventListener('change', () => syncUsagePricingCard(agent.id, true));
   enabledInput.addEventListener('change', () => syncAgentCardEnabled(card));
   agentModels.append(card);
   syncAgentCard(card, agent.model, agent.effort);
 }
 
 function createUsagePricingCard(agent) {
+  const modelCard = agentModels.querySelector(`[data-agent="${agent.id}"]`);
+  if (!modelCard) return;
   const card = document.createElement('section');
   card.className = 'usage-price-card';
   card.dataset.usageAgent = agent.id;
   const title = document.createElement('h3');
-  title.textContent = agent.name;
+  title.textContent = 'Token pricing';
   const model = document.createElement('p');
   model.dataset.field = 'pricing-model';
+  const modeNote = document.createElement('p');
+  modeNote.dataset.field = 'pricing-mode-note';
   const inputLabel = document.createElement('label');
   inputLabel.textContent = 'Uncached input USD / 1M';
   const input = document.createElement('input');
@@ -277,28 +289,35 @@ function createUsagePricingCard(agent) {
   output.placeholder = 'Optional';
   output.dataset.field = 'output-cost';
   output.setAttribute('aria-label', `${agent.name} output token price in USD per million tokens`);
-  card.append(title, model, inputLabel, input, cachedInputLabel, cachedInput, outputLabel, output);
-  usagePricing.append(card);
+  card.append(title, model, modeNote, inputLabel, input, cachedInputLabel, cachedInput, outputLabel, output);
+  modelCard.append(card);
   syncUsagePricingCard(agent.id);
 }
 
-function syncUsagePricingCard(agentId) {
+function syncUsagePricingCard(agentId, forceProviderRates = false) {
   const modelCard = agentModels.querySelector(`[data-agent="${agentId}"]`);
-  const priceCard = usagePricing.querySelector(`[data-usage-agent="${agentId}"]`);
+  const priceCard = agentModels.querySelector(`[data-usage-agent="${agentId}"]`);
   if (!modelCard || !priceCard) return;
   const provider = providerCatalog[modelCard.querySelector('[data-field="provider"]').value];
   const model = modelCard.querySelector('[data-field="model"]').value;
-  priceCard.querySelector('[data-field="pricing-model"]').textContent = `${provider?.name || 'Provider'} · ${model || 'No model selected'}`;
-  const defaultPricing = provider?.defaultPricing?.[model];
-  syncDefaultTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), defaultPricing?.input);
-  syncDefaultTokenPrice(priceCard.querySelector('[data-field="cached-input-cost"]'), defaultPricing?.cachedInput);
-  syncDefaultTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), defaultPricing?.output);
+  const effort = modelCard.querySelector('[data-field="effort"]');
+  const thinkingMode = effort?.disabled ? 'none' : effort.value;
+  const thinking = effort?.disabled ? '' : ` · ${thinkingMode} thinking`;
+  priceCard.querySelector('[data-field="pricing-model"]').textContent = `${provider?.name || 'Provider'} · ${model || 'No model selected'}${thinking}`;
+  const defaultPricing = provider?.pricingByThinking?.[model]?.[thinkingMode]
+    ?? provider?.defaultPricing?.[model];
+  priceCard.querySelector('[data-field="pricing-mode-note"]').textContent = provider?.name === 'DeepSeek'
+    ? `DeepSeek publishes the same per-token rates for ${thinkingMode} thinking; reasoning tokens are charged at the output rate.`
+    : 'Rates are resolved for the selected model and thinking mode.';
+  syncDefaultTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), defaultPricing?.input, forceProviderRates);
+  syncDefaultTokenPrice(priceCard.querySelector('[data-field="cached-input-cost"]'), defaultPricing?.cachedInput, forceProviderRates);
+  syncDefaultTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), defaultPricing?.output, forceProviderRates);
   priceCard.hidden = !isAgentCardEnabled(modelCard);
 }
 
-function syncDefaultTokenPrice(input, nextDefault) {
+function syncDefaultTokenPrice(input, nextDefault, forceProviderRate = false) {
   const previousDefault = input.dataset.defaultPrice;
-  const canReplace = input.value === '' || input.value === previousDefault;
+  const canReplace = forceProviderRate || input.value === '' || input.value === previousDefault;
   input.dataset.defaultPrice = nextDefault == null ? '' : String(nextDefault);
   if (canReplace) input.value = input.dataset.defaultPrice;
 }
@@ -333,7 +352,7 @@ function syncAgentCard(card, preferredModel = null, preferredEffort = null) {
   }
   syncRequiredProviderKeys();
   syncAgentCardEnabled(card);
-  syncUsagePricingCard(card.dataset.agent);
+  syncUsagePricingCard(card.dataset.agent, true);
 }
 
 function isAgentCardEnabled(card) {
@@ -362,7 +381,48 @@ async function loadDefaultPrompts() {
   agentModels.querySelectorAll('.agent-model-card').forEach(card => {
     const prompt = prompts[card.dataset.agent];
     if (!prompt) throw new Error(`No default prompt is configured for ${card.dataset.agent}.`);
-    card.querySelector('[data-field="prompt"]').value = prompt;
+    card.querySelector('[data-field="prompt"]').dataset.protectedPromptLoaded = 'true';
+  });
+}
+
+async function loadAgentTools() {
+  const toolsByAgent = await api('/api/agents/tools');
+  agentModels.querySelectorAll('.agent-model-card').forEach(card => {
+    const tools = toolsByAgent[card.dataset.agent];
+    if (!Array.isArray(tools)) throw new Error(`No tool catalog is configured for ${card.dataset.agent}.`);
+    const panel = card.querySelector('[data-field="tools"]');
+    const summary = panel.querySelector('summary');
+    const list = panel.querySelector('ul');
+    const conditionalCount = tools.filter(tool => tool.availability !== 'always').length;
+    const alwaysCount = tools.length - conditionalCount;
+    summary.textContent = `Available tools · ${alwaysCount}${conditionalCount ? ` + ${conditionalCount} conditional` : ''}`;
+    list.replaceChildren();
+
+    if (!tools.length) {
+      const empty = document.createElement('li');
+      empty.className = 'agent-tool-empty';
+      empty.textContent = 'No callable tools';
+      list.append(empty);
+      return;
+    }
+
+    tools.forEach(tool => {
+      const item = document.createElement('li');
+      const heading = document.createElement('div');
+      const name = document.createElement('code');
+      name.textContent = tool.name;
+      heading.append(name);
+      if (tool.availability === 'with_reference_documents') {
+        const availability = document.createElement('span');
+        availability.className = 'agent-tool-availability';
+        availability.textContent = 'with reference docs';
+        heading.append(availability);
+      }
+      const description = document.createElement('span');
+      description.textContent = tool.description;
+      item.append(heading, description);
+      list.append(item);
+    });
   });
 }
 
@@ -374,6 +434,15 @@ async function loadDeepSeekPricing() {
       input: price.inputUsdPerMillion,
       output: price.outputUsdPerMillion,
     }]));
+    providerCatalog.deepseek.pricingByThinking = Object.fromEntries(snapshot.models.map(price => {
+      const rates = {
+        cachedInput: price.cachedInputUsdPerMillion,
+        input: price.inputUsdPerMillion,
+        output: price.outputUsdPerMillion,
+      };
+      return [price.model, Object.fromEntries(
+        ['low', 'medium', 'high', 'max'].map(mode => [mode, { ...rates }]))];
+    }));
     agentCatalog.forEach(agent => syncUsagePricingCard(agent.id));
     const effective = new Date(snapshot.effectiveAt).toLocaleString();
     pricingStatus.textContent = `DeepSeek ${snapshot.priceBand} prices loaded from the provider at ${effective}. Prices remain editable.`;
@@ -382,7 +451,7 @@ async function loadDeepSeekPricing() {
   }
 }
 
-Promise.all([loadDefaultPrompts(), loadDeepSeekPricing()])
+Promise.all([loadDefaultPrompts(), loadAgentTools(), loadDeepSeekPricing()])
   .then(() => { runButton.disabled = false; })
   .catch(error => showError(`Could not initialize the run form: ${error.message}`));
 
@@ -562,17 +631,16 @@ function readAgentConfigurations() {
     const model = card.querySelector('[data-field="model"]').value;
     const effort = card.querySelector('[data-field="effort"]');
     const prompt = card.querySelector('[data-field="prompt"]').value.trim();
-    const priceCard = usagePricing.querySelector(`[data-usage-agent="${card.dataset.agent}"]`);
+    const priceCard = agentModels.querySelector(`[data-usage-agent="${card.dataset.agent}"]`);
     const inputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), `${card.dataset.agent} input price`);
     const cachedInputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="cached-input-cost"]'), `${card.dataset.agent} cached input price`);
     const outputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), `${card.dataset.agent} output price`);
     const preset = providerCatalog[providerId];
     const apiKey = providerKeys[providerId].value.trim();
     if (!apiKey) throw new Error(`An API key for ${preset.name} is required by the ${card.dataset.agent} agent.`);
-    if (!prompt) throw new Error(`A prompt is required for the ${card.dataset.agent} agent.`);
     return [card.dataset.agent, {
       apiKey,
-      prompt,
+      prompt: prompt || null,
       provider: {
         id: model,
         name: preset.name,
@@ -743,15 +811,29 @@ function renderEvents(events) {
 }
 
 function renderUsage(summary, status) {
-  if (!summary || !summary.hasUsage) {
-    usageSummary.hidden = true;
-    usageSummary.replaceChildren();
+  renderUsageCard(usageSummary, summary, status, false);
+  renderUsageCard(finalUsageSummary, summary, status, true);
+}
+
+function renderUsageCard(container, summary, status, finalCard) {
+  const finished = status === 'awaiting_approval' || isTerminal(status);
+  if (!summary || !summary.hasRequests) {
+    if (finalCard && finished) {
+      const title = document.createElement('h3');
+      title.textContent = 'Final token usage unavailable';
+      const details = document.createElement('p');
+      details.textContent = `${formatNumber(summary?.llmRequestCount)} AI requests were sent, but DeepSeek did not return token-usage metadata for this run, so the application cannot calculate its token cost.`;
+      container.replaceChildren(title, details);
+      container.hidden = false;
+    } else {
+      container.hidden = true;
+      container.replaceChildren();
+    }
     return;
   }
   const heading = document.createElement('header');
   const title = document.createElement('h3');
-  const finished = status === 'awaiting_approval' || isTerminal(status);
-  title.textContent = finished ? 'Final token cost' : 'Token usage and cost';
+  title.textContent = finalCard || finished ? 'Final token usage and cost' : 'Token usage and cost';
   const total = document.createElement('strong');
   total.textContent = summary.estimatedCostUsd == null
     ? 'Cost unavailable'
@@ -764,8 +846,11 @@ function renderUsage(summary, status) {
   const agents = summary.byAgent.map(item =>
     `${item.agent}: ${formatNumber(item.inputTokens)} in (${formatNumber(item.cachedInputTokens)} cached) / ${formatNumber(item.outputTokens)} out (${formatNumber(item.reasoningTokens)} reasoning)${item.estimatedCostUsd == null ? '' : ` (${formatUsd(item.estimatedCostUsd)})`}`).join(' · ');
   details.textContent = `${formatNumber(summary.totalTokens)} total tokens · ${formatNumber(summary.inputTokens)} input (${formatNumber(summary.cachedInputTokens)} cached) · ${formatNumber(summary.outputTokens)} output (${formatNumber(summary.reasoningTokens)} reasoning). ${cost} ${agents}`;
-  usageSummary.replaceChildren(heading, details);
-  usageSummary.hidden = false;
+  const requestDetails = summary.byAgent.map(item =>
+    `${item.agent}: ${formatNumber(item.llmRequestCount)} requests`).join(' | ');
+  details.textContent = `${formatNumber(summary.llmRequestCount)} AI requests | ${formatNumber(summary.totalTokens)} total tokens | ${formatNumber(summary.inputTokens)} input (${formatNumber(summary.cachedInputTokens)} cached) | ${formatNumber(summary.outputTokens)} output (${formatNumber(summary.reasoningTokens)} reasoning). ${cost} ${requestDetails}`;
+  container.replaceChildren(heading, details);
+  container.hidden = finalCard && !finished;
 }
 
 function updateTeamMap(events) {
@@ -871,6 +956,8 @@ function resetOutput() {
   updateTeamMap([]);
   usageSummary.hidden = true;
   usageSummary.replaceChildren();
+  finalUsageSummary.hidden = true;
+  finalUsageSummary.replaceChildren();
   resetElapsedTimer();
   clearRunError();
 }
@@ -974,3 +1061,217 @@ function formatNumber(value) {
 function formatUsd(value) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value);
 }
+
+// CodeGraph MCP workbench
+const codeGraphPanel = document.querySelector('#codegraph-panel');
+const codeGraphDb = document.querySelector('#codegraph-db');
+const codeGraphSource = document.querySelector('#codegraph-source');
+const codeGraphIndexForm = document.querySelector('#codegraph-index-form');
+const codeGraphIndexButton = document.querySelector('#codegraph-index-button');
+const codeGraphIndexBadge = document.querySelector('#codegraph-index-badge');
+const codeGraphIndexLog = document.querySelector('#codegraph-index-log');
+const codeGraphError = document.querySelector('#codegraph-error');
+const codeGraphOverview = document.querySelector('#codegraph-overview');
+const codeGraphToolForm = document.querySelector('#codegraph-tool-form');
+const codeGraphToolResult = document.querySelector('#codegraph-tool-result');
+const codeGraphQuery = document.querySelector('#codegraph-query');
+const codeGraphLimit = document.querySelector('#codegraph-limit');
+const codeGraphBudgetGroup = document.querySelector('#codegraph-budget-group');
+const codeGraphTableForm = document.querySelector('#codegraph-table-form');
+const codeGraphTableSelect = document.querySelector('#codegraph-table');
+const codeGraphTableResult = document.querySelector('#codegraph-table-result');
+let activeCodeGraphTool = 'find_symbol';
+let codeGraphIndexPoll = null;
+let codeGraphTableOffset = 0;
+let codeGraphTableRowCount = 0;
+
+document.querySelectorAll('[data-app-mode]').forEach(button => button.addEventListener('click', () => {
+  const graphMode = button.dataset.appMode === 'codegraph';
+  document.querySelectorAll('[data-app-mode]').forEach(item => {
+    item.classList.toggle('active', item === button);
+    item.setAttribute('aria-pressed', String(item === button));
+  });
+  codeGraphPanel.hidden = !graphMode;
+  document.querySelector('.steps').hidden = graphMode;
+  if (graphMode) workflowPanels.forEach(panel => { panel.hidden = true; });
+  else {
+    const currentStep = document.querySelector('.step.active')?.dataset.step || 'setup';
+    setActiveStep(currentStep);
+  }
+}));
+
+if (new URLSearchParams(window.location.search).get('view') === 'codegraph')
+  document.querySelector('[data-app-mode="codegraph"]').click();
+
+async function initializeCodeGraph() {
+  try {
+    const config = await api('/api/codegraph/config');
+    codeGraphDb.value = config.defaultDatabasePath;
+    config.tables.forEach(table => codeGraphTableSelect.add(new Option(table, table)));
+    codeGraphTableSelect.value = 'nodes';
+    await refreshCodeGraphIndexStatus();
+    if (codeGraphDb.value) await refreshCodeGraphDatabase(false);
+  } catch (error) {
+    showCodeGraphError(error.message);
+  }
+}
+
+codeGraphIndexForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  showCodeGraphError();
+  codeGraphIndexButton.disabled = true;
+  try {
+    const status = await api('/api/codegraph/index', {
+      method: 'POST',
+      body: JSON.stringify({
+        sourcePath: codeGraphSource.value.trim(),
+        databasePath: codeGraphDb.value.trim(),
+        incremental: document.querySelector('#codegraph-incremental').checked,
+        includeExternal: document.querySelector('#codegraph-external').checked,
+        restoreDependencies: document.querySelector('#codegraph-restore').checked,
+      }),
+    });
+    renderCodeGraphIndexStatus(status);
+    startCodeGraphIndexPolling();
+  } catch (error) {
+    codeGraphIndexButton.disabled = false;
+    showCodeGraphError(error.message);
+  }
+});
+
+document.querySelector('#codegraph-refresh').addEventListener('click', () => refreshCodeGraphDatabase(true));
+
+function startCodeGraphIndexPolling() {
+  if (codeGraphIndexPoll) clearInterval(codeGraphIndexPoll);
+  codeGraphIndexPoll = setInterval(refreshCodeGraphIndexStatus, 1000);
+}
+
+async function refreshCodeGraphIndexStatus() {
+  const status = await api('/api/codegraph/index/status');
+  renderCodeGraphIndexStatus(status);
+  if (status.state === 'running') startCodeGraphIndexPolling();
+  else if (codeGraphIndexPoll) {
+    clearInterval(codeGraphIndexPoll);
+    codeGraphIndexPoll = null;
+    if (status.state === 'completed' || status.state === 'completed_with_warnings') await refreshCodeGraphDatabase(false);
+  }
+}
+
+function renderCodeGraphIndexStatus(status) {
+  codeGraphIndexBadge.textContent = status.state.replaceAll('_', ' ');
+  codeGraphIndexBadge.className = `status ${status.state === 'running' || status.state === 'completed_with_warnings' ? 'working' : status.state === 'completed' ? 'success' : status.state === 'failed' ? 'failed' : 'idle'}`;
+  codeGraphIndexButton.disabled = status.state === 'running';
+  const log = status.log || [];
+  codeGraphIndexLog.hidden = log.length === 0 && !status.error;
+  codeGraphIndexLog.textContent = [...log, status.error ? `ERROR: ${status.error}` : ''].filter(Boolean).join('\n');
+  codeGraphIndexLog.scrollTop = codeGraphIndexLog.scrollHeight;
+}
+
+async function refreshCodeGraphDatabase(showErrors = true) {
+  try {
+    const overview = await api(`/api/codegraph/database?dbPath=${encodeURIComponent(codeGraphDb.value.trim())}`);
+    codeGraphOverview.hidden = false;
+    document.querySelector('#codegraph-db-meta').textContent = `${overview.databasePath} · ${formatBytes(overview.sizeBytes)}`;
+    const counts = document.querySelector('#codegraph-counts');
+    counts.replaceChildren(...Object.entries(overview.counts).map(([name, count]) => {
+      const card = document.createElement('div'); card.className = 'codegraph-count';
+      const number = document.createElement('strong'); number.textContent = formatNumber(count);
+      const label = document.createElement('span'); label.textContent = name;
+      card.append(number, label); return card;
+    }));
+    renderKindList('#codegraph-node-kinds', overview.nodeKinds, 'kind', 'count');
+    renderKindList('#codegraph-edge-kinds', overview.edgeKinds, 'kind', 'count');
+    showCodeGraphError();
+  } catch (error) {
+    codeGraphOverview.hidden = true;
+    if (showErrors) showCodeGraphError(error.message);
+  }
+}
+
+function renderKindList(selector, rows, nameField, countField) {
+  const list = document.createElement('div'); list.className = 'codegraph-kind-list';
+  rows.forEach(row => { const item = document.createElement('span'); item.textContent = `${row[nameField]} · ${formatNumber(row[countField])}`; list.append(item); });
+  document.querySelector(selector).replaceChildren(list);
+}
+
+document.querySelectorAll('[data-codegraph-tool]').forEach(button => button.addEventListener('click', () => {
+  activeCodeGraphTool = button.dataset.codegraphTool;
+  document.querySelectorAll('[data-codegraph-tool]').forEach(item => item.classList.toggle('active', item === button));
+  const usesId = activeCodeGraphTool === 'get_neighbors' || activeCodeGraphTool === 'get_context_by_id';
+  const usesContext = activeCodeGraphTool.startsWith('get_context');
+  document.querySelector('#codegraph-query-label').textContent = usesId ? 'Exact symbol ID' : 'Symbol name';
+  codeGraphQuery.placeholder = usesId ? 'M:Namespace.Type.Method' : 'OrderService';
+  codeGraphLimit.value = activeCodeGraphTool === 'get_neighbors' ? 100 : activeCodeGraphTool === 'find_symbol' ? 15 : 25;
+  codeGraphLimit.max = activeCodeGraphTool === 'get_neighbors' ? 250 : 100;
+  codeGraphBudgetGroup.hidden = !usesContext;
+}));
+
+codeGraphToolForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  showCodeGraphError();
+  const paths = {
+    find_symbol: 'find-symbol', get_neighbors: 'get-neighbors',
+    get_context: 'get-context', get_context_by_id: 'get-context-by-id',
+  };
+  const value = codeGraphQuery.value.trim();
+  const payload = { databasePath: codeGraphDb.value.trim() };
+  if (activeCodeGraphTool === 'find_symbol') Object.assign(payload, { name: value, limit: Number(codeGraphLimit.value) });
+  if (activeCodeGraphTool === 'get_neighbors') Object.assign(payload, { id: value, limit: Number(codeGraphLimit.value) });
+  if (activeCodeGraphTool === 'get_context') Object.assign(payload, { query: value, maxNodes: Number(codeGraphLimit.value), tokenBudget: Number(document.querySelector('#codegraph-budget').value) });
+  if (activeCodeGraphTool === 'get_context_by_id') Object.assign(payload, { id: value, maxNodes: Number(codeGraphLimit.value), tokenBudget: Number(document.querySelector('#codegraph-budget').value) });
+  codeGraphToolResult.replaceChildren(Object.assign(document.createElement('p'), { textContent: `Running ${activeCodeGraphTool}…` }));
+  try {
+    const result = await api(`/api/codegraph/tools/${paths[activeCodeGraphTool]}`, { method: 'POST', body: JSON.stringify(payload) });
+    if (result.content !== undefined) {
+      const pre = document.createElement('pre'); pre.textContent = result.content; codeGraphToolResult.replaceChildren(pre);
+    } else renderCodeGraphTable(codeGraphToolResult, result, true);
+  } catch (error) {
+    codeGraphToolResult.replaceChildren(); showCodeGraphError(error.message);
+  }
+});
+
+codeGraphTableForm.addEventListener('submit', event => { event.preventDefault(); codeGraphTableOffset = 0; loadCodeGraphTable(); });
+document.querySelector('#codegraph-table-prev').addEventListener('click', () => { codeGraphTableOffset = Math.max(0, codeGraphTableOffset - 50); loadCodeGraphTable(); });
+document.querySelector('#codegraph-table-next').addEventListener('click', () => { codeGraphTableOffset += 50; loadCodeGraphTable(); });
+
+async function loadCodeGraphTable() {
+  try {
+    const params = new URLSearchParams({ dbPath: codeGraphDb.value.trim(), limit: '50', offset: String(codeGraphTableOffset), search: document.querySelector('#codegraph-table-search').value.trim() });
+    const result = await api(`/api/codegraph/tables/${encodeURIComponent(codeGraphTableSelect.value)}?${params}`);
+    codeGraphTableRowCount = result.rows.length;
+    renderCodeGraphTable(codeGraphTableResult, result.rows, result.table === 'nodes');
+    document.querySelector('#codegraph-table-prev').disabled = codeGraphTableOffset === 0;
+    document.querySelector('#codegraph-table-next').disabled = codeGraphTableRowCount < 50;
+    const last = codeGraphTableOffset + codeGraphTableRowCount;
+    document.querySelector('#codegraph-table-page').textContent = codeGraphTableRowCount ? `Rows ${codeGraphTableOffset + 1}–${last}` : 'No rows';
+  } catch (error) { showCodeGraphError(error.message); }
+}
+
+function renderCodeGraphTable(container, rows, linkSymbolIds) {
+  if (!rows.length) { container.replaceChildren(Object.assign(document.createElement('p'), { textContent: 'No matching rows.' })); return; }
+  const columns = [...new Set(rows.flatMap(row => Object.keys(row)))];
+  const table = document.createElement('table'); table.className = 'codegraph-table';
+  const head = document.createElement('thead'); const headRow = document.createElement('tr');
+  columns.forEach(column => headRow.append(Object.assign(document.createElement('th'), { textContent: column }))); head.append(headRow);
+  const body = document.createElement('tbody');
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    columns.forEach(column => {
+      const td = document.createElement('td'); const value = row[column] ?? '';
+      if (linkSymbolIds && column.toLowerCase() === 'id' && value) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'codegraph-symbol-link'; button.textContent = value; button.title = 'Use this symbol ID';
+        button.addEventListener('click', () => { codeGraphQuery.value = value; document.querySelector('[data-codegraph-tool="get_neighbors"]').click(); codeGraphToolForm.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+        td.append(button);
+      } else { td.textContent = typeof value === 'object' ? JSON.stringify(value) : String(value); td.title = td.textContent; }
+      tr.append(td);
+    }); body.append(tr);
+  });
+  table.append(head, body); container.replaceChildren(table);
+}
+
+function showCodeGraphError(message = '') {
+  codeGraphError.hidden = !message;
+  codeGraphError.textContent = message;
+}
+
+initializeCodeGraph();

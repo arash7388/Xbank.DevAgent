@@ -58,12 +58,12 @@ public sealed record WorkflowSettings(
 
         if (Prompt is not null && string.IsNullOrWhiteSpace(Prompt))
         {
-            throw new ConfigurationException("Agent prompt cannot be empty.");
+            throw new ConfigurationException("Additional agent guidance cannot be empty.");
         }
 
         if (Prompt?.Length > 50_000)
         {
-            throw new ConfigurationException("Agent prompt must be 50,000 characters or fewer.");
+            throw new ConfigurationException("Additional agent guidance must be 50,000 characters or fewer.");
         }
 
         if (MaxReviewerRemediationCycles < 1)

@@ -7,6 +7,7 @@ namespace Maf.Handoff.Core;
 public sealed record AgentTokenUsage(
     string Agent,
     string Model,
+    long LlmRequestCount,
     long InputTokens,
     long CachedInputTokens,
     long OutputTokens,
@@ -17,6 +18,7 @@ public sealed record AgentTokenUsage(
 /// <summary>Provider-reported token totals and an optional rate-based cost estimate for a workflow run.</summary>
 public sealed record TokenUsageSummary(
     IReadOnlyList<AgentTokenUsage> ByAgent,
+    long LlmRequestCount,
     long InputTokens,
     long CachedInputTokens,
     long OutputTokens,
@@ -24,9 +26,11 @@ public sealed record TokenUsageSummary(
     long TotalTokens,
     decimal? EstimatedCostUsd)
 {
-    public bool HasUsage => ByAgent.Count > 0;
+    public bool HasUsage => TotalTokens > 0;
 
-    public static TokenUsageSummary Empty { get; } = new([], 0, 0, 0, 0, 0, null);
+    public bool HasRequests => LlmRequestCount > 0;
+
+    public static TokenUsageSummary Empty { get; } = new([], 0, 0, 0, 0, 0, 0, null);
 }
 
 /// <summary>
@@ -36,6 +40,18 @@ public sealed record TokenUsageSummary(
 public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent)
 {
     private readonly ConcurrentDictionary<string, MutableAgentUsage> _usage = new(StringComparer.Ordinal);
+
+    /// <summary>Records an outbound provider request, including ones that later fail or omit usage.</summary>
+    public void RecordRequest(string agent)
+    {
+        if (string.IsNullOrWhiteSpace(agent))
+        {
+            return;
+        }
+
+        WorkflowSettings settings = GetSettings(agent);
+        _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).AddRequest();
+    }
 
     public void Record(string agent, UsageDetails? usage)
     {
@@ -56,9 +72,7 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
             return;
         }
 
-        WorkflowSettings settings = settingsByAgent.TryGetValue(agent, out WorkflowSettings? value)
-            ? value
-            : throw new ConfigurationException($"Model configuration for agent '{agent}' is required.");
+        WorkflowSettings settings = GetSettings(agent);
         _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).Add(
             input,
             cachedInput,
@@ -76,6 +90,7 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
             .ThenBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => pair.Value.Snapshot(pair.Key))
             .ToArray();
+        long requests = byAgent.Sum(item => item.LlmRequestCount);
         long input = byAgent.Sum(item => item.InputTokens);
         long cachedInput = byAgent.Sum(item => item.CachedInputTokens);
         long output = byAgent.Sum(item => item.OutputTokens);
@@ -84,18 +99,32 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
         decimal? cost = byAgent.All(item => item.EstimatedCostUsd.HasValue)
             ? byAgent.Sum(item => item.EstimatedCostUsd ?? 0m)
             : null;
-        return new(byAgent, input, cachedInput, output, reasoning, total, cost);
+        return new(byAgent, requests, input, cachedInput, output, reasoning, total, cost);
     }
+
+    private WorkflowSettings GetSettings(string agent) => settingsByAgent.TryGetValue(agent, out WorkflowSettings? value)
+        ? value
+        : throw new ConfigurationException($"Model configuration for agent '{agent}' is required.");
 
     private sealed class MutableAgentUsage(string model, ModelProviderDefinition? provider)
     {
         private readonly Lock _lock = new();
+        private long _requests;
         private long _input;
         private long _cachedInput;
         private long _output;
         private long _reasoning;
         private long _total;
         private bool _hasCompletePricingBreakdown = true;
+        private bool _hasUsage;
+
+        internal void AddRequest()
+        {
+            lock (_lock)
+            {
+                _requests++;
+            }
+        }
 
         internal void Add(long input, long cachedInput, long output, long reasoning, long total, bool hasCompletePricingBreakdown)
         {
@@ -106,6 +135,7 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
                 _output += output;
                 _reasoning += reasoning;
                 _total += total;
+                _hasUsage = true;
                 _hasCompletePricingBreakdown &= hasCompletePricingBreakdown;
             }
         }
@@ -114,14 +144,14 @@ public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSett
         {
             lock (_lock)
             {
-                decimal? cost = _hasCompletePricingBreakdown &&
+                decimal? cost = _hasUsage && _hasCompletePricingBreakdown &&
                     provider?.InputCostPerMillionTokens is decimal inputRate &&
                     provider.OutputCostPerMillionTokens is decimal outputRate
                     ? ((_input - _cachedInput) / 1_000_000m * inputRate) +
                       (_cachedInput / 1_000_000m * (provider.CachedInputCostPerMillionTokens ?? inputRate)) +
                       (_output / 1_000_000m * outputRate)
                     : null;
-                return new(agent, model, _input, _cachedInput, _output, _reasoning, _total, cost);
+                return new(agent, model, _requests, _input, _cachedInput, _output, _reasoning, _total, cost);
             }
         }
     }
@@ -137,6 +167,7 @@ internal sealed class UsageTrackingChatClient(
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        usageCollector.RecordRequest(agent);
         ChatResponse response = await innerClient.GetResponseAsync(messages, options, cancellationToken)
             .ConfigureAwait(false);
         usageCollector.Record(agent, GetUsage(response));
@@ -148,6 +179,7 @@ internal sealed class UsageTrackingChatClient(
         ChatOptions? options = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        usageCollector.RecordRequest(agent);
         UsageDetails? usage = null;
         await foreach (ChatResponseUpdate update in innerClient.GetStreamingResponseAsync(
             messages,

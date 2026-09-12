@@ -14,7 +14,7 @@ public sealed class AgentTeamFactoryTests
         ConfigurationException exception = Assert.Throws<ConfigurationException>(() =>
             AgentTeamFactory.Create(clients, settings));
 
-        Assert.Contains("developer", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("required", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -119,20 +119,32 @@ public sealed class AgentTeamFactoryTests
 
         Assert.Equal(expectedEffort, options.Reasoning!.Effort);
         Assert.Equal(ReasoningOutput.Full, options.Reasoning.Output);
+        Assert.True(Assert.IsType<bool>(options.AdditionalProperties!["include_usage"]));
     }
 
     [Fact]
-    public void UsesCustomAgentPromptAsInstructions()
+    public void ComposesCallerGuidanceWithoutReplacingProtectedInstructions()
     {
         WorkflowSettings settings = new(
             "https://api.openai.com/v1",
             "gpt-5.6-terra",
             "test-key",
-            Prompt: "Role-specific custom prompt");
+            Prompt: "Do not use CodeGraph.");
 
-        ChatOptions options = AgentTeamFactory.CreateChatOptions(settings, settings.Prompt!, tools: null);
+        string instructions = AgentInstructionComposer.Compose(
+            AgentNames.Developer,
+            AgentPrompts.Developer,
+            settings.Prompt,
+            requireCodeGraph: true);
+        ChatOptions options = AgentTeamFactory.CreateChatOptions(settings, instructions, tools: null);
 
-        Assert.Equal("Role-specific custom prompt", options.Instructions);
+        Assert.Contains("implementation specialist", options.Instructions, StringComparison.Ordinal);
+        Assert.Contains("Do not use CodeGraph.", options.Instructions, StringComparison.Ordinal);
+        Assert.Contains("PROTECTED CODEGRAPH POLICY", options.Instructions, StringComparison.Ordinal);
+        Assert.EndsWith(
+            "never pretend that the required check occurred.",
+            options.Instructions,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -140,6 +152,36 @@ public sealed class AgentTeamFactoryTests
     {
         Assert.Equal(AgentNames.All, AgentPrompts.Defaults.Keys);
         Assert.All(AgentPrompts.Defaults.Values, prompt => Assert.False(string.IsNullOrWhiteSpace(prompt)));
+    }
+
+    [Fact]
+    public void PublishesAvailableToolsForEveryAgent()
+    {
+        Assert.Equal(AgentNames.All, AgentToolCatalog.ByAgent.Keys);
+        Assert.Empty(AgentToolCatalog.ByAgent[AgentNames.Jira]);
+        Assert.Contains(
+            AgentToolCatalog.WriteRepositoryFile,
+            AgentToolCatalog.ByAgent[AgentNames.Developer]);
+        Assert.All(
+            new[] { AgentNames.Planner, AgentNames.Developer, AgentNames.Reviewer, AgentNames.Security },
+            agent => Assert.Contains(
+                AgentToolCatalog.GetContext,
+                AgentToolCatalog.ByAgent[agent]));
+        Assert.DoesNotContain(
+            AgentToolCatalog.GetContext,
+            AgentToolCatalog.ByAgent[AgentNames.Intake]);
+        Assert.DoesNotContain(
+            AgentToolCatalog.GetContext,
+            AgentToolCatalog.ByAgent[AgentNames.ReleaseManager]);
+        Assert.All(
+            AgentToolCatalog.ByAgent.Where(entry => entry.Key != AgentNames.Developer),
+            entry => Assert.DoesNotContain(AgentToolCatalog.WriteRepositoryFile, entry.Value));
+        Assert.All(
+            AgentToolCatalog.ByAgent.Where(entry => entry.Key != AgentNames.Jira),
+            entry => Assert.Contains(
+                entry.Value,
+                tool => tool.Name == AgentToolCatalog.SearchDocuments.Name
+                    && tool.Availability == AgentToolCatalog.WithReferenceDocuments));
     }
 
     private sealed class RecordingChatClient : IChatClient

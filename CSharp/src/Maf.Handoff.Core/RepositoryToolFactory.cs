@@ -12,19 +12,19 @@ internal static class RepositoryToolFactory
         [
         AIFunctionFactory.Create(
             (Func<string?, string>)workspace.ListFiles,
-            name: "list_repository_files"),
+            name: AgentToolCatalog.ListRepositoryFiles.Name),
         AIFunctionFactory.Create(
             (Func<string, string>)workspace.ReadFile,
-            name: "read_repository_file"),
+            name: AgentToolCatalog.ReadRepositoryFile.Name),
         AIFunctionFactory.Create(
             (Func<string, string?, string>)workspace.Search,
-            name: "search_repository"),
+            name: AgentToolCatalog.SearchRepository.Name),
         AIFunctionFactory.Create(
             (Func<string>)workspace.GetStatus,
-            name: "get_repository_status"),
+            name: AgentToolCatalog.GetRepositoryStatus.Name),
         AIFunctionFactory.Create(
             (Func<string>)workspace.GetDiff,
-            name: "get_repository_diff"),
+            name: AgentToolCatalog.GetRepositoryDiff.Name),
         ];
         if (referenceDocuments is not null)
         {
@@ -41,9 +41,9 @@ internal static class RepositoryToolFactory
         .. CreateReadTools(workspace, referenceDocuments),
         AIFunctionFactory.Create(
             (Func<string, string, string>)workspace.WriteFile,
-            name: "write_repository_file"),
+            name: AgentToolCatalog.WriteRepositoryFile.Name),
         AIFunctionFactory.Create(
             (Func<string, string, string, string>)workspace.ReplaceText,
-            name: "replace_repository_text"),
+            name: AgentToolCatalog.ReplaceRepositoryText.Name),
     ];
 }

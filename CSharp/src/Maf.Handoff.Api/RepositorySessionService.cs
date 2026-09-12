@@ -5,13 +5,19 @@ namespace Maf.Handoff.Api;
 
 public sealed class RepositorySessionService(
     GitHubPullRequestClient pullRequestClient,
-    ReferenceDocumentService referenceDocuments)
+    ReferenceDocumentService referenceDocuments,
+    CodeGraphService codeGraph,
+    IConfiguration configuration)
 {
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
     private readonly string _workspaceRoot = Path.Combine(Path.GetTempPath(), "maf-repository-workspaces");
 
     public SessionSnapshot Create(CreateSessionRequest request)
     {
+        if (string.IsNullOrWhiteSpace(request.GitHubToken))
+        {
+            request = request with { GitHubToken = configuration["GitHub:Token"] };
+        }
         Validate(request);
         if (request.ReferenceCollectionId is Guid collectionId && !referenceDocuments.Exists(collectionId))
         {
@@ -128,7 +134,7 @@ public sealed class RepositorySessionService(
             IReferenceDocumentSearch? documents = request.ReferenceCollectionId is Guid collectionId
                 ? referenceDocuments.GetSearch(collectionId)
                 : null;
-            HandoffWorkflowRunner runner = new(settingsByAgent, workspace, documents);
+            HandoffWorkflowRunner runner = new(settingsByAgent, workspace, documents, codeGraph);
             string? terminalStatus = null;
 
             await foreach (RunEvent runEvent in runner.RunAsync(request.Task, state.Cancellation.Token))

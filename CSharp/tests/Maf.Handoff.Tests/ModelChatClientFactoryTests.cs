@@ -27,7 +27,9 @@ public sealed class ModelChatClientFactoryTests
 
         IChatClient client = ModelChatClientFactory.Create(settings);
 
-        Assert.Contains("DeepSeekChatClient", client.GetType().Name, StringComparison.Ordinal);
+        Assert.Contains("DeepSeekToolHistoryChatClient", client.GetType().Name, StringComparison.Ordinal);
+        Assert.IsType<DeepSeekUsagePreservingChatClient>(
+            client.GetService(typeof(DeepSeekUsagePreservingChatClient)));
         (client as IDisposable)?.Dispose();
     }
 }

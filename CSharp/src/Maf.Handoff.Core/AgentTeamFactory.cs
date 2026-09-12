@@ -10,39 +10,91 @@ public static class AgentTeamFactory
         IChatClient chatClient,
         WorkflowSettings settings,
         RepositoryWorkspace? workspace = null,
-        IReferenceDocumentSearch? referenceDocuments = null)
+        IReferenceDocumentSearch? referenceDocuments = null,
+        ICodeGraphTools? codeGraphTools = null,
+        CodeGraphAudit? codeGraphAudit = null)
     {
         Dictionary<string, IChatClient> clients = AgentNames.All.ToDictionary(name => name, _ => chatClient);
         Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.All.ToDictionary(name => name, _ => settings);
-        return Create(clients, settingsByAgent, workspace, referenceDocuments);
+        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit);
     }
 
     public static AgentTeam Create(
         IReadOnlyDictionary<string, IChatClient> clients,
         IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent,
         RepositoryWorkspace? workspace = null,
-        IReferenceDocumentSearch? referenceDocuments = null)
+        IReferenceDocumentSearch? referenceDocuments = null,
+        ICodeGraphTools? codeGraphTools = null,
+        CodeGraphAudit? codeGraphAudit = null)
     {
-        IList<AITool>? readTools = workspace is null
-            ? referenceDocuments is null ? null : [ReferenceDocumentToolFactory.Create(referenceDocuments)]
-            : RepositoryToolFactory.CreateReadTools(workspace, referenceDocuments);
-        IList<AITool>? developerTools = workspace is null
-            ? referenceDocuments is null ? null : [ReferenceDocumentToolFactory.Create(referenceDocuments)]
-            : RepositoryToolFactory.CreateDeveloperTools(workspace, referenceDocuments);
-        IChatClient developerClient = workspace is null
-            ? Get(clients, AgentNames.Developer)
-            : new DeveloperHandoffGuardChatClient(
-                Get(clients, AgentNames.Developer),
+        bool requireCodeGraph = workspace?.ContainsCSharpSource() is true;
+        if (requireCodeGraph && codeGraphTools is null)
+        {
+            throw new ConfigurationException(
+                "Protected CodeGraph policy requires a configured CodeGraph provider for C# repositories.");
+        }
+
+        if (requireCodeGraph)
+        {
+            codeGraphTools!.EnsureAvailable(workspace!.RepositoryUrl);
+            codeGraphAudit ??= new CodeGraphAudit();
+        }
+
+        Dictionary<string, IChatClient> effectiveClients = clients.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value,
+            StringComparer.Ordinal);
+        if (workspace is not null)
+        {
+            effectiveClients[AgentNames.Developer] = new DeveloperHandoffGuardChatClient(
+                Get(effectiveClients, AgentNames.Developer),
                 () => !string.IsNullOrWhiteSpace(workspace.GetDiff()));
+        }
+
+        if (requireCodeGraph)
+        {
+            foreach (string agentName in effectiveClients.Keys.Where(CodeGraphPolicy.IsEnforcedFor).ToArray())
+            {
+                effectiveClients[agentName] = new CodeGraphHandoffGuardChatClient(
+                    effectiveClients[agentName],
+                    agentName,
+                    codeGraphAudit!);
+            }
+        }
 
         return new(
-            CreateAgent(Get(clients, AgentNames.Intake), Get(settingsByAgent, AgentNames.Intake), AgentNames.Intake, "Intake, constraints, and routing.", AgentPrompts.Intake, readTools),
-            CreateOptionalAgent(clients, settingsByAgent, AgentNames.Jira, "Read-only Jira issue and project context retrieval.", AgentPrompts.Jira, tools: null),
-            CreateOptionalAgent(clients, settingsByAgent, AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, readTools),
-            CreateAgent(developerClient, Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, developerTools),
-            CreateOptionalAgent(clients, settingsByAgent, AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, readTools),
-            CreateOptionalAgent(clients, settingsByAgent, AgentNames.Security, "Threat modeling and security review.", AgentPrompts.Security, readTools),
-            CreateAgent(Get(clients, AgentNames.ReleaseManager), Get(settingsByAgent, AgentNames.ReleaseManager), AgentNames.ReleaseManager, "Final evidence gate.", AgentPrompts.ReleaseManager, readTools));
+            CreateAgent(Get(effectiveClients, AgentNames.Intake), Get(settingsByAgent, AgentNames.Intake), AgentNames.Intake, "Intake, constraints, and routing.", AgentPrompts.Intake, CreateTools(AgentNames.Intake, false), requireCodeGraph),
+            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Read-only Jira issue and project context retrieval.", AgentPrompts.Jira, tools: null, requireCodeGraph),
+            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, CreateTools(AgentNames.Planner, false), requireCodeGraph),
+            CreateAgent(Get(effectiveClients, AgentNames.Developer), Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, CreateTools(AgentNames.Developer, true), requireCodeGraph),
+            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, false), requireCodeGraph),
+            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Security, "Threat modeling and security review.", AgentPrompts.Security, CreateTools(AgentNames.Security, false), requireCodeGraph),
+            CreateAgent(Get(effectiveClients, AgentNames.ReleaseManager), Get(settingsByAgent, AgentNames.ReleaseManager), AgentNames.ReleaseManager, "Final evidence gate.", AgentPrompts.ReleaseManager, CreateTools(AgentNames.ReleaseManager, false), requireCodeGraph));
+
+        IList<AITool>? CreateTools(string agentName, bool developer)
+        {
+            List<AITool> tools;
+            if (workspace is null)
+            {
+                tools = referenceDocuments is null
+                    ? []
+                    : [ReferenceDocumentToolFactory.Create(referenceDocuments)];
+            }
+            else
+            {
+                IList<AITool> repositoryTools = developer
+                    ? RepositoryToolFactory.CreateDeveloperTools(workspace, referenceDocuments)
+                    : RepositoryToolFactory.CreateReadTools(workspace, referenceDocuments);
+                tools = [.. repositoryTools];
+            }
+
+            if (requireCodeGraph && CodeGraphPolicy.IsEnforcedFor(agentName))
+            {
+                tools.AddRange(CodeGraphToolFactory.Create(codeGraphTools!, codeGraphAudit!, agentName));
+            }
+
+            return tools.Count == 0 ? null : tools;
+        }
     }
 
     private static ChatClientAgent? CreateOptionalAgent(
@@ -51,7 +103,8 @@ public static class AgentTeamFactory
         string name,
         string description,
         string instructions,
-        IList<AITool>? tools)
+        IList<AITool>? tools,
+        bool requireCodeGraph)
     {
         bool hasSettings = settingsByAgent.TryGetValue(name, out WorkflowSettings? settings);
         bool hasClient = clients.TryGetValue(name, out IChatClient? client);
@@ -65,7 +118,7 @@ public static class AgentTeamFactory
             throw new ConfigurationException($"Model configuration for optional agent '{name}' is incomplete.");
         }
 
-        return CreateAgent(client!, settings!, name, description, instructions, tools);
+        return CreateAgent(client!, settings!, name, description, instructions, tools, requireCodeGraph);
     }
 
     private static T Get<T>(IReadOnlyDictionary<string, T> values, string agentName) =>
@@ -79,12 +132,16 @@ public static class AgentTeamFactory
         string name,
         string description,
         string instructions,
-        IList<AITool>? tools = null) => new(client, new ChatClientAgentOptions
+        IList<AITool>? tools,
+        bool requireCodeGraph) => new(client, new ChatClientAgentOptions
         {
             Id = $"software-delivery-{name}",
             Name = name,
             Description = description,
-            ChatOptions = CreateChatOptions(settings, settings.Prompt ?? instructions, tools),
+            ChatOptions = CreateChatOptions(
+                settings,
+                AgentInstructionComposer.Compose(name, instructions, settings.Prompt, requireCodeGraph),
+                tools),
         });
 
     internal static ChatOptions CreateChatOptions(
@@ -103,6 +160,12 @@ public static class AgentTeamFactory
         bool isDeepSeek = providerHost?.Equals("api.deepseek.com", StringComparison.OrdinalIgnoreCase) is true;
         if (isDeepSeek)
         {
+            // Request usage on the final DeepSeek streaming chunk so the run collector can
+            // aggregate provider-reported token counts.
+            options.AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["include_usage"] = true,
+            };
             options.Reasoning = new ReasoningOptions
             {
                 Effort = settings.Provider?.ReasoningEffort switch
