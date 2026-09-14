@@ -37,21 +37,39 @@ public sealed record TokenUsageSummary(
 /// Collects token usage returned by providers. It deliberately does not estimate tokens when a provider omits
 /// usage metadata: displayed counts are always provider-reported counts.
 /// </summary>
-public sealed class TokenUsageCollector(IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent)
+public sealed class TokenUsageCollector(
+    IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent,
+    int maxLlmRequests = int.MaxValue)
 {
     private readonly ConcurrentDictionary<string, MutableAgentUsage> _usage = new(StringComparer.Ordinal);
+    private readonly Lock _requestLock = new();
+    private int _requestCount;
 
-    /// <summary>Records an outbound provider request, including ones that later fail or omit usage.</summary>
-    public void RecordRequest(string agent)
+    /// <summary>Reserves one outbound provider request, returning false when the run budget is exhausted.</summary>
+    public bool RecordRequest(string agent)
     {
         if (string.IsNullOrWhiteSpace(agent))
         {
-            return;
+            return true;
         }
 
-        WorkflowSettings settings = GetSettings(agent);
-        _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).AddRequest();
+        lock (_requestLock)
+        {
+            if (_requestCount >= maxLlmRequests)
+            {
+                return false;
+            }
+
+            _requestCount++;
+            WorkflowSettings settings = GetSettings(agent);
+            _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).AddRequest();
+            return true;
+        }
     }
+
+    public string RequestLimitMessage(string agent) =>
+        $"{HandoffTopology.RequestLimitMarker} The workflow reached its limit of {maxLlmRequests:N0} " +
+        $"AI requests before release approval. The next request would have been made by '{agent}'.";
 
     public void Record(string agent, UsageDetails? usage)
     {
@@ -167,7 +185,11 @@ internal sealed class UsageTrackingChatClient(
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        usageCollector.RecordRequest(agent);
+        if (!usageCollector.RecordRequest(agent))
+        {
+            return RequestLimitResponse();
+        }
+
         ChatResponse response = await innerClient.GetResponseAsync(messages, options, cancellationToken)
             .ConfigureAwait(false);
         usageCollector.Record(agent, GetUsage(response));
@@ -179,7 +201,16 @@ internal sealed class UsageTrackingChatClient(
         ChatOptions? options = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        usageCollector.RecordRequest(agent);
+        if (!usageCollector.RecordRequest(agent))
+        {
+            foreach (ChatResponseUpdate update in RequestLimitResponse().ToChatResponseUpdates())
+            {
+                yield return update;
+            }
+
+            yield break;
+        }
+
         UsageDetails? usage = null;
         await foreach (ChatResponseUpdate update in innerClient.GetStreamingResponseAsync(
             messages,
@@ -207,4 +238,7 @@ internal sealed class UsageTrackingChatClient(
             .OfType<UsageContent>()
             .LastOrDefault()
             ?.Details;
+
+    private ChatResponse RequestLimitResponse() =>
+        new(new ChatMessage(ChatRole.Assistant, usageCollector.RequestLimitMessage(agent)));
 }

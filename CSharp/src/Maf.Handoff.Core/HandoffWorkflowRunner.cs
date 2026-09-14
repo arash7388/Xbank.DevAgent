@@ -13,31 +13,36 @@ public sealed class HandoffWorkflowRunner
     private readonly IChatClient? _chatClient;
     private readonly IReferenceDocumentSearch? _referenceDocuments;
     private readonly ICodeGraphTools? _codeGraphTools;
+    private readonly ILlmCheckpointStore? _checkpointStore;
 
     public HandoffWorkflowRunner(
         WorkflowSettings settings,
         RepositoryWorkspace? workspace = null,
         IChatClient? chatClient = null,
         IReferenceDocumentSearch? referenceDocuments = null,
-        ICodeGraphTools? codeGraphTools = null)
+        ICodeGraphTools? codeGraphTools = null,
+        ILlmCheckpointStore? checkpointStore = null)
     {
         _settings = settings;
         _workspace = workspace;
         _chatClient = chatClient;
         _referenceDocuments = referenceDocuments;
         _codeGraphTools = codeGraphTools;
+        _checkpointStore = checkpointStore;
     }
 
     public HandoffWorkflowRunner(
         IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent,
         RepositoryWorkspace? workspace = null,
         IReferenceDocumentSearch? referenceDocuments = null,
-        ICodeGraphTools? codeGraphTools = null)
+        ICodeGraphTools? codeGraphTools = null,
+        ILlmCheckpointStore? checkpointStore = null)
     {
         _settingsByAgent = settingsByAgent;
         _workspace = workspace;
         _referenceDocuments = referenceDocuments;
         _codeGraphTools = codeGraphTools;
+        _checkpointStore = checkpointStore;
     }
 
     public async IAsyncEnumerable<RunEvent> RunAsync(
@@ -50,6 +55,7 @@ public sealed class HandoffWorkflowRunner
         WorkflowSettings workflowSettings;
         IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent;
         TokenUsageCollector usageCollector;
+        LlmCheckpointMetrics checkpointMetrics = new();
         CodeGraphAudit codeGraphAudit = new();
         if (_settingsByAgent is not null)
         {
@@ -69,10 +75,15 @@ public sealed class HandoffWorkflowRunner
 
             workflowSettings = _settingsByAgent[AgentNames.Intake];
             settingsByAgent = _settingsByAgent;
-            usageCollector = new(settingsByAgent);
+            usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests);
             clients = clients.ToDictionary(
                 pair => pair.Key,
-                pair => (IChatClient)new UsageTrackingChatClient(pair.Value, pair.Key, usageCollector),
+                pair => WithTelemetryAndCheckpoints(
+                    pair.Value,
+                    pair.Key,
+                    settingsByAgent[pair.Key],
+                    usageCollector,
+                    checkpointMetrics),
                 StringComparer.Ordinal);
             bundle = HandoffWorkflowFactory.Create(
                 clients,
@@ -87,10 +98,15 @@ public sealed class HandoffWorkflowRunner
             workflowSettings = _settings ?? throw new ConfigurationException("Workflow model settings are required.");
             IChatClient effectiveChatClient = _chatClient ?? ModelChatClientFactory.Create(workflowSettings);
             settingsByAgent = AgentNames.All.ToDictionary(name => name, _ => workflowSettings);
-            usageCollector = new(settingsByAgent);
+            usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests);
             Dictionary<string, IChatClient> clients = AgentNames.All.ToDictionary(
                 name => name,
-                name => (IChatClient)new UsageTrackingChatClient(effectiveChatClient, name, usageCollector));
+                name => WithTelemetryAndCheckpoints(
+                    effectiveChatClient,
+                    name,
+                    workflowSettings,
+                    usageCollector,
+                    checkpointMetrics));
             bundle = HandoffWorkflowFactory.Create(
                 clients,
                 settingsByAgent,
@@ -192,15 +208,23 @@ public sealed class HandoffWorkflowRunner
                         ChatMessage[] transcript = [.. messages];
                         bool completed = transcript.Any(message =>
                             HandoffTopology.IsCompletionMessage(message.AuthorName, message.Text));
+                        bool requestLimitReached = transcript.Any(message =>
+                            HandoffTopology.IsRequestLimitMessage(message.Text));
+                        bool releaseRejected = transcript.Any(message =>
+                            HandoffTopology.IsReleaseRejectionMessage(message.AuthorName, message.Text));
                         status = completed
                             ? "completed"
-                            : HandoffTopology.HasExceededReviewerRemediationCycles(
-                                transcript.Select(message => message.AuthorName),
-                                workflowSettings.MaxReviewerRemediationCycles)
-                                    ? "reviewer_remediation_limit_reached"
-                                    : transcript.Length >= workflowSettings.MaxTotalMessages
-                                        ? "message_limit_reached"
-                                        : status;
+                            : requestLimitReached
+                                ? "request_limit_reached"
+                                : releaseRejected
+                                    ? "rejected_by_release"
+                                    : HandoffTopology.HasExceededReviewerRemediationCycles(
+                                        transcript.Select(message => message.AuthorName),
+                                        workflowSettings.MaxReviewerRemediationCycles)
+                                        ? "reviewer_remediation_limit_reached"
+                                        : transcript.Length >= workflowSettings.MaxTotalMessages
+                                            ? "message_limit_reached"
+                                            : status;
                         yield return RunEvent.Trace(
                             activeAgent,
                             $"Workflow output received with {transcript.Length} transcript messages.",
@@ -223,19 +247,41 @@ public sealed class HandoffWorkflowRunner
         }
 
         yield return RunEvent.TokenUsage(usageCollector.Snapshot());
+        if (_checkpointStore is not null)
+        {
+            yield return RunEvent.Trace(
+                null,
+                $"LLM checkpoints: {checkpointMetrics.Hits:N0} reused; {checkpointMetrics.ProviderCalls:N0} provider calls recorded.",
+                "checkpoint");
+        }
         foreach (CodeGraphToolEvidence evidence in codeGraphAudit.Snapshot())
         {
             yield return RunEvent.Trace(
                 evidence.Agent,
-                $"Protected CodeGraph evidence: {evidence.Tool} inspected '{evidence.Subject}'.",
+                $"CodeGraph evidence: {evidence.Tool} inspected '{evidence.Subject}'.",
                 "codegraph");
         }
 
         yield return RunEvent.Decision(
             status == "completed"
                 ? "Release manager approved the proposed change."
-                : $"Workflow stopped with status: {status}.",
+                : status == "rejected_by_release"
+                    ? "Release manager rejected the proposed change with a concrete blocking finding."
+                    : $"Workflow stopped with status: {status}.",
             status);
         yield return RunEvent.Finished(status);
+    }
+
+    private IChatClient WithTelemetryAndCheckpoints(
+        IChatClient client,
+        string agent,
+        WorkflowSettings settings,
+        TokenUsageCollector usageCollector,
+        LlmCheckpointMetrics checkpointMetrics)
+    {
+        IChatClient effective = new UsageTrackingChatClient(client, agent, usageCollector);
+        return _checkpointStore is null
+            ? effective
+            : new CheckpointingChatClient(effective, _checkpointStore, agent, settings, checkpointMetrics);
     }
 }

@@ -13,6 +13,16 @@ public sealed class WorkflowSettingsTests
     }
 
     [Fact]
+    public void DefaultsToReducedLlmCallLimits()
+    {
+        WorkflowSettings settings = new("https://example.test", "model", "key");
+
+        Assert.Equal(60, settings.MaxTotalMessages);
+        Assert.Equal(18, settings.MaxAgentTurns);
+        Assert.Equal(20, settings.MaxLlmRequests);
+    }
+
+    [Fact]
     public void FromEnvironmentRequiresModel()
     {
         using EnvironmentVariableScope model = new("OPENAI_MODEL", null);
@@ -46,6 +56,19 @@ public sealed class WorkflowSettingsTests
         ConfigurationException exception = Assert.Throws<ConfigurationException>(settings.Validate);
 
         Assert.Contains("reviewer remediation", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RejectsNoLlmRequests()
+    {
+        WorkflowSettings settings = new("https://example.test", "model", "key")
+        {
+            MaxLlmRequests = 0,
+        };
+
+        ConfigurationException exception = Assert.Throws<ConfigurationException>(settings.Validate);
+
+        Assert.Contains("LLM requests", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 }
 

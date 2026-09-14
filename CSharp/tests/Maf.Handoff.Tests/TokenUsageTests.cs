@@ -105,6 +105,25 @@ public sealed class TokenUsageTests
     }
 
     [Fact]
+    public void StopsBeforeSendingMoreThanTheRequestBudget()
+    {
+        WorkflowSettings settings = new("https://example.test", "test-model", "key");
+        TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
+        {
+            [AgentNames.Developer] = settings,
+        }, maxLlmRequests: 2);
+
+        Assert.True(collector.RecordRequest(AgentNames.Developer));
+        Assert.True(collector.RecordRequest(AgentNames.Developer));
+
+        bool reserved = collector.RecordRequest(AgentNames.Developer);
+
+        Assert.False(reserved);
+        Assert.Contains("2 AI requests", collector.RequestLimitMessage(AgentNames.Developer), StringComparison.Ordinal);
+        Assert.Equal(2, collector.Snapshot().LlmRequestCount);
+    }
+
+    [Fact]
     public async Task CapturesUsageReturnedByChatClient()
     {
         WorkflowSettings settings = new("https://example.test", "test-model", "key");
@@ -126,13 +145,46 @@ public sealed class TokenUsageTests
         Assert.Equal(59, usage.TotalTokens);
     }
 
+    [Fact]
+    public async Task ReturnsAWorkflowMarkerInsteadOfThrowingAtTheRequestLimit()
+    {
+        WorkflowSettings settings = new("https://example.test", "test-model", "key");
+        TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
+        {
+            [AgentNames.Developer] = settings,
+        }, maxLlmRequests: 1);
+        UsageResponseChatClient provider = new();
+        IChatClient client = new UsageTrackingChatClient(provider, AgentNames.Developer, collector);
+
+        await client.GetResponseAsync([new ChatMessage(ChatRole.User, "First call")]);
+        ChatResponse limited = await client.GetResponseAsync([new ChatMessage(ChatRole.User, "Second call")]);
+
+        Assert.Equal(1, provider.CallCount);
+        Assert.True(HandoffTopology.IsRequestLimitMessage(limited.Text));
+        Assert.Equal(1, collector.Snapshot().LlmRequestCount);
+    }
+
+    [Fact]
+    public void RequestLimitMarkerIsNotAReusableCheckpoint()
+    {
+        ChatResponse response = new(new ChatMessage(
+            ChatRole.Assistant,
+            $"{HandoffTopology.RequestLimitMarker} Stop."));
+
+        Assert.False(CheckpointSerialization.SerializeResponse(response).Reusable);
+    }
+
     private sealed class UsageResponseChatClient : IChatClient
     {
+        public int CallCount { get; private set; }
+
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
             ChatOptions? options = null,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done"))
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done"))
             {
                 Usage = new UsageDetails
                 {
@@ -141,12 +193,14 @@ public sealed class TokenUsageTests
                     TotalTokenCount = 59,
                 },
             });
+        }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages,
             ChatOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            CallCount++;
             await Task.Yield();
             yield return new ChatResponseUpdate(ChatRole.Assistant, "Done");
         }

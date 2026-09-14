@@ -4,6 +4,10 @@ public static class HandoffTopology
 {
     public const string CompletionMarker = "WORKFLOW_COMPLETE";
 
+    public const string RequestLimitMarker = "WORKFLOW_REQUEST_LIMIT_REACHED";
+
+    public const string ReleaseRejectionMarker = "WORKFLOW_REJECTED";
+
     public static bool IsReleaseManager(string? authorName) =>
         string.Equals(authorName, "release_manager", StringComparison.Ordinal) ||
         string.Equals(authorName, "software-delivery-release_manager", StringComparison.Ordinal);
@@ -11,6 +15,13 @@ public static class HandoffTopology
     public static bool IsCompletionMessage(string? authorName, string? text) =>
         IsReleaseManager(authorName) &&
         text?.Contains(CompletionMarker, StringComparison.Ordinal) is true;
+
+    public static bool IsRequestLimitMessage(string? text) =>
+        text?.Contains(RequestLimitMarker, StringComparison.Ordinal) is true;
+
+    public static bool IsReleaseRejectionMessage(string? authorName, string? text) =>
+        IsReleaseManager(authorName) &&
+        text?.Contains(ReleaseRejectionMarker, StringComparison.Ordinal) is true;
 
     public static bool HasExceededReviewerRemediationCycles(
         IEnumerable<string?> authorNames,
@@ -64,6 +75,6 @@ public static class HandoffTopology
             ["developer"] = ["reviewer"],
             ["reviewer"] = ["developer", "security"],
             ["security"] = ["developer", "release_manager"],
-            ["release_manager"] = ["planner", "developer"],
+            ["release_manager"] = [],
         };
 }

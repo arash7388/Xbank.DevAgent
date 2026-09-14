@@ -24,8 +24,6 @@ flowchart TB
       R -->|approved| S[Security]
       S -->|remediate| D
       S -->|approved| RM[Release manager]
-      RM -->|design gap| P
-      RM -->|implementation gap| D
     end
 
     FLOW --> O
@@ -37,7 +35,7 @@ flowchart TB
     READ --> CLONE
     EDIT --> CLONE
 
-    RM -->|patch ready| DIFF[Unified Git diff]
+    RM -->|terminal decision| DIFF[Unified Git diff]
     CLONE --> DIFF
     DIFF --> UI
     UI -->|reject| REJECT[No commit]

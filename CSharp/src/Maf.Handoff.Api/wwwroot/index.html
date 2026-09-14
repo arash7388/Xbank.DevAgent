@@ -142,7 +142,7 @@
         </div>
         <div class="team-map-canvas">
           <svg id="team-map" viewBox="0 0 1335 330" role="img" aria-labelledby="team-map-title team-map-description">
-            <desc id="team-map-description">Intake hands work to Jira, then Planner, Developer, Reviewer, Security, and Release manager. Review, security, and release may return work to the Planner or Developer to resolve issues.</desc>
+            <desc id="team-map-description">Intake hands work to Jira, then Planner, Developer, Reviewer, Security, and the terminal Release manager. Review and security may return work to the Developer to resolve issues.</desc>
             <defs>
               <marker id="handoff-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker>
             </defs>
@@ -154,8 +154,6 @@
             <g class="handoff-edge normal" data-edge="security-release_manager"><path d="M 1065 230 H 1130" /></g>
             <g class="handoff-edge remediation" data-edge="reviewer-developer"><path d="M 750 195 C 640 170, 640 135, 750 110" /></g>
             <g class="handoff-edge remediation" data-edge="security-developer"><path d="M 915 255 C 885 318, 705 318, 755 110" /></g>
-            <g class="handoff-edge remediation" data-edge="release_manager-planner"><path d="M 1205 265 C 1115 325, 560 325, 560 110" /></g>
-            <g class="handoff-edge remediation" data-edge="release_manager-developer"><path d="M 1145 195 C 1065 135, 895 135, 805 110" /></g>
             <g class="map-node intake" data-agent="intake"><rect x="55" y="40" width="150" height="70" rx="14" /><text x="130" y="70">Intake</text><text class="node-role" x="130" y="91">Route request</text></g>
             <g class="map-node jira" data-agent="jira"><rect x="270" y="40" width="150" height="70" rx="14" /><text x="345" y="70">Jira</text><text class="node-role" x="345" y="91">Issue context</text></g>
             <g class="map-node planner" data-agent="planner"><rect x="485" y="40" width="150" height="70" rx="14" /><text x="560" y="70">Planner</text><text class="node-role" x="560" y="91">Plan &amp; criteria</text></g>
@@ -192,7 +190,7 @@
             <legend>Agent models</legend>
             <button id="copy-planner-settings" class="text-button" type="button">Apply planner model to all</button>
           </div>
-          <p class="field-guide">Enable the Jira, planning, review, and security stages you need. Intake, Developer, and the final Release Manager remain required so each run has a valid start, implementation stage, and approval gate.</p>
+          <p class="field-guide">Optional Jira, planning, review, and security stages start disabled to keep small changes short. Enable only the gates the task needs. Intake, Developer, and the final Release Manager remain required so each run has a valid start, implementation stage, and approval gate.</p>
           <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Each agent's current model pricing appears below its prompt and remains editable.</p>
           <div id="agent-models" class="agent-model-grid"></div>
         </fieldset>

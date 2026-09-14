@@ -93,6 +93,7 @@ public sealed class AgentTeamFactoryTests
         Assert.Equal("custom prompt", settings.Prompt);
         Assert.Equal(80, settings.MaxTotalMessages);
         Assert.Equal(20, settings.MaxAgentTurns);
+        Assert.Equal(20, settings.MaxLlmRequests);
     }
 
     [Theory]
@@ -123,7 +124,7 @@ public sealed class AgentTeamFactoryTests
     }
 
     [Fact]
-    public void ComposesCallerGuidanceWithoutReplacingProtectedInstructions()
+    public void ComposesCallerGuidanceWithComplementaryCodeGraphInstructions()
     {
         WorkflowSettings settings = new(
             "https://api.openai.com/v1",
@@ -135,14 +136,15 @@ public sealed class AgentTeamFactoryTests
             AgentNames.Developer,
             AgentPrompts.Developer,
             settings.Prompt,
-            requireCodeGraph: true);
+            codeGraphAvailable: true);
         ChatOptions options = AgentTeamFactory.CreateChatOptions(settings, instructions, tools: null);
 
         Assert.Contains("implementation specialist", options.Instructions, StringComparison.Ordinal);
         Assert.Contains("Do not use CodeGraph.", options.Instructions, StringComparison.Ordinal);
-        Assert.Contains("PROTECTED CODEGRAPH POLICY", options.Instructions, StringComparison.Ordinal);
+        Assert.Contains("CODEGRAPH GUIDANCE", options.Instructions, StringComparison.Ordinal);
+        Assert.Contains("never a handoff gate", options.Instructions, StringComparison.Ordinal);
         Assert.EndsWith(
-            "never pretend that the required check occurred.",
+            "Configuration, documentation, and other non-C# work normally needs no graph call.",
             options.Instructions,
             StringComparison.Ordinal);
     }

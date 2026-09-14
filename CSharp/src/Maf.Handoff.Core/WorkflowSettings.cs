@@ -4,12 +4,14 @@ public sealed record WorkflowSettings(
     string ModelEndpoint,
     string Model,
     string ApiKey,
-    int MaxTotalMessages = 120,
-    int MaxAgentTurns = 36,
+    int MaxTotalMessages = 60,
+    int MaxAgentTurns = 18,
     ModelProviderDefinition? Provider = null,
     string? Prompt = null)
 {
     public int MaxReviewerRemediationCycles { get; init; } = 5;
+
+    public int MaxLlmRequests { get; init; } = 20;
 
     public static WorkflowSettings FromEnvironment(bool requireModel = true)
     {
@@ -34,10 +36,11 @@ public sealed record WorkflowSettings(
             throw new ConfigurationException("OPENAI_API_KEY is required.");
         }
 
-        return new(endpoint, model, apiKey, PositiveInteger("MAF_MAX_TOTAL_MESSAGES", 120),
-            PositiveInteger("MAF_MAX_AGENT_TURNS", 36))
+        return new(endpoint, model, apiKey, PositiveInteger("MAF_MAX_TOTAL_MESSAGES", 60),
+            PositiveInteger("MAF_MAX_AGENT_TURNS", 18))
         {
             MaxReviewerRemediationCycles = PositiveInteger("MAF_MAX_REVIEWER_REMEDIATION_CYCLES", 5),
+            MaxLlmRequests = PositiveInteger("MAF_MAX_LLM_REQUESTS", 20),
         };
     }
 
@@ -69,6 +72,11 @@ public sealed record WorkflowSettings(
         if (MaxReviewerRemediationCycles < 1)
         {
             throw new ConfigurationException("Maximum reviewer remediation cycles must be greater than zero.");
+        }
+
+        if (MaxLlmRequests < 1)
+        {
+            throw new ConfigurationException("Maximum LLM requests must be greater than zero.");
         }
     }
 

@@ -52,6 +52,22 @@ public sealed class HandoffTopologyTests
     }
 
     [Fact]
+    public void RecognizesRequestLimitMarkerFromAnyAgent()
+    {
+        Assert.True(HandoffTopology.IsRequestLimitMessage(
+            "WORKFLOW_REQUEST_LIMIT_REACHED No more provider calls are allowed."));
+    }
+
+    [Fact]
+    public void ReleaseManagerIsTerminal()
+    {
+        Assert.Empty(HandoffTopology.Edges[AgentNames.ReleaseManager]);
+        Assert.True(HandoffTopology.IsReleaseRejectionMessage(
+            AgentNames.ReleaseManager,
+            "Concrete blocker. WORKFLOW_REJECTED"));
+    }
+
+    [Fact]
     public void AllowsConfiguredReviewerRemediationCycles()
     {
         string?[] authors = ["reviewer", "developer", "reviewer", "developer"];

@@ -91,15 +91,7 @@ public static class HandoffWorkflowFactory
                 "Use when the patch passes security review and SECURITY_APPROVED has been recorded; unrelated existing risks do not block this path.");
         }
 
-        if (team.Planner is not null)
-        {
-            builder.WithHandoff(team.ReleaseManager, team.Planner,
-                "Use only when a blocking design or acceptance-criteria gap requires a revised plan.");
-        }
-
         Workflow workflow = builder
-            .WithHandoff(team.ReleaseManager, team.Developer,
-                "Use only when a blocking implementation or diff issue requires a code change.")
             .WithAutonomousMode(
                 turnLimit: settings.MaxAgentTurns,
                 continuationPrompt: "Continue the assigned work and hand off when your role is complete.")
@@ -110,6 +102,9 @@ public static class HandoffWorkflowFactory
                 HandoffTopology.HasExceededReviewerRemediationCycles(
                     conversation.Select(message => message.AuthorName),
                     settings.MaxReviewerRemediationCycles) ||
+                conversation.Any(message => HandoffTopology.IsRequestLimitMessage(message.Text)) ||
+                conversation.Any(message =>
+                    HandoffTopology.IsReleaseRejectionMessage(message.AuthorName, message.Text)) ||
                 conversation.Any(message =>
                     HandoffTopology.IsCompletionMessage(message.AuthorName, message.Text)))
             .Build();

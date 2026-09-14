@@ -15,24 +15,35 @@ SDK base endpoint. DeepSeek agents preserve the selected reasoning level and ret
 OpenAI reasoning values are passed through its Chat Completions options. Tool calling is mandatory
 for this handoff topology.
 
-For repositories containing tracked C# source, planner, developer, reviewer, and security agents also
-receive a protected CodeGraph policy and the read-only `find_symbol`, `get_context`,
-`get_context_by_id`, and `get_neighbors` tools. The server chooses the CodeGraph database and fails
-the workflow closed when it is unavailable. Each protected agent must complete a fresh relationship
-check before every handoff. Caller-supplied agent text is appended only as lower-priority additional
-guidance; it never replaces the server-owned role or CodeGraph instructions.
+For repositories containing tracked C# source, planner, developer, reviewer, and security agents can
+also receive the read-only `find_symbol`, `get_context`, `get_context_by_id`, and `get_neighbors` tools.
+CodeGraph is complementary: agents use a focused query when it can make analysis faster or cheaper,
+then continue with targeted repository evidence when the graph has no useful match. Missing, stale, or
+unavailable graph data never blocks a handoff or the workflow. Configuration, documentation, and other
+non-C# work normally needs no graph call.
 
 Each agent has an independent OpenAI, DeepSeek, or Claude provider selector, model selector, and
-reasoning-effort selector. All agents default to DeepSeek `deepseek-v4-flash` with high reasoning,
+reasoning-effort selector. All agents default to DeepSeek `deepseek-flash` with high reasoning,
 but can be configured individually. Provider credentials are entered once and reused only by agents
 assigned to that provider. Endpoints and capability metadata remain internal.
 
+Jira, planner, reviewer, and security are optional and start disabled, keeping a small repository edit
+on the intake-to-developer-to-release path. Enable the additional stages for work whose context or risk
+needs them. A run stops after 20 actual provider requests by default (`MAF_MAX_LLM_REQUESTS`) so tool or
+remediation loops cannot consume the much larger transcript-message allowance unchecked.
+
 At the end of every run, the activity view and session response show provider-reported input/output
 tokens for every participating agent and the run total. To calculate an estimated USD cost, enter the
-current input and output price per million tokens for each agent model in **Usage pricing**. DeepSeek
-models are prefilled with their peak, cache-miss rates because the provider usage response does not
-separate cache hits or pricing time bands; these defaults remain editable. When a rate or provider
+current cached-input, uncached-input, and output price per million tokens for each agent model in
+**Usage pricing**. DeepSeek rates are refreshed from the provider's pricing page for the current UTC
+price band, with published peak rates as the fallback; these values remain editable. When a rate or provider
 usage metadata is unavailable, the workbench reports the token count without inventing a dollar amount.
+
+Completed LLM calls are checkpointed in a separate SQLite database and reused when the agent, model,
+instructions, tool definitions, model options, and complete conversation input are identical. This
+allows a restarted workflow to skip calls completed before an exception. Running and failed calls are
+retained for diagnosis but never reused; only fully saved responses are cache hits. The activity stream
+reports checkpoint hits and actual provider calls, and token usage counts only calls sent to a provider.
 
 ## Safety model
 
@@ -64,6 +75,12 @@ Open `http://127.0.0.1:8080`.
 Configure the protected graph database with `CodeGraph__DatabasePath`; it defaults to
 `E:\CodeGraph\codegraph.db`. The database must contain an up-to-date index for the C# repository the
 agents will inspect. `CodeGraph__RootPath` controls the local CodeGraph indexer used by the workbench.
+
+The LLM checkpoint database defaults to `data/llm-checkpoints.db` under the API content root. Override
+it with `Checkpointing__DatabasePath`. Prompts, conversation history, tool results, and model responses
+are stored in plain text, so keep this local database access-controlled and apply an appropriate
+retention policy. If a future tool has non-idempotent external side effects, exclude those calls from
+reuse before exposing that tool to checkpointed agents.
 
 ### Reference-document RAG
 

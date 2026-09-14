@@ -133,13 +133,13 @@ const providerCatalog = {
     name: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions',
     toolCalling: true, vision: true, maxInputTokens: 128000, maxOutputTokens: 160000,
     thinking: true, reasoningEffort: 'high', supportsReasoningEffort: ['low', 'medium', 'high', 'max'],
-    // Conservative fallback values; replaced from DeepSeek's pricing page on load.
+    // Published peak rates; replaced with the current time-band rates on load.
     defaultPricing: {
-      'deepseek-v4-flash': { cachedInput: 0.014, input: 0.44, output: 1.32 },
+      'deepseek-flash': { cachedInput: 0.006, input: 0.3, output: 1.2 },
       'deepseek-v4-pro': { cachedInput: 0.044, input: 1.32, output: 3.96 },
     },
     models: [
-      ['deepseek-v4-flash', 'deepseek-v4-flash'],
+      ['deepseek-flash', 'deepseek-flash'],
       ['deepseek-v4-pro', 'deepseek-v4-pro'],
     ],
   },
@@ -155,13 +155,13 @@ const providerCatalog = {
 };
 
 const agentCatalog = [
-  { id: 'intake', name: 'Intake', description: 'Intake and routing', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', required: true },
-  { id: 'jira', name: 'Jira', description: 'Read-only Jira issue and project context', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', enabled: false },
-  { id: 'planner', name: 'Planner', description: 'Architecture and acceptance criteria', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low' },
-  { id: 'developer', name: 'Developer', description: 'Implementation and remediation', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', required: true },
-  { id: 'reviewer', name: 'Reviewer', description: 'Correctness and quality gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low' },
-  { id: 'security', name: 'Security', description: 'Threat modeling and security gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', enabled: false },
-  { id: 'release_manager', name: 'Release manager', description: 'Final evidence gate', provider: 'deepseek', model: 'deepseek-v4-flash', effort: 'low', required: true },
+  { id: 'intake', name: 'Intake', description: 'Intake and routing', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
+  { id: 'jira', name: 'Jira', description: 'Read-only Jira issue and project context', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: false },
+  { id: 'planner', name: 'Planner', description: 'Architecture and acceptance criteria', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: true },
+  { id: 'developer', name: 'Developer', description: 'Implementation and remediation', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
+  { id: 'reviewer', name: 'Reviewer', description: 'Correctness and quality gate', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: false },
+  { id: 'security', name: 'Security', description: 'Threat modeling and security gate', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: false },
+  { id: 'release_manager', name: 'Release manager', description: 'Final evidence gate', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
 ];
 
 function createAgentModelCard(agent) {
@@ -429,18 +429,22 @@ async function loadAgentTools() {
 async function loadDeepSeekPricing() {
   try {
     const snapshot = await api('/api/providers/deepseek/pricing');
-    providerCatalog.deepseek.defaultPricing = Object.fromEntries(snapshot.models.map(price => [price.model, {
+    const loadedPricing = Object.fromEntries(snapshot.models.map(price => [price.model, {
       cachedInput: price.cachedInputUsdPerMillion,
       input: price.inputUsdPerMillion,
       output: price.outputUsdPerMillion,
     }]));
-    providerCatalog.deepseek.pricingByThinking = Object.fromEntries(snapshot.models.map(price => {
+    providerCatalog.deepseek.defaultPricing = {
+      ...providerCatalog.deepseek.defaultPricing,
+      ...loadedPricing,
+    };
+    providerCatalog.deepseek.pricingByThinking = Object.fromEntries(Object.entries(providerCatalog.deepseek.defaultPricing).map(([model, price]) => {
       const rates = {
-        cachedInput: price.cachedInputUsdPerMillion,
-        input: price.inputUsdPerMillion,
-        output: price.outputUsdPerMillion,
+        cachedInput: price.cachedInput,
+        input: price.input,
+        output: price.output,
       };
-      return [price.model, Object.fromEntries(
+      return [model, Object.fromEntries(
         ['low', 'medium', 'high', 'max'].map(mode => [mode, { ...rates }]))];
     }));
     agentCatalog.forEach(agent => syncUsagePricingCard(agent.id));

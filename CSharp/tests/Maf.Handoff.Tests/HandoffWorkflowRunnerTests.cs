@@ -29,6 +29,36 @@ public sealed class HandoffWorkflowRunnerTests
             runEvent.Type == "message" && runEvent.Text?.Contains("Test response") is true);
     }
 
+    [Fact]
+    public async Task ExecutesOrdinaryToolBeforeHandoffWhenProviderRequestsBoth()
+    {
+        MixedToolAndHandoffChatClient chatClient = new();
+        RecordingReferenceDocumentSearch referenceDocuments = new();
+        WorkflowSettings settings = new(
+            "https://example.test",
+            "test-model",
+            "test-key",
+            MaxTotalMessages: 8,
+            MaxAgentTurns: 1);
+        HandoffWorkflowRunner runner = new(
+            settings,
+            chatClient: chatClient,
+            referenceDocuments: referenceDocuments);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(5));
+
+        List<RunEvent> events = [];
+        await foreach (RunEvent runEvent in runner.RunAsync(
+            "Inspect the repository and implement the change.",
+            timeout.Token))
+        {
+            events.Add(runEvent);
+        }
+
+        Assert.DoesNotContain(events, runEvent => runEvent.Type == "error");
+        Assert.Equal(1, referenceDocuments.CallCount);
+        Assert.Contains(events, runEvent => runEvent.Type == "handoff");
+    }
+
     private sealed class RecordingChatClient : IChatClient
     {
         public int CallCount { get; private set; }
@@ -57,6 +87,71 @@ public sealed class HandoffWorkflowRunnerTests
 
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class MixedToolAndHandoffChatClient : IChatClient
+    {
+        private int _callCount;
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(NextResponse());
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            foreach (ChatResponseUpdate update in NextResponse().ToChatResponseUpdates())
+            {
+                yield return update;
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) =>
+            serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
+
+        private ChatResponse NextResponse()
+        {
+            _callCount++;
+            return _callCount == 1
+                ? new ChatResponse(new ChatMessage(
+                    ChatRole.Assistant,
+                    [
+                        new FunctionCallContent("tool-intake", AgentToolCatalog.SearchDocuments.Name, new Dictionary<string, object?>
+                        {
+                            ["query"] = "requirements",
+                            ["maxResults"] = 3,
+                        }),
+                        new FunctionCallContent("handoff-intake", "handoff_to_1", new Dictionary<string, object?>()),
+                    ]))
+                : _callCount == 2
+                    ? new ChatResponse(new ChatMessage(
+                        ChatRole.Assistant,
+                        [new FunctionCallContent("handoff-intake-retry", "handoff_to_1", new Dictionary<string, object?>())]))
+                    : new ChatResponse(new ChatMessage(ChatRole.Assistant, "Developer turn completed."));
+        }
+    }
+
+    private sealed class RecordingReferenceDocumentSearch : IReferenceDocumentSearch
+    {
+        public int CallCount { get; private set; }
+
+        public Task<string> SearchAsync(
+            string query,
+            int maxResults,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult("No matching reference text.");
         }
     }
 }

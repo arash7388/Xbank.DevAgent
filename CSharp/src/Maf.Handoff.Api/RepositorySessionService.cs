@@ -7,6 +7,7 @@ public sealed class RepositorySessionService(
     GitHubPullRequestClient pullRequestClient,
     ReferenceDocumentService referenceDocuments,
     CodeGraphService codeGraph,
+    ILlmCheckpointStore checkpointStore,
     IConfiguration configuration)
 {
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
@@ -127,14 +128,20 @@ public sealed class RepositorySessionService(
             Dictionary<string, WorkflowSettings> settingsByAgent = request.Agents.ToDictionary(
                 pair => pair.Key,
                 pair => pair.Value.ToSettings(
-                    maxTotalMessages: 120,
-                    maxAgentTurns: 36,
-                    maxReviewerRemediationCycles: 5),
+                    maxTotalMessages: 60,
+                    maxAgentTurns: 18,
+                    maxReviewerRemediationCycles: 5,
+                    maxLlmRequests: 20),
                 StringComparer.Ordinal);
             IReferenceDocumentSearch? documents = request.ReferenceCollectionId is Guid collectionId
                 ? referenceDocuments.GetSearch(collectionId)
                 : null;
-            HandoffWorkflowRunner runner = new(settingsByAgent, workspace, documents, codeGraph);
+            HandoffWorkflowRunner runner = new(
+                settingsByAgent,
+                workspace,
+                documents,
+                codeGraph,
+                checkpointStore);
             string? terminalStatus = null;
 
             await foreach (RunEvent runEvent in runner.RunAsync(request.Task, state.Cancellation.Token))
@@ -160,6 +167,10 @@ public sealed class RepositorySessionService(
                         "The workflow reached its conversation safety limit before release approval.",
                     "reviewer_remediation_limit_reached" =>
                         "The reviewer requested more than five developer remediation cycles. The run stopped to prevent a review loop; inspect the logged findings and start a new run with a clarified request or prompt.",
+                    "request_limit_reached" =>
+                        "The workflow reached its AI request limit before release approval. Review the per-agent request totals and final activity; no exception was thrown.",
+                    "rejected_by_release" =>
+                        "The release manager rejected the patch. Review its concrete blocking finding before starting a corrected run.",
                     "input_required" =>
                         "The workflow requested additional input before release approval. Review the agent activity for the request.",
                     "stopped_without_release_approval" =>
@@ -230,9 +241,10 @@ public sealed class RepositorySessionService(
             try
             {
                 configuration.ToSettings(
-                    maxTotalMessages: 120,
-                    maxAgentTurns: 36,
-                    maxReviewerRemediationCycles: 5);
+                    maxTotalMessages: 60,
+                    maxAgentTurns: 18,
+                    maxReviewerRemediationCycles: 5,
+                    maxLlmRequests: 20);
             }
             catch (ConfigurationException exception)
             {

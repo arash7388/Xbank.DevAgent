@@ -111,7 +111,11 @@ public sealed class DeepSeekPricingService(HttpClient httpClient)
     }
 
     private static string NormalizeCell(string html) => WebUtility.HtmlDecode(
-        Regex.Replace(Regex.Replace(html, @"<br\s*/?>", " ", RegexOptions.IgnoreCase), "<[^>]+>", string.Empty))
+        Regex.Replace(
+            Regex.Replace(
+                Regex.Replace(html, @"<sup[^>]*>.*?</sup>", string.Empty, RegexOptions.IgnoreCase | RegexOptions.Singleline),
+                @"<br\s*/?>", " ", RegexOptions.IgnoreCase),
+            "<[^>]+>", string.Empty))
         .Trim();
 
     private static decimal ParsePrice(string value) =>

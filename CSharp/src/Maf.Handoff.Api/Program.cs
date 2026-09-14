@@ -17,6 +17,15 @@ builder.Services.AddHttpClient<DeepSeekPricingService>(client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("maf-repository-workbench/1.0");
 });
 builder.Services.AddSingleton<ReferenceDocumentService>();
+builder.Services.AddSingleton<ILlmCheckpointStore>(_ =>
+{
+    string configuredPath = builder.Configuration["Checkpointing:DatabasePath"] ??
+        Path.Combine("data", "llm-checkpoints.db");
+    string databasePath = Path.IsPathRooted(configuredPath)
+        ? configuredPath
+        : Path.Combine(builder.Environment.ContentRootPath, configuredPath);
+    return new SqliteLlmCheckpointStore(databasePath);
+});
 builder.Services.AddSingleton<RepositorySessionService>();
 builder.Services.AddSingleton<CodeGraphService>();
 

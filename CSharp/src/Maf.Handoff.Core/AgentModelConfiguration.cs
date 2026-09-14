@@ -8,7 +8,8 @@ public sealed record AgentModelConfiguration(
     public WorkflowSettings ToSettings(
         int maxTotalMessages,
         int maxAgentTurns,
-        int maxReviewerRemediationCycles = 5)
+        int maxReviewerRemediationCycles = 5,
+        int maxLlmRequests = 20)
     {
         if (Provider is null)
         {
@@ -26,6 +27,7 @@ public sealed record AgentModelConfiguration(
             string.IsNullOrWhiteSpace(Prompt) ? null : Prompt.Trim())
         {
             MaxReviewerRemediationCycles = maxReviewerRemediationCycles,
+            MaxLlmRequests = maxLlmRequests,
         };
         settings.Validate();
         return settings;

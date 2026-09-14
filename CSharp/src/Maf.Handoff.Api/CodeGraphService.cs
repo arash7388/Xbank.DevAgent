@@ -48,7 +48,7 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
         if (!available.Contains("nodes") || !available.Contains("edges") || !available.Contains("codebases"))
         {
             throw new ConfigurationException(
-                $"Protected CodeGraph database '{_agentDatabasePath}' is missing required graph tables.");
+                $"CodeGraph database '{_agentDatabasePath}' is missing required graph tables.");
         }
 
         string repositoryName = GetRepositoryName(repositoryUrl);
@@ -64,7 +64,7 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
                 .Select(row => row["name"]?.ToString())
                 .Where(name => !string.IsNullOrWhiteSpace(name)));
             throw new ConfigurationException(
-                $"Protected CodeGraph database '{_agentDatabasePath}' does not contain an index for " +
+                $"CodeGraph database '{_agentDatabasePath}' does not contain an index for " +
                 $"repository '{repositoryName}'. Indexed codebases: {(indexed.Length == 0 ? "none" : indexed)}.");
         }
     }
@@ -437,7 +437,7 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
     {
         if (!Uri.TryCreate(repositoryUrl, UriKind.Absolute, out Uri? uri))
         {
-            throw new ConfigurationException("A valid repository URL is required for protected CodeGraph validation.");
+            throw new ConfigurationException("A valid repository URL is required for CodeGraph validation.");
         }
 
         string name = uri.AbsolutePath.Trim('/').Split('/').LastOrDefault() ?? "";
