@@ -167,7 +167,9 @@ public static class AgentTeamFactory
                     "max" => ReasoningEffort.ExtraHigh,
                     _ => ReasoningEffort.High,
                 },
-                Output = ReasoningOutput.Full,
+                // Keep reasoning available to the model without returning its trace in the
+                // response, where it would increase output and subsequent context usage.
+                Output = ReasoningOutput.None,
             };
             return options;
         }

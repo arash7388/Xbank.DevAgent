@@ -188,14 +188,6 @@ public sealed class HandoffWorkflowRunner
                         "response");
                     break;
 
-                case ExecutorInvokedEvent invoked:
-                    yield return RunEvent.Trace(invoked.ExecutorId, "Agent executor invoked.", "executor");
-                    break;
-
-                case ExecutorCompletedEvent completed:
-                    yield return RunEvent.Trace(completed.ExecutorId, "Agent executor completed.", "executor");
-                    break;
-
                 case RequestInfoEvent:
                     status = "input_required";
                     yield return RunEvent.Trace(activeAgent, "Workflow requested external input and paused autonomous execution.", "input");
@@ -279,7 +271,8 @@ public sealed class HandoffWorkflowRunner
         TokenUsageCollector usageCollector,
         LlmCheckpointMetrics checkpointMetrics)
     {
-        IChatClient effective = new UsageTrackingChatClient(client, agent, usageCollector);
+        IChatClient provider = new CompletedToolCycleFilteringChatClient(client);
+        IChatClient effective = new UsageTrackingChatClient(provider, agent, usageCollector);
         return _checkpointStore is null
             ? effective
             : new CheckpointingChatClient(effective, _checkpointStore, agent, settings, checkpointMetrics);

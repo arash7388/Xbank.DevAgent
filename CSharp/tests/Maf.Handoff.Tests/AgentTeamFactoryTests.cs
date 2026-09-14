@@ -119,7 +119,7 @@ public sealed class AgentTeamFactoryTests
         ChatOptions options = AgentTeamFactory.CreateChatOptions(settings, "test", tools: null);
 
         Assert.Equal(expectedEffort, options.Reasoning!.Effort);
-        Assert.Equal(ReasoningOutput.Full, options.Reasoning.Output);
+        Assert.Equal(ReasoningOutput.None, options.Reasoning.Output);
         Assert.True(Assert.IsType<bool>(options.AdditionalProperties!["include_usage"]));
     }
 
