@@ -17,7 +17,7 @@ builder.Services.AddHttpClient<DeepSeekPricingService>(client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("maf-repository-workbench/1.0");
 });
 builder.Services.AddSingleton<ReferenceDocumentService>();
-builder.Services.AddSingleton<ILlmCheckpointStore>(_ =>
+builder.Services.AddSingleton<SqliteLlmCheckpointStore>(_ =>
 {
     string configuredPath = builder.Configuration["Checkpointing:DatabasePath"] ??
         Path.Combine("data", "llm-checkpoints.db");
@@ -26,6 +26,8 @@ builder.Services.AddSingleton<ILlmCheckpointStore>(_ =>
         : Path.Combine(builder.Environment.ContentRootPath, configuredPath);
     return new SqliteLlmCheckpointStore(databasePath);
 });
+builder.Services.AddSingleton<ILlmCheckpointStore>(services => services.GetRequiredService<SqliteLlmCheckpointStore>());
+builder.Services.AddSingleton<IWorkflowRunStore>(services => services.GetRequiredService<SqliteLlmCheckpointStore>());
 builder.Services.AddSingleton<RepositorySessionService>();
 builder.Services.AddSingleton<CodeGraphService>();
 
@@ -77,6 +79,11 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok", provider = "open
 app.MapGet("/api/agents/default-prompts", () => Results.Ok(AgentPrompts.Defaults));
 
 app.MapGet("/api/agents/tools", () => Results.Ok(AgentToolCatalog.ByAgent));
+
+app.MapGet("/api/providers/configured", (IConfiguration configuration) => Results.Ok(new
+{
+    deepseek = !string.IsNullOrWhiteSpace(configuration["Providers:DeepSeek:ApiKey"]),
+}));
 
 app.MapGet("/api/codegraph/config", (CodeGraphService codeGraph) => Results.Ok(codeGraph.GetConfiguration()));
 

@@ -131,7 +131,6 @@ h1, h2, p { margin: 0; }
 .map-node rect { fill: #fff; stroke: #bdcae0; stroke-width: 1.5; transition: fill 160ms ease, stroke 160ms ease, stroke-width 160ms ease; }
 .map-node text { fill: #25324a; font-size: 14px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .map-node .node-role { fill: #68768b; font-size: 10px; font-weight: 500; }
-.map-node.intake rect { fill: #eaf3ff; stroke: #2878f0; }
 .map-node.jira rect { fill: #fff8dd; stroke: #bd8300; }
 .map-node.planner rect { fill: #f2edff; stroke: #8156e8; }
 .map-node.developer rect { fill: #fff0e7; stroke: #e46b2d; }
@@ -164,7 +163,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--blue); backgroun
 .agent-model-card {
   --agent-accent: #2563eb;
   --agent-wash: #eaf2ff;
-  position: relative; isolation: isolate; overflow: hidden; padding: 15px;
+  position: relative; isolation: isolate; overflow: hidden; padding: 0;
   border: 1px solid color-mix(in srgb, var(--agent-accent) 25%, white);
   border-radius: 14px; background: linear-gradient(135deg, var(--agent-wash), #ffffff 47%);
   box-shadow: 0 8px 20px color-mix(in srgb, var(--agent-accent) 9%, transparent);
@@ -176,7 +175,17 @@ input:focus, textarea:focus, select:focus { border-color: var(--blue); backgroun
   filter: blur(2px);
 }
 .agent-model-card:hover, .agent-model-card:focus-within { transform: translateY(-2px); border-color: var(--agent-accent); box-shadow: 0 14px 28px color-mix(in srgb, var(--agent-accent) 18%, transparent); }
-.agent-card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.agent-card-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-height: 52px; padding: 15px; color: inherit; background: transparent;
+  border: 0; border-radius: 13px; box-shadow: none; text-align: left;
+}
+.agent-card-header:hover { background: color-mix(in srgb, var(--agent-accent) 5%, transparent); }
+.agent-card-header:focus-visible { outline: 3px solid color-mix(in srgb, var(--agent-accent) 28%, transparent); outline-offset: -3px; }
+.agent-card-expand-icon { width: 9px; height: 9px; margin-right: 3px; border-right: 2px solid var(--agent-accent); border-bottom: 2px solid var(--agent-accent); transform: rotate(45deg); transition: transform 180ms ease; }
+.agent-card-header[aria-expanded="true"] .agent-card-expand-icon { transform: rotate(225deg); }
+.agent-card-body { padding: 0 15px 15px; border-top: 1px solid color-mix(in srgb, var(--agent-accent) 13%, transparent); }
+.agent-card-body[hidden] { display: none; }
 .agent-model-card h3 { display: flex; align-items: center; gap: 8px; margin: 0; color: #1e2b42; font-size: 14px; text-transform: capitalize; }
 .agent-model-card h3::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--agent-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-accent) 16%, transparent); }
 .agent-model-card p { margin-top: 4px; color: #5e6e85; font-size: 10px; }
@@ -196,11 +205,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--blue); backgroun
 .agent-toggle input { width: 32px; min-height: 18px; margin: 0; padding: 0; accent-color: var(--agent-accent); cursor: pointer; }
 .agent-toggle input:disabled { cursor: default; opacity: 1; }
 .agent-model-card.is-disabled { filter: grayscale(.45); }
-.agent-model-card.is-disabled::after { content: "Disabled"; position: absolute; top: 48px; right: 15px; padding: 3px 7px; color: #65738a; background: #eef1f5; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.agent-model-card.is-disabled.is-expanded::after { content: "Disabled"; position: absolute; top: 60px; right: 15px; padding: 3px 7px; color: #65738a; background: #eef1f5; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .agent-model-card.is-disabled .agent-model-controls,
-.agent-model-card.is-disabled > label,
+.agent-model-card.is-disabled .agent-card-body > label,
 .agent-model-card.is-disabled .agent-prompt { opacity: .48; }
-.agent-model-card[data-agent="intake"] { --agent-accent: #2878f0; --agent-wash: #eaf3ff; }
 .agent-model-card[data-agent="planner"] { --agent-accent: #8156e8; --agent-wash: #f2edff; }
 .agent-model-card[data-agent="developer"] { --agent-accent: #e46b2d; --agent-wash: #fff0e7; }
 .agent-model-card[data-agent="reviewer"] { --agent-accent: #0c9a91; --agent-wash: #e5fbf7; }

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Maf.Handoff.Core;
 
 namespace Maf.Handoff.Api;
@@ -8,6 +9,7 @@ public sealed class RepositorySessionService(
     ReferenceDocumentService referenceDocuments,
     CodeGraphService codeGraph,
     ILlmCheckpointStore checkpointStore,
+    IWorkflowRunStore workflowRunStore,
     IConfiguration configuration)
 {
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
@@ -19,6 +21,13 @@ public sealed class RepositorySessionService(
         {
             request = request with { GitHubToken = configuration["GitHub:Token"] };
         }
+        request = request with
+        {
+            Agents = request.Agents.ToDictionary(
+                pair => pair.Key,
+                pair => ApplyConfiguredProviderKey(pair.Value),
+                StringComparer.Ordinal),
+        };
         Validate(request);
         if (request.ReferenceCollectionId is Guid collectionId && !referenceDocuments.Exists(collectionId))
         {
@@ -31,8 +40,36 @@ public sealed class RepositorySessionService(
             throw new InvalidOperationException("Unable to allocate a repository session.");
         }
 
+        try
+        {
+            workflowRunStore.Create(id, "repository_change", SerializeWorkflowConfig(request), state.StartedAt);
+        }
+        catch
+        {
+            _sessions.TryRemove(id, out _);
+            throw;
+        }
+
         _ = Task.Run(() => ExecuteAsync(state));
         return state.Snapshot();
+    }
+
+    private AgentModelConfiguration ApplyConfiguredProviderKey(AgentModelConfiguration agent)
+    {
+        if (!string.IsNullOrWhiteSpace(agent.ApiKey))
+        {
+            return agent;
+        }
+
+        string? providerHost = Uri.TryCreate(agent.Provider?.Url, UriKind.Absolute, out Uri? endpoint)
+            ? endpoint.Host
+            : null;
+        if (!string.Equals(providerHost, "api.deepseek.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return agent;
+        }
+
+        return agent with { ApiKey = configuration["Providers:DeepSeek:ApiKey"] ?? string.Empty };
     }
 
     public SessionSnapshot Get(Guid id) => GetState(id).Snapshot();
@@ -41,12 +78,14 @@ public sealed class RepositorySessionService(
     {
         SessionState state = GetState(id);
         state.Cancel();
+        Persist(state);
     }
 
     public void Reject(Guid id)
     {
         SessionState state = GetState(id);
         state.Reject();
+        Persist(state);
     }
 
     public async Task<SessionSnapshot> ApproveAsync(
@@ -74,6 +113,7 @@ public sealed class RepositorySessionService(
             state.FailApproval(exception.Message);
         }
 
+        Persist(state);
         return state.Snapshot();
     }
 
@@ -109,6 +149,7 @@ public sealed class RepositorySessionService(
             state.FailPullRequest(exception.Message);
         }
 
+        Persist(state);
         return state.Snapshot();
     }
 
@@ -124,6 +165,7 @@ public sealed class RepositorySessionService(
                 _workspaceRoot,
                 state.Cancellation.Token);
             state.BeginAgentRun(workspace);
+            Persist(state);
 
             Dictionary<string, WorkflowSettings> settingsByAgent = request.Agents.ToDictionary(
                 pair => pair.Key,
@@ -140,7 +182,7 @@ public sealed class RepositorySessionService(
                 settingsByAgent,
                 workspace,
                 documents,
-                codeGraph,
+                request.CodeGraphEnabled && codeGraph.IsWorkflowEnabled ? codeGraph : null,
                 checkpointStore);
             string? terminalStatus = null;
 
@@ -199,12 +241,45 @@ public sealed class RepositorySessionService(
         }
         finally
         {
+            Persist(state);
             if (state.Request.ReferenceCollectionId is Guid collectionId)
             {
                 await referenceDocuments.DeleteAsync(collectionId);
             }
         }
     }
+
+    private void Persist(SessionState state)
+    {
+        SessionSnapshot snapshot = state.Snapshot();
+        workflowRunStore.UpdateStatus(snapshot.Id, snapshot.Status, snapshot.Error);
+    }
+
+    private static string SerializeWorkflowConfig(CreateSessionRequest request) => JsonSerializer.Serialize(new
+    {
+        request.RepositoryUrl,
+        request.BaseBranch,
+        request.Task,
+        request.ReferenceCollectionId,
+        request.CodeGraphEnabled,
+        githubTokenConfigured = !string.IsNullOrWhiteSpace(request.GitHubToken),
+        agents = request.Agents.ToDictionary(
+            pair => pair.Key,
+            pair => new
+            {
+                pair.Value.Provider,
+                pair.Value.Prompt,
+                apiKeyConfigured = !string.IsNullOrWhiteSpace(pair.Value.ApiKey),
+            },
+            StringComparer.Ordinal),
+        limits = new
+        {
+            maxTotalMessages = 60,
+            maxAgentTurns = 18,
+            maxReviewerRemediationCycles = 5,
+            maxLlmRequests = 20,
+        },
+    });
 
     private SessionState GetState(Guid id) => _sessions.TryGetValue(id, out SessionState? state)
         ? state
@@ -516,7 +591,8 @@ public sealed record CreateSessionRequest(
     string Task,
     IReadOnlyDictionary<string, AgentModelConfiguration> Agents,
     string? GitHubToken,
-    Guid? ReferenceCollectionId = null);
+    Guid? ReferenceCollectionId = null,
+    bool CodeGraphEnabled = true);
 
 public sealed record ApproveSessionRequest(
     string Branch,

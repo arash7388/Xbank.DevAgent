@@ -12,7 +12,9 @@ public static class HandoffWorkflowFactory
         RepositoryWorkspace? workspace = null,
         IReferenceDocumentSearch? referenceDocuments = null,
         ICodeGraphTools? codeGraphTools = null,
-        CodeGraphAudit? codeGraphAudit = null)
+        CodeGraphAudit? codeGraphAudit = null,
+        IToolCallStore? toolCallStore = null,
+        string? workflowId = null)
     {
         AgentTeam team = AgentTeamFactory.Create(
             chatClient,
@@ -20,7 +22,9 @@ public static class HandoffWorkflowFactory
             workspace,
             referenceDocuments,
             codeGraphTools,
-            codeGraphAudit);
+            codeGraphAudit,
+            toolCallStore,
+            workflowId);
         return Create(team, settings);
     }
 
@@ -30,7 +34,9 @@ public static class HandoffWorkflowFactory
         RepositoryWorkspace? workspace = null,
         IReferenceDocumentSearch? referenceDocuments = null,
         ICodeGraphTools? codeGraphTools = null,
-        CodeGraphAudit? codeGraphAudit = null)
+        CodeGraphAudit? codeGraphAudit = null,
+        IToolCallStore? toolCallStore = null,
+        string? workflowId = null)
     {
         AgentTeam team = AgentTeamFactory.Create(
             clients,
@@ -38,38 +44,29 @@ public static class HandoffWorkflowFactory
             workspace,
             referenceDocuments,
             codeGraphTools,
-            codeGraphAudit);
-        WorkflowSettings workflowSettings = settingsByAgent.TryGetValue(AgentNames.Intake, out WorkflowSettings? value)
+            codeGraphAudit,
+            toolCallStore,
+            workflowId);
+        WorkflowSettings workflowSettings = settingsByAgent.TryGetValue(AgentNames.Developer, out WorkflowSettings? value)
             ? value
-            : throw new ConfigurationException("Model configuration for agent 'intake' is required.");
+            : throw new ConfigurationException("Model configuration for agent 'developer' is required.");
         return Create(team, workflowSettings);
     }
 
     private static WorkflowBundle Create(AgentTeam team, WorkflowSettings settings)
     {
-        AIAgent planningOrImplementationStage = team.Planner ?? team.Developer;
-        AIAgent firstImplementationStage = team.Jira ?? planningOrImplementationStage;
         AIAgent nextAfterDeveloper = team.Reviewer ?? team.Security ?? team.ReleaseManager;
         AIAgent nextAfterReviewer = team.Security ?? team.ReleaseManager;
 
-        var builder = AgentWorkflowBuilder.CreateHandoffBuilderWith(team.Intake)
-            .WithHandoff(team.Intake, firstImplementationStage,
-                team.Planner is null
-                    ? "Route every accepted change request directly to the developer."
-                    : "Route every accepted change request to the planner for repository inspection and an implementation plan.");
+        var builder = AgentWorkflowBuilder.CreateHandoffBuilderWith(team.StartAgent);
 
-        if (team.Planner is not null)
-        {
-            builder.WithHandoff(team.Planner, team.Developer,
-                "Route to the developer after the repository-backed plan and acceptance criteria are complete.");
-        }
+        builder.WithHandoff(team.Planner, team.Developer,
+            "Route to the developer after the repository-backed implementation contract and acceptance criteria are complete.");
 
         if (team.Jira is not null)
         {
-            builder.WithHandoff(team.Jira, planningOrImplementationStage,
-                team.Planner is null
-                    ? "Route to the developer after the requested Jira context has been retrieved."
-                    : "Route to the planner after the requested Jira context has been retrieved and summarized.");
+            builder.WithHandoff(team.Jira, team.Planner,
+                "Route to the planner after the requested Jira context has been retrieved and summarized.");
         }
 
         builder.WithHandoff(team.Developer, nextAfterDeveloper,

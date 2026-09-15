@@ -37,10 +37,9 @@ public static class CodeGraphPolicy
     public static string InstructionsFor(string agentName) => $"""
         CODEGRAPH GUIDANCE
         CodeGraph is a complementary read-only aid for faster, cheaper C# analysis; it is never a handoff gate.
-        When the current assignment changes or evaluates a .cs patch, make at most one focused CodeGraph lookup
-        sequence early when symbol relationships would help {RoleAction(agentName)}. Prefer get_context with a small token
-        budget. If a symbol is ambiguous, use find_symbol followed by get_context_by_id; use get_neighbors only
-        when direct relationships are specifically needed.
+        When C# source involvement is visible, the workflow deterministically performs one focused get_context
+        prefetch before the next model request so graph evidence cannot be skipped. Use that supplied evidence when
+        {RoleAction(agentName)}. Do not repeat the lookup merely to satisfy policy.
 
         If CodeGraph returns no relevant data, is stale, or cannot identify the symbol, do not retry merely to
         satisfy a policy. Continue with targeted repository search, exact file reads, the Git diff, and appropriate
@@ -136,7 +135,7 @@ internal static class CodeGraphToolFactory
                 audit, agentName, GetContextName, query,
                 () => tools.GetContext(query, maxNodes, tokenBudget))),
             name: GetContextName,
-            description: "Returns compact C# source and relationship context for a symbol. Prefer a small token budget."),
+            description: "Returns compact C# source and relationship context. Query must be one C# symbol name of at most 256 characters, not a task description. Prefer a small token budget."),
         AIFunctionFactory.Create(
             (Func<string, int, int, string>)((id, maxNodes, tokenBudget) => Record(
                 audit, agentName, GetContextByIdName, id,

@@ -36,7 +36,6 @@ public sealed record AgentModelConfiguration(
 
 public static class AgentNames
 {
-    public const string Intake = "intake";
     public const string Jira = "jira";
     public const string Planner = "planner";
     public const string Developer = "developer";
@@ -45,13 +44,13 @@ public static class AgentNames
     public const string ReleaseManager = "release_manager";
 
     public static IReadOnlyList<string> All { get; } =
-        [Intake, Jira, Planner, Developer, Reviewer, Security, ReleaseManager];
+        [Jira, Planner, Developer, Reviewer, Security, ReleaseManager];
 
-    // Intake begins every run, Developer is the only role allowed to change the repository,
-    // and ReleaseManager is the terminal approval gate. The stages between them can be omitted.
+    // Planner defines the implementation contract, Developer is the only role allowed to change
+    // the repository, and ReleaseManager is the terminal approval gate.
     public static IReadOnlyList<string> Required { get; } =
-        [Intake, Developer, ReleaseManager];
+        [Planner, Developer, ReleaseManager];
 
     public static IReadOnlyList<string> Optional { get; } =
-        [Jira, Planner, Reviewer, Security];
+        [Jira, Reviewer, Security];
 }

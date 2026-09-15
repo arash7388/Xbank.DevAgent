@@ -3,6 +3,7 @@ const agentModels = document.querySelector('#agent-models');
 const pricingStatus = document.querySelector('#pricing-status');
 const providerKeys = Object.fromEntries(
   [...document.querySelectorAll('[data-provider-key]')].map(input => [input.dataset.providerKey, input]));
+const configuredProviderKeys = new Set();
 const runButton = document.querySelector('#run-button');
 const cancelButton = document.querySelector('#cancel-button');
 const rejectButton = document.querySelector('#reject-button');
@@ -40,6 +41,7 @@ const embeddingProviderGuide = document.querySelector('#embedding-provider-guide
 const referenceStatus = document.querySelector('#reference-status');
 const connectionStepButton = document.querySelector('#connection-step-button');
 const runStepButton = document.querySelector('#run-step-button');
+const workflowCodeGraphEnabled = document.querySelector('#codegraph-enabled');
 
 let sessionId = null;
 let pollTimer = null;
@@ -155,9 +157,8 @@ const providerCatalog = {
 };
 
 const agentCatalog = [
-  { id: 'intake', name: 'Intake', description: 'Intake and routing', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
   { id: 'jira', name: 'Jira', description: 'Read-only Jira issue and project context', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: false },
-  { id: 'planner', name: 'Planner', description: 'Architecture and acceptance criteria', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: true },
+  { id: 'planner', name: 'Planner', description: 'Architecture and acceptance criteria', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
   { id: 'developer', name: 'Developer', description: 'Implementation and remediation', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
   { id: 'reviewer', name: 'Reviewer', description: 'Correctness and quality gate', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: false },
   { id: 'security', name: 'Security', description: 'Threat modeling and security gate', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: false },
@@ -169,10 +170,20 @@ function createAgentModelCard(agent) {
   card.className = 'agent-model-card';
   card.dataset.agent = agent.id;
 
-  const header = document.createElement('div');
+  const header = document.createElement('button');
   header.className = 'agent-card-header';
+  header.type = 'button';
+  header.setAttribute('aria-expanded', 'false');
+  header.setAttribute('aria-controls', `agent-card-body-${agent.id}`);
   const title = document.createElement('h3');
   title.textContent = agent.name;
+  const expandIcon = document.createElement('span');
+  expandIcon.className = 'agent-card-expand-icon';
+  expandIcon.setAttribute('aria-hidden', 'true');
+  const body = document.createElement('div');
+  body.className = 'agent-card-body';
+  body.id = `agent-card-body-${agent.id}`;
+  body.hidden = true;
   const enabledLabel = document.createElement('label');
   enabledLabel.className = 'agent-toggle';
   const enabledInput = document.createElement('input');
@@ -184,7 +195,7 @@ function createAgentModelCard(agent) {
   const enabledText = document.createElement('span');
   enabledText.textContent = agent.required ? 'Required' : 'Enabled';
   enabledLabel.append(enabledInput, enabledText);
-  header.append(title, enabledLabel);
+  header.append(title, expandIcon);
   const description = document.createElement('p');
   description.textContent = agent.description;
   const tools = document.createElement('details');
@@ -238,7 +249,14 @@ function createAgentModelCard(agent) {
   promptInput.setAttribute('aria-label', `${agent.name} additional guidance`);
 
   controls.append(providerGroup, effortGroup);
-  card.append(header, description, tools, controls, modelLabel, modelSelect, promptLabel, promptInput);
+  body.append(enabledLabel, description, tools, controls, modelLabel, modelSelect, promptLabel, promptInput);
+  card.append(header, body);
+  header.addEventListener('click', () => {
+    const expanded = header.getAttribute('aria-expanded') === 'true';
+    header.setAttribute('aria-expanded', String(!expanded));
+    body.hidden = expanded;
+    card.classList.toggle('is-expanded', !expanded);
+  });
   providerSelect.addEventListener('change', () => syncAgentCard(card));
   modelSelect.addEventListener('change', () => syncUsagePricingCard(agent.id, true));
   effortSelect.addEventListener('change', () => syncUsagePricingCard(agent.id, true));
@@ -290,7 +308,7 @@ function createUsagePricingCard(agent) {
   output.dataset.field = 'output-cost';
   output.setAttribute('aria-label', `${agent.name} output token price in USD per million tokens`);
   card.append(title, model, modeNote, inputLabel, input, cachedInputLabel, cachedInput, outputLabel, output);
-  modelCard.append(card);
+  modelCard.querySelector('.agent-card-body').append(card);
   syncUsagePricingCard(agent.id);
 }
 
@@ -455,7 +473,17 @@ async function loadDeepSeekPricing() {
   }
 }
 
-Promise.all([loadDefaultPrompts(), loadAgentTools(), loadDeepSeekPricing()])
+async function loadConfiguredProviders() {
+  const configured = await api('/api/providers/configured');
+  Object.entries(configured).forEach(([providerId, isConfigured]) => {
+    if (!isConfigured || !providerKeys[providerId]) return;
+    configuredProviderKeys.add(providerId);
+    providerKeys[providerId].placeholder = `${providerCatalog[providerId].name} key configured on server`;
+  });
+  syncRequiredProviderKeys();
+}
+
+Promise.all([loadDefaultPrompts(), loadAgentTools(), loadDeepSeekPricing(), loadConfiguredProviders()])
   .then(() => { runButton.disabled = false; })
   .catch(error => showError(`Could not initialize the run form: ${error.message}`));
 
@@ -465,8 +493,9 @@ function syncRequiredProviderKeys() {
       .filter(isAgentCardEnabled)
       .map(card => card.querySelector('[data-field="provider"]').value));
   Object.entries(providerKeys).forEach(([providerId, input]) => {
-    input.required = selected.has(providerId);
-    input.classList.toggle('required-key', selected.has(providerId));
+    const required = selected.has(providerId) && !configuredProviderKeys.has(providerId);
+    input.required = required;
+    input.classList.toggle('required-key', required);
   });
 }
 
@@ -611,6 +640,7 @@ form.addEventListener('submit', async (event) => {
     agents,
     githubToken: values.get('githubToken').trim() || null,
     referenceCollectionId,
+    codeGraphEnabled: values.get('codeGraphEnabled') === 'on',
   };
 
   try {
@@ -641,7 +671,9 @@ function readAgentConfigurations() {
     const outputCostPerMillionTokens = readTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), `${card.dataset.agent} output price`);
     const preset = providerCatalog[providerId];
     const apiKey = providerKeys[providerId].value.trim();
-    if (!apiKey) throw new Error(`An API key for ${preset.name} is required by the ${card.dataset.agent} agent.`);
+    if (!apiKey && !configuredProviderKeys.has(providerId)) {
+      throw new Error(`An API key for ${preset.name} is required by the ${card.dataset.agent} agent.`);
+    }
     return [card.dataset.agent, {
       apiKey,
       prompt: prompt || null,
@@ -1110,6 +1142,10 @@ if (new URLSearchParams(window.location.search).get('view') === 'codegraph')
 async function initializeCodeGraph() {
   try {
     const config = await api('/api/codegraph/config');
+    workflowCodeGraphEnabled.checked = config.workflowEnabled;
+    workflowCodeGraphEnabled.disabled = !config.workflowEnabled;
+    if (!config.workflowEnabled)
+      workflowCodeGraphEnabled.title = 'Disabled by the server CodeGraph:Enabled setting.';
     codeGraphDb.value = config.defaultDatabasePath;
     config.tables.forEach(table => codeGraphTableSelect.add(new Option(table, table)));
     codeGraphTableSelect.value = 'nodes';

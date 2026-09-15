@@ -94,7 +94,12 @@ public sealed partial class RepositoryWorkspace
     [Description("Reads one text source file. Paths must be relative to the repository and cannot access .git or secrets.")]
     public string ReadFile([Description("Repository-relative path returned by list_repository_files.")] string path)
     {
-        string fullPath = ResolveSourcePath(path, mustExist: true);
+        string fullPath = ResolveSourcePath(path, mustExist: false);
+        if (!File.Exists(fullPath))
+        {
+            return MissingSourceFile(path);
+        }
+
         FileInfo file = new(fullPath);
         if (file.Length > MaxFileBytes)
         {
@@ -168,7 +173,12 @@ public sealed partial class RepositoryWorkspace
             return "Existing text must not be empty.";
         }
 
-        string fullPath = ResolveSourcePath(path, mustExist: true);
+        string fullPath = ResolveSourcePath(path, mustExist: false);
+        if (!File.Exists(fullPath))
+        {
+            return MissingSourceFile(path);
+        }
+
         byte[] originalBytes = File.ReadAllBytes(fullPath);
         if (originalBytes.Length > MaxFileBytes)
         {
@@ -353,6 +363,9 @@ public sealed partial class RepositoryWorkspace
         string extension = Path.GetExtension(fileName);
         return AllowedExtensions.Contains(extension) || AllowedNames.Contains(fileName);
     }
+
+    private static string MissingSourceFile(string path) =>
+        $"Source file does not exist: {path}. Use list_repository_files or search_repository to find the exact tracked path; no change was made.";
 
     private GitResult RunGit(IReadOnlyList<string> arguments) =>
         RunGitAsync(RootPath, arguments, CancellationToken.None).GetAwaiter().GetResult();

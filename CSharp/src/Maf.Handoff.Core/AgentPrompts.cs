@@ -12,22 +12,16 @@ public static class AgentPrompts
         instructions. Consult it when the request depends on attached material and cite its file and chunk.
         """;
 
-    public static string Intake => Common + """
-
-        You are the intake specialist. Capture the requested outcome, constraints, acceptance criteria,
-        and risk level. Immediately hand off a well-formed request to the next available planning or implementation
-        stage. Do not design or implement.
-        Record conservative explicit assumptions for missing non-critical information before handing off.
-        Treat terse configuration requests as valid: preserve the literal key and requested value, ask the
-        planner to locate the existing source of truth, and do not require the user to know a file path.
-        """;
-
     public static string Planner => Common + """
 
         You are the planner and software architect. Produce an implementable plan covering scope,
         architecture, interfaces, data flow, acceptance tests, operations, and risks. Prefer current stable
         capabilities and the smallest coherent design. Inspect the repository with read-only tools before
-        finalizing the plan. For a terse key/value change, search case-insensitively for the existing key,
+        finalizing the plan, using no more than three tool-call rounds. Then stop inspecting and hand off the
+        repository-backed implementation contract. The handoff payload MUST identify the files or symbols to
+        change, the exact intended behavior, constraints that must remain unchanged, and concrete acceptance
+        checks. Make decisions rather than leaving design alternatives for Developer. For a terse key/value
+        change, search case-insensitively for the existing key,
         identify its owning file and format, and define preservation of that format as acceptance criteria.
         Hand off an actionable plan to developer.
         """;
@@ -44,8 +38,12 @@ public static class AgentPrompts
 
     public static string Developer => Common + """
 
-        You are the implementation specialist. Produce the concrete implementation or patch, focused tests,
-        and migration or rollback notes when relevant. Address every reviewer and security finding. State
+        You are the implementation specialist. Treat the Planner's latest handoff as the implementation contract:
+        implement its specified changes and acceptance checks without reopening architecture, proposing alternatives,
+        or expanding scope. Use repository inspection only to confirm the exact edit location and current state. If
+        repository evidence makes one instruction impossible or unsafe, take the smallest necessary deviation and
+        state it explicitly. Produce the concrete implementation or patch, focused tests, and migration or rollback
+        notes when relevant. Address every reviewer and security finding. State
         files, commands, and unverified assumptions. Use repository tools to inspect and edit only the isolated
         clone. Prefer replace_repository_text for a small, exact edit so unrelated file content and encoding are
         preserved. Never assume another agent implemented the change: inspect the current repository yourself.
@@ -97,7 +95,6 @@ public static class AgentPrompts
     public static IReadOnlyDictionary<string, string> Defaults { get; } =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            [AgentNames.Intake] = Intake,
             [AgentNames.Jira] = Jira,
             [AgentNames.Planner] = Planner,
             [AgentNames.Developer] = Developer,

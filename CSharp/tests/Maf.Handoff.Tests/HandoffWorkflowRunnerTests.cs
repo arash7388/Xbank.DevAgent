@@ -39,7 +39,7 @@ public sealed class HandoffWorkflowRunnerTests
             "test-model",
             "test-key",
             MaxTotalMessages: 8,
-            MaxAgentTurns: 1);
+            MaxAgentTurns: 2);
         HandoffWorkflowRunner runner = new(
             settings,
             chatClient: chatClient,
@@ -92,13 +92,13 @@ public sealed class HandoffWorkflowRunnerTests
 
     private sealed class MixedToolAndHandoffChatClient : IChatClient
     {
-        private int _callCount;
+        private bool _mixedResponseReturned;
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
             ChatOptions? options = null,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(NextResponse());
+            Task.FromResult(NextResponse(options));
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -106,7 +106,7 @@ public sealed class HandoffWorkflowRunnerTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
-            foreach (ChatResponseUpdate update in NextResponse().ToChatResponseUpdates())
+            foreach (ChatResponseUpdate update in NextResponse(options).ToChatResponseUpdates())
             {
                 yield return update;
             }
@@ -119,25 +119,32 @@ public sealed class HandoffWorkflowRunnerTests
         {
         }
 
-        private ChatResponse NextResponse()
+        private ChatResponse NextResponse(ChatOptions? options)
         {
-            _callCount++;
-            return _callCount == 1
-                ? new ChatResponse(new ChatMessage(
+            string? handoff = options?.Tools?.Select(tool => tool.Name)
+                .FirstOrDefault(name => name.StartsWith("handoff_to_", StringComparison.Ordinal));
+            if (handoff is null)
+            {
+                return new ChatResponse(new ChatMessage(ChatRole.Assistant, "Ready. WORKFLOW_COMPLETE"));
+            }
+
+            if (!_mixedResponseReturned)
+            {
+                _mixedResponseReturned = true;
+                return new ChatResponse(new ChatMessage(
                     ChatRole.Assistant,
                     [
-                        new FunctionCallContent("tool-intake", AgentToolCatalog.SearchDocuments.Name, new Dictionary<string, object?>
+                        new FunctionCallContent("tool-developer", AgentToolCatalog.SearchDocuments.Name, new Dictionary<string, object?>
                         {
                             ["query"] = "requirements",
                             ["maxResults"] = 3,
                         }),
-                        new FunctionCallContent("handoff-intake", "handoff_to_1", new Dictionary<string, object?>()),
-                    ]))
-                : _callCount == 2
-                    ? new ChatResponse(new ChatMessage(
-                        ChatRole.Assistant,
-                        [new FunctionCallContent("handoff-intake-retry", "handoff_to_1", new Dictionary<string, object?>())]))
-                    : new ChatResponse(new ChatMessage(ChatRole.Assistant, "Developer turn completed."));
+                        new FunctionCallContent("handoff-developer", handoff, new Dictionary<string, object?>()),
+                    ]));
+            }
+
+            return new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                [new FunctionCallContent("handoff-developer-retry", handoff, new Dictionary<string, object?>())]));
         }
     }
 

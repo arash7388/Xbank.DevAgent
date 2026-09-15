@@ -6,17 +6,21 @@ namespace Maf.Handoff.Core;
 
 public static class AgentTeamFactory
 {
+    private const int PlannerToolRoundLimit = 3;
+
     public static AgentTeam Create(
         IChatClient chatClient,
         WorkflowSettings settings,
         RepositoryWorkspace? workspace = null,
         IReferenceDocumentSearch? referenceDocuments = null,
         ICodeGraphTools? codeGraphTools = null,
-        CodeGraphAudit? codeGraphAudit = null)
+        CodeGraphAudit? codeGraphAudit = null,
+        IToolCallStore? toolCallStore = null,
+        string? workflowId = null)
     {
-        Dictionary<string, IChatClient> clients = AgentNames.All.ToDictionary(name => name, _ => chatClient);
-        Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.All.ToDictionary(name => name, _ => settings);
-        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit);
+        Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(name => name, _ => chatClient);
+        Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => settings);
+        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId);
     }
 
     public static AgentTeam Create(
@@ -25,7 +29,9 @@ public static class AgentTeamFactory
         RepositoryWorkspace? workspace = null,
         IReferenceDocumentSearch? referenceDocuments = null,
         ICodeGraphTools? codeGraphTools = null,
-        CodeGraphAudit? codeGraphAudit = null)
+        CodeGraphAudit? codeGraphAudit = null,
+        IToolCallStore? toolCallStore = null,
+        string? workflowId = null)
     {
         bool codeGraphAvailable = workspace?.ContainsCSharpSource() is true && codeGraphTools is not null;
         if (codeGraphAvailable)
@@ -45,7 +51,7 @@ public static class AgentTeamFactory
 
         Dictionary<string, IChatClient> effectiveClients = clients.ToDictionary(
             pair => pair.Key,
-            pair => (IChatClient)new ExclusiveHandoffChatClient(pair.Value),
+            pair => CreateEffectiveClient(pair.Key, pair.Value),
             StringComparer.Ordinal);
         if (workspace is not null)
         {
@@ -55,13 +61,25 @@ public static class AgentTeamFactory
         }
 
         return new(
-            CreateAgent(Get(effectiveClients, AgentNames.Intake), Get(settingsByAgent, AgentNames.Intake), AgentNames.Intake, "Intake, constraints, and routing.", AgentPrompts.Intake, CreateTools(AgentNames.Intake, false), codeGraphAvailable),
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Read-only Jira issue and project context retrieval.", AgentPrompts.Jira, tools: null, codeGraphAvailable),
-            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, CreateTools(AgentNames.Planner, false), codeGraphAvailable),
+            CreateAgent(Get(effectiveClients, AgentNames.Planner), Get(settingsByAgent, AgentNames.Planner), AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, CreateTools(AgentNames.Planner, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Developer), Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, CreateTools(AgentNames.Developer, true), codeGraphAvailable),
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, false), codeGraphAvailable),
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Security, "Threat modeling and security review.", AgentPrompts.Security, CreateTools(AgentNames.Security, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.ReleaseManager), Get(settingsByAgent, AgentNames.ReleaseManager), AgentNames.ReleaseManager, "Final evidence gate.", AgentPrompts.ReleaseManager, CreateTools(AgentNames.ReleaseManager, false), codeGraphAvailable));
+
+        IChatClient CreateEffectiveClient(string agentName, IChatClient client)
+        {
+            IChatClient effective = codeGraphAvailable && CodeGraphPolicy.IsUsefulFor(agentName)
+                ? new CodeGraphPrefetchChatClient(client)
+                : client;
+            if (agentName == AgentNames.Planner)
+            {
+                effective = new ToolRoundBudgetChatClient(effective, PlannerToolRoundLimit);
+            }
+
+            return new ExclusiveHandoffChatClient(effective);
+        }
 
         IList<AITool>? CreateTools(string agentName, bool developer)
         {
@@ -83,6 +101,20 @@ public static class AgentTeamFactory
             if (codeGraphAvailable && CodeGraphPolicy.IsUsefulFor(agentName))
             {
                 tools.AddRange(CodeGraphToolFactory.Create(codeGraphTools!, codeGraphAudit!, agentName));
+            }
+
+            if (toolCallStore is not null && !string.IsNullOrWhiteSpace(workflowId))
+            {
+                tools =
+                [
+                    .. tools.Select(tool => tool is AIFunction function
+                        ? (AITool)new ToolCallAuditingAIFunction(
+                            function,
+                            toolCallStore,
+                            workflowId,
+                            agentName)
+                        : tool),
+                ];
             }
 
             return tools.Count == 0 ? null : tools;
@@ -158,19 +190,24 @@ public static class AgentTeamFactory
             {
                 ["include_usage"] = true,
             };
-            options.Reasoning = new ReasoningOptions
+            if (settings.Provider?.Thinking is true)
             {
-                Effort = settings.Provider?.ReasoningEffort switch
+                options.Reasoning = new ReasoningOptions
                 {
-                    "low" => ReasoningEffort.Low,
-                    "medium" => ReasoningEffort.Medium,
-                    "max" => ReasoningEffort.ExtraHigh,
-                    _ => ReasoningEffort.High,
-                },
-                // Keep reasoning available to the model without returning its trace in the
-                // response, where it would increase output and subsequent context usage.
-                Output = ReasoningOutput.None,
-            };
+                    Effort = settings.Provider.ReasoningEffort switch
+                    {
+                        "low" => ReasoningEffort.Low,
+                        "medium" => ReasoningEffort.Medium,
+                        "max" => ReasoningEffort.ExtraHigh,
+                        _ => ReasoningEffort.High,
+                    },
+                    // DeepSeek requires the reasoning_content associated with a tool call to be
+                    // replayed on the next request. It remains internal workflow state and is not
+                    // emitted by HandoffWorkflowRunner as user-visible message text.
+                    Output = ReasoningOutput.Full,
+                };
+            }
+
             return options;
         }
 

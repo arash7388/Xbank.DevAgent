@@ -25,6 +25,7 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
     };
 
     private readonly object _statusLock = new();
+    private readonly bool _workflowEnabled = configuration.GetValue("CodeGraph:Enabled", true);
     private readonly string _rootPath = Path.GetFullPath(configuration["CodeGraph:RootPath"] ?? @"E:\CodeGraph");
     private readonly string _agentDatabasePath = Path.GetFullPath(
         configuration["CodeGraph:DatabasePath"] ??
@@ -34,12 +35,15 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
 
     public object GetConfiguration() => new
     {
+        workflowEnabled = _workflowEnabled,
         rootPath = _rootPath,
         indexerProject = Path.Combine(_rootPath, "CodeGraph", "CodeGraph.csproj"),
         defaultDatabasePath = _agentDatabasePath,
         tools = new[] { "find_symbol", "get_neighbors", "get_context", "get_context_by_id" },
         tables = AllowedTables.OrderBy(x => x)
     };
+
+    public bool IsWorkflowEnabled => _workflowEnabled;
 
     public void EnsureAvailable(string repositoryUrl)
     {

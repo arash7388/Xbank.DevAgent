@@ -10,7 +10,7 @@ namespace Maf.Handoff.Tests;
 public sealed class SimpleChangeWorkflowSimulationTests
 {
     [Fact]
-    public async Task OneLineChangeUsesSevenCallsAcrossThreeDefaultAgentsAsync()
+    public async Task OneLineChangeUsesSevenCallsAcrossThreeRequiredAgentsAsync()
     {
         string root = Path.Combine(Path.GetTempPath(), "maf-simple-change-simulation", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -22,7 +22,7 @@ public sealed class SimpleChangeWorkflowSimulationTests
             RunGit(root, "add", "Settings.cs");
 
             RepositoryWorkspace workspace = CreateWorkspace(root);
-            ScriptedClient intake = new(options => Handoff(options, "intake-handoff"));
+            ScriptedClient planner = new(options => Handoff(options, "planner-handoff"));
             int developerStep = 0;
             ScriptedClient developer = new(options => developerStep++ switch
             {
@@ -57,7 +57,7 @@ public sealed class SimpleChangeWorkflowSimulationTests
                 MaxAgentTurns: 12);
             Dictionary<string, IChatClient> clients = new(StringComparer.Ordinal)
             {
-                [AgentNames.Intake] = intake,
+                [AgentNames.Planner] = planner,
                 [AgentNames.Developer] = developer,
                 [AgentNames.ReleaseManager] = release,
             };
@@ -77,7 +77,7 @@ public sealed class SimpleChangeWorkflowSimulationTests
             {
             }
 
-            Assert.Equal(1, intake.CallCount);
+            Assert.Equal(1, planner.CallCount);
             Assert.Equal(4, developer.CallCount);
             Assert.Equal(2, release.CallCount);
             Assert.Contains("RetryLimit = 4", workspace.GetDiff(), StringComparison.Ordinal);

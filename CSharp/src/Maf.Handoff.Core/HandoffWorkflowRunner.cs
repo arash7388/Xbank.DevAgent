@@ -50,6 +50,7 @@ public sealed class HandoffWorkflowRunner
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(task);
+        string workflowId = Guid.NewGuid().ToString("N");
 
         WorkflowBundle bundle;
         WorkflowSettings workflowSettings;
@@ -73,7 +74,7 @@ public sealed class HandoffWorkflowRunner
                 }
             }
 
-            workflowSettings = _settingsByAgent[AgentNames.Intake];
+            workflowSettings = _settingsByAgent[AgentNames.Developer];
             settingsByAgent = _settingsByAgent;
             usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests);
             clients = clients.ToDictionary(
@@ -83,7 +84,8 @@ public sealed class HandoffWorkflowRunner
                     pair.Key,
                     settingsByAgent[pair.Key],
                     usageCollector,
-                    checkpointMetrics),
+                    checkpointMetrics,
+                    workflowId),
                 StringComparer.Ordinal);
             bundle = HandoffWorkflowFactory.Create(
                 clients,
@@ -91,36 +93,41 @@ public sealed class HandoffWorkflowRunner
                 _workspace,
                 _referenceDocuments,
                 _codeGraphTools,
-                codeGraphAudit);
+                codeGraphAudit,
+                _checkpointStore as IToolCallStore,
+                workflowId);
         }
         else
         {
             workflowSettings = _settings ?? throw new ConfigurationException("Workflow model settings are required.");
             IChatClient effectiveChatClient = _chatClient ?? ModelChatClientFactory.Create(workflowSettings);
-            settingsByAgent = AgentNames.All.ToDictionary(name => name, _ => workflowSettings);
+            settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => workflowSettings);
             usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests);
-            Dictionary<string, IChatClient> clients = AgentNames.All.ToDictionary(
+            Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(
                 name => name,
                 name => WithTelemetryAndCheckpoints(
                     effectiveChatClient,
                     name,
                     workflowSettings,
                     usageCollector,
-                    checkpointMetrics));
+                    checkpointMetrics,
+                    workflowId));
             bundle = HandoffWorkflowFactory.Create(
                 clients,
                 settingsByAgent,
                 _workspace,
                 _referenceDocuments,
                 _codeGraphTools,
-                codeGraphAudit);
+                codeGraphAudit,
+                _checkpointStore as IToolCallStore,
+                workflowId);
         }
         string status = "stopped_without_release_approval";
         string? activeAgent = null;
         StringBuilder releaseManagerOutput = new();
         HashSet<string> observedToolCalls = new(StringComparer.Ordinal);
 
-        yield return RunEvent.Trace(null, "Workflow started. Waiting for the intake agent.");
+        yield return RunEvent.Trace(null, $"Workflow started. Waiting for the {bundle.Team.StartAgent.Name} agent.");
 
         await using StreamingRun run = await InProcessExecution
             .RunStreamingAsync(bundle.Workflow, task, cancellationToken: cancellationToken)
@@ -269,12 +276,13 @@ public sealed class HandoffWorkflowRunner
         string agent,
         WorkflowSettings settings,
         TokenUsageCollector usageCollector,
-        LlmCheckpointMetrics checkpointMetrics)
+        LlmCheckpointMetrics checkpointMetrics,
+        string workflowId)
     {
         IChatClient provider = new CompletedToolCycleFilteringChatClient(client);
         IChatClient effective = new UsageTrackingChatClient(provider, agent, usageCollector);
         return _checkpointStore is null
             ? effective
-            : new CheckpointingChatClient(effective, _checkpointStore, agent, settings, checkpointMetrics);
+            : new CheckpointingChatClient(effective, _checkpointStore, agent, settings, checkpointMetrics, workflowId);
     }
 }

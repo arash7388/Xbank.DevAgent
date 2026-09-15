@@ -5,9 +5,8 @@ namespace Maf.Handoff.Tests;
 public sealed class HandoffTopologyTests
 {
     [Fact]
-    public void IntakeRoutesThroughJira()
+    public void JiraRoutesThroughPlanner()
     {
-        Assert.Equal(["jira"], HandoffTopology.Edges["intake"]);
         Assert.Equal(["planner"], HandoffTopology.Edges["jira"]);
     }
 

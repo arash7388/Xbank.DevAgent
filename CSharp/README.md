@@ -6,12 +6,11 @@ and requires user confirmation before any commit or push.
 
 No Azure services or Azure packages are used. The workbench supports OpenAI through Chat
 Completions, DeepSeek through its provider-native Microsoft Agent Framework adapter, and Claude
-through Anthropic's official C# `IChatClient` integration. The DeepSeek adapter preserves
-`reasoning_content` across tool calls and agent handoffs.
+through Anthropic's official C# `IChatClient` integration.
 
 Provider definitions include model identity, URL, tool-calling/vision/thinking capabilities, token
 limits, and supported reasoning-effort values. Full `/chat/completions` URLs are normalized to the
-SDK base endpoint. DeepSeek agents preserve the selected reasoning level and retain full thinking state;
+SDK base endpoint. DeepSeek agents preserve the selected reasoning level without returning its full trace;
 OpenAI reasoning values are passed through its Chat Completions options. Tool calling is mandatory
 for this handoff topology.
 
@@ -27,10 +26,14 @@ reasoning-effort selector. All agents default to DeepSeek `deepseek-flash` with 
 but can be configured individually. Provider credentials are entered once and reused only by agents
 assigned to that provider. Endpoints and capability metadata remain internal.
 
-Jira, planner, reviewer, and security are optional and start disabled, keeping a small repository edit
-on the intake-to-developer-to-release path. Enable the additional stages for work whose context or risk
-needs them. A run stops after 20 actual provider requests by default (`MAF_MAX_LLM_REQUESTS`) so tool or
+Jira, reviewer, and security are optional and start disabled. Every run uses Planner to produce a
+repository-backed implementation contract before Developer changes the repository. When Jira is enabled,
+it supplies issue context to Planner first. Planner, Developer, and Release Manager are required. Enable the
+optional review gates only when the work's context or risk needs them. A run stops after 20 actual
+provider requests by default (`MAF_MAX_LLM_REQUESTS`) so tool or
 remediation loops cannot consume the much larger transcript-message allowance unchecked.
+When Planner is enabled, it receives at most three ordinary repository-tool rounds; its next request is
+restricted to the Developer handoff so repeated inspection cannot consume the global request budget.
 
 At the end of every run, the activity view and session response show provider-reported input/output
 tokens for every participating agent and the run total. To calculate an estimated USD cost, enter the
@@ -44,6 +47,16 @@ instructions, tool definitions, model options, and complete conversation input a
 allows a restarted workflow to skip calls completed before an exception. Running and failed calls are
 retained for diagnosis but never reused; only fully saved responses are cache hits. The activity stream
 reports checkpoint hits and actual provider calls, and token usage counts only calls sent to a provider.
+Each checkpoint row includes a `workflow_id`, allowing all provider-call attempts from the same workflow run
+to be queried together. Actual local tool executions are stored separately in `tool_calls`, including the
+caller agent, tool name, input JSON, response or error JSON, status, duration, timestamps, and the same
+`workflow_id`. Framework handoffs are not tool executions and are therefore not inserted into this table.
+
+The same database also keeps an audit record for every repository workflow. `workflows` contains the
+immutable, versioned input/configuration snapshot, while `workflow_runs` contains execution status and
+timestamps. Secret values (provider API keys and GitHub tokens) are never written to the snapshot; only a
+boolean indicating whether each credential was configured is retained. The session ID returned by the API
+is the `workflow_runs.id`, so checkpoints and tool calls can be correlated with the recorded run.
 
 ## Safety model
 
@@ -75,8 +88,11 @@ Open `http://127.0.0.1:8080`.
 Configure the protected graph database with `CodeGraph__DatabasePath`; it defaults to
 `E:\CodeGraph\codegraph.db`. The database must contain an up-to-date index for the C# repository the
 agents will inspect. `CodeGraph__RootPath` controls the local CodeGraph indexer used by the workbench.
+Set `CodeGraph__Enabled=false` to disable CodeGraph for every agent workflow. When the server setting is
+enabled (the default), each run can still opt out with the **Use CodeGraph for C# analysis** checkbox or
+the `codeGraphEnabled: false` session API field.
 
-The LLM checkpoint database defaults to `data/llm-checkpoints.db` under the API content root. Override
+The LLM checkpoint and tool-call database defaults to `data/llm-checkpoints.db` under the API content root. Override
 it with `Checkpointing__DatabasePath`. Prompts, conversation history, tool results, and model responses
 are stored in plain text, so keep this local database access-controlled and apply an appropriate
 retention policy. If a future tool has non-idempotent external side effects, exclude those calls from
@@ -127,10 +143,10 @@ branch when necessary, then creates a pull request into the selected base branch
 repository with no push or pull request, the GitHub token may be omitted. Provider API keys are
 always required and are never reused as GitHub credentials.
 
-The session API accepts an `agents` object keyed by the stable names `intake`, `jira`, `planner`,
-`developer`, `reviewer`, `security`, and `release_manager`. Every entry contains an independent
-`provider` definition and `apiKey`. Intake, developer, and release manager are required; Jira,
-planner, reviewer, and security are optional. For example, the planner entry is:
+The session API accepts an `agents` object keyed by the stable names `jira`, `planner`, `developer`,
+`reviewer`, `security`, and `release_manager`. Every entry contains an independent `provider`
+definition and `apiKey`. Planner, developer, and release manager are required; Jira, reviewer, and
+security are optional. For example, the planner entry is:
 
 ```json
 {
@@ -154,7 +170,7 @@ planner, reviewer, and security are optional. For example, the planner entry is:
 }
 ```
 
-A real request supplies the other five agent entries too.
+A real request must also supply developer and release-manager entries.
 
 ## Projects
 

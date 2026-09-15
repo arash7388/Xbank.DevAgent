@@ -8,7 +8,7 @@ flowchart TB
     GIT --> CLONE[Isolated temporary clone]
 
     SS --> RUN[Handoff workflow runner]
-    RUN --> PROFILES[Seven agent model profiles]
+    RUN --> PROFILES[Six agent model profiles]
     PROFILES --> PROVIDER[Provider validation and URL normalization]
     PROVIDER --> CLIENT[One IChatClient per agent]
     CLIENT --> OPENAI[OpenAI / DeepSeek chat completions]
@@ -16,7 +16,6 @@ flowchart TB
     RUN --> FLOW[Microsoft Agent Framework HandoffBuilder]
 
     subgraph Agents
-      O[Intake] --> J[Jira]
       J --> P[Planner]
       P --> D[Developer]
       D --> R[Reviewer]
@@ -26,7 +25,8 @@ flowchart TB
       S -->|approved| RM[Release manager]
     end
 
-    FLOW --> O
+    FLOW -->|when enabled| J
+    FLOW -->|when Jira is disabled| P
     P --> READ[Read-only repository tools]
     R --> READ
     S --> READ

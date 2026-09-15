@@ -26,12 +26,12 @@ public sealed class TokenUsageTests
         WorkflowSettings settings = new("https://example.test", "test-model", "key", Provider: provider);
         TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
         {
-            [AgentNames.Intake] = settings,
+            [AgentNames.Planner] = settings,
             [AgentNames.Developer] = settings,
         });
 
-        collector.RecordRequest(AgentNames.Intake);
-        collector.Record(AgentNames.Intake, new UsageDetails
+        collector.RecordRequest(AgentNames.Planner);
+        collector.Record(AgentNames.Planner, new UsageDetails
         {
             InputTokenCount = 1_200,
             CachedInputTokenCount = 200,
@@ -57,7 +57,7 @@ public sealed class TokenUsageTests
         Assert.Equal(100, summary.ReasoningTokens);
         Assert.Equal(0.0117m, summary.EstimatedCostUsd);
         Assert.Collection(summary.ByAgent,
-            intake => Assert.Equal(AgentNames.Intake, intake.Agent),
+            planner => Assert.Equal(AgentNames.Planner, planner.Agent),
             developer => Assert.Equal(AgentNames.Developer, developer.Agent));
     }
 
@@ -67,11 +67,11 @@ public sealed class TokenUsageTests
         WorkflowSettings settings = new("https://example.test", "test-model", "key");
         TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
         {
-            [AgentNames.Intake] = settings,
+            [AgentNames.Developer] = settings,
         });
 
-        collector.RecordRequest(AgentNames.Intake);
-        collector.Record(AgentNames.Intake, new UsageDetails
+        collector.RecordRequest(AgentNames.Developer);
+        collector.Record(AgentNames.Developer, new UsageDetails
         {
             InputTokenCount = 10,
             OutputTokenCount = 5,
@@ -91,10 +91,10 @@ public sealed class TokenUsageTests
         WorkflowSettings settings = new("https://example.test", "test-model", "key");
         TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
         {
-            [AgentNames.Intake] = settings,
+            [AgentNames.Developer] = settings,
         });
 
-        collector.RecordRequest(AgentNames.Intake);
+        collector.RecordRequest(AgentNames.Developer);
 
         TokenUsageSummary summary = collector.Snapshot();
 

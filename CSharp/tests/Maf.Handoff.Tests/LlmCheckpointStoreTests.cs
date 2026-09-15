@@ -20,7 +20,7 @@ public sealed class LlmCheckpointStoreTests
         {
             SqliteLlmCheckpointStore store = new(Path.Combine(directory, "checkpoints.db"));
             RecordingClient provider = new();
-            CheckpointingChatClient client = new(provider, store, "developer", Settings, new());
+            CheckpointingChatClient client = new(provider, store, "developer", Settings, new(), "workflow-1");
             ChatMessage[] input = [new(ChatRole.User, "Implement the requested change.")];
 
             ChatResponse first = (await CollectAsync(client.GetStreamingResponseAsync(input))).ToChatResponse();
@@ -29,6 +29,7 @@ public sealed class LlmCheckpointStoreTests
 
             Assert.Equal(1, provider.CallCount);
             Assert.Equal("completed", stored.Status);
+            Assert.Equal("workflow-1", stored.WorkflowId);
             Assert.True(stored.Reusable);
             Assert.Contains("Implement the requested change.", stored.InputJson, StringComparison.Ordinal);
             Assert.Contains("I will edit the file.", stored.ResponseJson, StringComparison.Ordinal);
@@ -55,7 +56,7 @@ public sealed class LlmCheckpointStoreTests
         {
             SqliteLlmCheckpointStore store = new(Path.Combine(directory, "checkpoints.db"));
             RecordingClient provider = new();
-            CheckpointingChatClient client = new(provider, store, "planner", Settings, new());
+            CheckpointingChatClient client = new(provider, store, "planner", Settings, new(), "workflow-2");
 
             await CollectAsync(client.GetStreamingResponseAsync(
                 [new ChatMessage(ChatRole.User, "First task")]));
@@ -78,7 +79,7 @@ public sealed class LlmCheckpointStoreTests
         {
             SqliteLlmCheckpointStore store = new(Path.Combine(directory, "checkpoints.db"));
             RecordingClient provider = new();
-            CheckpointingChatClient client = new(provider, store, "security", Settings, new());
+            CheckpointingChatClient client = new(provider, store, "security", Settings, new(), "workflow-3");
             ChatMessage[] input = [new(ChatRole.User, "Check the same patch.")];
 
             await Task.WhenAll(
@@ -101,7 +102,7 @@ public sealed class LlmCheckpointStoreTests
         {
             SqliteLlmCheckpointStore store = new(Path.Combine(directory, "checkpoints.db"));
             FailsOnceClient provider = new();
-            CheckpointingChatClient client = new(provider, store, "reviewer", Settings, new());
+            CheckpointingChatClient client = new(provider, store, "reviewer", Settings, new(), "workflow-4");
             ChatMessage[] input = [new(ChatRole.User, "Review this change.")];
 
             await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -118,6 +119,46 @@ public sealed class LlmCheckpointStoreTests
             Assert.Contains("Transient provider failure.", failed.ErrorJson, StringComparison.Ordinal);
             Assert.Equal("Recovered response", recovered.Text);
             Assert.Equal(recovered.Text, replay.Text);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ExistingDatabaseIsUpgradedWithWorkflowId()
+    {
+        string directory = CreateTemporaryDirectory();
+        string databasePath = Path.Combine(directory, "checkpoints.db");
+        try
+        {
+            using (SqliteConnection connection = new(new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Pooling = false,
+            }.ToString()))
+            {
+                connection.Open();
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE llm_checkpoints (
+                        id TEXT PRIMARY KEY, cache_key TEXT NOT NULL, agent_name TEXT NOT NULL,
+                        model TEXT NOT NULL, status TEXT NOT NULL, input_json TEXT NOT NULL,
+                        response_json TEXT, error_json TEXT, reusable INTEGER NOT NULL DEFAULT 0,
+                        attempt_number INTEGER NOT NULL, created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL, completed_at TEXT);
+                    INSERT INTO llm_checkpoints
+                        (id, cache_key, agent_name, model, status, input_json, attempt_number, created_at, updated_at)
+                    VALUES ('legacy-checkpoint', 'key', 'developer', 'model', 'failed', '{}', 1, 'now', 'now');
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            _ = new SqliteLlmCheckpointStore(databasePath);
+
+            CheckpointRow checkpoint = ReadOnlyCheckpoint(databasePath);
+            Assert.Equal("legacy-checkpoint", checkpoint.WorkflowId);
         }
         finally
         {
@@ -153,7 +194,7 @@ public sealed class LlmCheckpointStoreTests
         connection.Open();
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
-            SELECT status, input_json, COALESCE(response_json, ''), COALESCE(error_json, ''), reusable
+            SELECT status, input_json, COALESCE(response_json, ''), COALESCE(error_json, ''), reusable, workflow_id
             FROM llm_checkpoints
             LIMIT 1;
             """;
@@ -164,7 +205,8 @@ public sealed class LlmCheckpointStoreTests
             reader.GetString(1),
             reader.GetString(2),
             reader.GetString(3),
-            reader.GetBoolean(4));
+            reader.GetBoolean(4),
+            reader.GetString(5));
     }
 
     private static long CountCheckpoints(string databasePath)
@@ -189,7 +231,8 @@ public sealed class LlmCheckpointStoreTests
         string InputJson,
         string ResponseJson,
         string ErrorJson,
-        bool Reusable);
+        bool Reusable,
+        string WorkflowId);
 
     private sealed class RecordingClient : IChatClient
     {

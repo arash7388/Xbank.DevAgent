@@ -17,6 +17,7 @@ public interface ILlmCheckpointStore
     Task<LlmCheckpoint?> FindCompletedAsync(string cacheKey, CancellationToken cancellationToken = default);
 
     Task<string> StartAsync(
+        string workflowId,
         string cacheKey,
         string agent,
         string model,
@@ -38,7 +39,7 @@ public sealed record LlmCheckpoint(string CacheKey, string ResponseJson);
 /// SQLite-backed model-call checkpoints. Each operation uses a short transaction, so a model call never
 /// holds a database lock while waiting on the provider.
 /// </summary>
-public sealed class SqliteLlmCheckpointStore : ILlmCheckpointStore
+public sealed partial class SqliteLlmCheckpointStore : ILlmCheckpointStore, IToolCallStore
 {
     private const int BusyTimeoutSeconds = 15;
     private readonly string _connectionString;
@@ -111,26 +112,29 @@ public sealed class SqliteLlmCheckpointStore : ILlmCheckpointStore
     }
 
     public async Task<string> StartAsync(
+        string workflowId,
         string cacheKey,
         string agent,
         string model,
         string inputJson,
         CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workflowId);
         string checkpointId = Guid.NewGuid().ToString("N");
         await using SqliteConnection connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO llm_checkpoints (
-                id, cache_key, agent_name, model, status, input_json, attempt_number, created_at, updated_at)
+                id, workflow_id, cache_key, agent_name, model, status, input_json, attempt_number, created_at, updated_at)
             SELECT
-                $id, $cache_key, $agent, $model, 'running', $input_json,
+                $id, $workflow_id, $cache_key, $agent, $model, 'running', $input_json,
                 COALESCE(MAX(attempt_number), 0) + 1, $now, $now
             FROM llm_checkpoints
             WHERE cache_key = $cache_key;
             """;
         string now = DateTimeOffset.UtcNow.ToString("O");
         command.Parameters.AddWithValue("$id", checkpointId);
+        command.Parameters.AddWithValue("$workflow_id", workflowId);
         command.Parameters.AddWithValue("$cache_key", cacheKey);
         command.Parameters.AddWithValue("$agent", agent);
         command.Parameters.AddWithValue("$model", model);
@@ -197,6 +201,7 @@ public sealed class SqliteLlmCheckpointStore : ILlmCheckpointStore
 
             CREATE TABLE IF NOT EXISTS llm_checkpoints (
                 id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
                 cache_key TEXT NOT NULL,
                 agent_name TEXT NOT NULL,
                 model TEXT NOT NULL,
@@ -214,10 +219,49 @@ public sealed class SqliteLlmCheckpointStore : ILlmCheckpointStore
             CREATE INDEX IF NOT EXISTS ix_llm_checkpoints_status_updated
             ON llm_checkpoints(status, updated_at);
 
-            CREATE INDEX IF NOT EXISTS ix_llm_checkpoints_cache_lookup
-            ON llm_checkpoints(cache_key, status, reusable, completed_at DESC);
             """;
         command.ExecuteNonQuery();
+
+        command.CommandText = "PRAGMA table_info(llm_checkpoints);";
+        using (SqliteDataReader reader = command.ExecuteReader())
+        {
+            bool hasWorkflowId = false;
+            while (reader.Read())
+            {
+                hasWorkflowId |= string.Equals(reader.GetString(1), "workflow_id", StringComparison.Ordinal);
+            }
+
+            if (!hasWorkflowId)
+            {
+                reader.Close();
+                command.CommandText = "ALTER TABLE llm_checkpoints ADD COLUMN workflow_id TEXT;";
+                command.ExecuteNonQuery();
+                command.CommandText = "UPDATE llm_checkpoints SET workflow_id = id WHERE workflow_id IS NULL;";
+                command.ExecuteNonQuery();
+            }
+        }
+
+        command.CommandText = """
+            CREATE INDEX IF NOT EXISTS ix_llm_checkpoints_cache_lookup
+            ON llm_checkpoints(cache_key, status, reusable, completed_at DESC);
+
+            CREATE INDEX IF NOT EXISTS ix_llm_checkpoints_workflow
+            ON llm_checkpoints(workflow_id, created_at);
+            """;
+        command.ExecuteNonQuery();
+
+        InitializeToolCallSchema(connection);
+        InitializeWorkflowSchema(connection);
+    }
+
+    private SqliteConnection Open()
+    {
+        SqliteConnection connection = new(_connectionString);
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "PRAGMA busy_timeout = 15000; PRAGMA foreign_keys = ON;";
+        command.ExecuteNonQuery();
+        return connection;
     }
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
@@ -296,7 +340,8 @@ internal sealed class CheckpointingChatClient(
     ILlmCheckpointStore store,
     string agent,
     WorkflowSettings settings,
-    LlmCheckpointMetrics metrics) : IChatClient
+    LlmCheckpointMetrics metrics,
+    string workflowId) : IChatClient
 {
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
@@ -316,6 +361,7 @@ internal sealed class CheckpointingChatClient(
         }
 
         string checkpointId = await store.StartAsync(
+            workflowId,
             request.CacheKey,
             agent,
             settings.Model,
@@ -377,6 +423,7 @@ internal sealed class CheckpointingChatClient(
         }
 
         string checkpointId = await store.StartAsync(
+            workflowId,
             request.CacheKey,
             agent,
             settings.Model,

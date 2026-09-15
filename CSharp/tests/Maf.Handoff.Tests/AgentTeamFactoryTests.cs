@@ -27,10 +27,22 @@ public sealed class AgentTeamFactoryTests
 
         AgentTeam team = AgentTeamFactory.Create(clients, settingsByAgent);
 
-        Assert.Null(team.Planner);
+        Assert.NotNull(team.Planner);
         Assert.Null(team.Jira);
         Assert.Null(team.Reviewer);
         Assert.Null(team.Security);
+        Assert.Equal(AgentNames.Planner, team.StartAgent.Name);
+        Assert.Equal(AgentNames.Required, team.All.Select(agent => agent.Name));
+    }
+
+    [Fact]
+    public void SingleSettingsOverloadUsesOnlyRequiredStages()
+    {
+        WorkflowSettings settings = new("https://example.test", "test-model", "test-key");
+
+        AgentTeam team = AgentTeamFactory.Create(new RecordingChatClient(), settings);
+
+        Assert.Equal(AgentNames.Planner, team.StartAgent.Name);
         Assert.Equal(AgentNames.Required, team.All.Select(agent => agent.Name));
     }
 
@@ -45,7 +57,7 @@ public sealed class AgentTeamFactoryTests
         WorkflowBundle bundle = HandoffWorkflowFactory.Create(clients, settingsByAgent);
 
         Assert.NotNull(bundle.Workflow);
-        Assert.Null(bundle.Team.Planner);
+        Assert.NotNull(bundle.Team.Planner);
         Assert.Null(bundle.Team.Jira);
         Assert.Null(bundle.Team.Reviewer);
         Assert.Null(bundle.Team.Security);
@@ -67,6 +79,22 @@ public sealed class AgentTeamFactoryTests
 
         Assert.NotNull(team.Jira);
         Assert.Equal(AgentNames.Jira, team.Jira.Name);
+        Assert.Equal(AgentNames.Jira, team.StartAgent.Name);
+    }
+
+    [Fact]
+    public void StartsWithPlannerWhenJiraIsOmitted()
+    {
+        WorkflowSettings settings = new("https://example.test", "test-model", "test-key");
+        RecordingChatClient client = new();
+        Dictionary<string, IChatClient> clients = AgentNames.Required
+            .ToDictionary(name => name, _ => (IChatClient)client);
+        Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required
+            .ToDictionary(name => name, _ => settings);
+
+        AgentTeam team = AgentTeamFactory.Create(clients, settingsByAgent);
+
+        Assert.Equal(AgentNames.Planner, team.StartAgent.Name);
     }
 
     [Fact]
@@ -119,7 +147,29 @@ public sealed class AgentTeamFactoryTests
         ChatOptions options = AgentTeamFactory.CreateChatOptions(settings, "test", tools: null);
 
         Assert.Equal(expectedEffort, options.Reasoning!.Effort);
-        Assert.Equal(ReasoningOutput.None, options.Reasoning.Output);
+        Assert.Equal(ReasoningOutput.Full, options.Reasoning.Output);
+        Assert.True(Assert.IsType<bool>(options.AdditionalProperties!["include_usage"]));
+    }
+
+    [Fact]
+    public void DoesNotEnableDeepSeekReasoningWhenThinkingIsDisabled()
+    {
+        ModelProviderDefinition provider = new(
+            "deepseek-chat",
+            "DeepSeek",
+            "https://api.deepseek.com",
+            ToolCalling: true,
+            Vision: false,
+            MaxInputTokens: 128_000,
+            MaxOutputTokens: 8_000,
+            Thinking: false,
+            ReasoningEffort: null,
+            SupportsReasoningEffort: null);
+        WorkflowSettings settings = new(provider.Url, provider.Id, "test-key", Provider: provider);
+
+        ChatOptions options = AgentTeamFactory.CreateChatOptions(settings, "test", tools: null);
+
+        Assert.Null(options.Reasoning);
         Assert.True(Assert.IsType<bool>(options.AdditionalProperties!["include_usage"]));
     }
 
@@ -169,9 +219,6 @@ public sealed class AgentTeamFactoryTests
             agent => Assert.Contains(
                 AgentToolCatalog.GetContext,
                 AgentToolCatalog.ByAgent[agent]));
-        Assert.DoesNotContain(
-            AgentToolCatalog.GetContext,
-            AgentToolCatalog.ByAgent[AgentNames.Intake]);
         Assert.DoesNotContain(
             AgentToolCatalog.GetContext,
             AgentToolCatalog.ByAgent[AgentNames.ReleaseManager]);
