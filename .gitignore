@@ -1,0 +1,19 @@
+# Local build and test output written outside the normal C# bin/obj folders.
+.tools/deepseek-fix-*/
+.tools/run-log-*-artifacts/
+.tools/jira-out/
+.tools/maf-handoff-api-verify/
+
+# Generated build output and local databases.
+**/bin/
+**/obj/
+*.dll
+*.exe
+*.pdb
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.mdf
+*.ldf
