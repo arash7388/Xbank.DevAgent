@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20260909-2">
+  <link rel="stylesheet" href="/styles.css?v=20260927-2">
 </head>
 <body>
   <header class="app-header">
@@ -15,18 +15,135 @@
     <nav class="app-mode-nav" aria-label="Workbench views">
       <button class="app-mode active" type="button" data-app-mode="workflow" aria-pressed="true">Agent workflow</button>
       <button class="app-mode" type="button" data-app-mode="codegraph" aria-pressed="false">Code graph</button>
+      <button class="app-mode" type="button" data-app-mode="jira" aria-pressed="false">Jira task</button>
     </nav>
     <div id="connection" class="connection"><span></span> Local service</div>
   </header>
 
   <nav class="steps" aria-label="Workflow stages">
-    <div data-step="setup" class="step active"><b>1</b><span>Connection</span></div>
-    <div data-step="running" class="step"><b>2</b><span>Agent work</span></div>
-    <div data-step="review" class="step"><b>3</b><span>Review diff</span></div>
-    <div data-step="finish" class="step"><b>4</b><span>Commit or push</span></div>
+    <button type="button" data-step="connection" class="step active"><b>1</b><span>Connection</span></button>
+    <button type="button" data-step="jira" class="step"><b>2</b><span>Change request</span></button>
+    <button type="button" data-step="agents" class="step"><b>3</b><span>Agents</span></button>
+    <button type="button" data-step="request" class="step"><b>4</b><span>Request &amp; references</span></button>
+    <div data-step="running" class="step"><b>5</b><span>Agent work</span></div>
+    <div data-step="review" class="step"><b>6</b><span>Review diff</span></div>
+    <div data-step="finish" class="step"><b>7</b><span>Commit or push</span></div>
   </nav>
 
   <main class="workspace">
+    <section id="jira-panel" class="jira-panel" aria-labelledby="jira-title" hidden>
+      <div class="section-heading">
+        <div>
+          <h2 id="jira-title">Choose your change request</h2>
+          <p>Select a Jira task with your desired filters, or type a change manually.</p>
+        </div>
+        <button id="jira-check-connection" class="secondary" type="button">Test connection</button>
+      </div>
+      <div class="change-source-choice" role="group" aria-label="Change request source">
+        <button type="button" class="jira-search-tab active" data-change-source="jira" aria-pressed="true">Select a Jira task</button>
+        <button type="button" class="jira-search-tab" data-change-source="manual" aria-pressed="false">Type a change manually</button>
+      </div>
+      <section id="manual-change-panel" class="codegraph-card" hidden>
+        <h3>Describe your change</h3>
+        <label for="manual-change">Requested change</label>
+        <textarea id="manual-change" rows="8" maxlength="20000" placeholder="Describe what to change, expected behavior, constraints, and tests."></textarea>
+        <p class="field-guide">Your change will be carried into step 4 for review and supporting files.</p>
+      </section>
+      <div id="change-source-error" class="form-error" role="alert" hidden></div>
+      <div class="jira-content" id="jira-change-panel">
+        <div id="jira-connection-status" class="jira-message" role="status" aria-live="polite">Connection not checked.</div>
+        <section class="codegraph-card">
+          <div class="card-heading"><div><h3>Find Jira tasks</h3><p>Enter Jira Query Language (JQL), such as <code>project = OPIM ORDER BY updated DESC</code>.</p></div></div>
+          <div class="jira-search-tabs" role="group" aria-label="Jira search mode">
+            <button class="jira-search-tab active" type="button" data-jira-search="jql" aria-pressed="true">JQL filter</button>
+            <button class="jira-search-tab" type="button" data-jira-search="project" aria-pressed="false">Project</button>
+            <button class="jira-search-tab" type="button" data-jira-search="text" aria-pressed="false">Text search</button>
+          </div>
+          <div id="jira-jql-helper" class="jira-jql-helper">
+            <p>Write any valid JQL directly, including parentheses, <code>AND</code>, <code>OR</code>, <code>IN</code>, <code>NOT IN</code>, comparisons, functions, and <code>ORDER BY</code>. Jira stores Backend and Infra as separate components; the “Backend + Infra” preset requires both.</p>
+            <p class="jira-jql-example">Example: <code>(component = "Backend" AND component = "Infra") AND updated >= -30d ORDER BY updated DESC</code></p>
+            <div class="jira-clause-tools">
+              <div>
+                <label for="jira-clause-join">Combine with</label>
+                <select id="jira-clause-join"><option value="AND">AND</option><option value="OR">OR</option></select>
+              </div>
+              <button class="secondary" type="button" data-jira-clause="component = &quot;Backend&quot;">Add Backend</button>
+              <button class="secondary" type="button" data-jira-clause="component = &quot;Infra&quot;">Add Infra</button>
+              <button class="secondary" type="button" data-jira-clause="(component = &quot;Backend&quot; AND component = &quot;Infra&quot;)">Add Backend + Infra</button>
+              <button class="secondary" type="button" data-jira-clause="(component = &quot;Backend&quot; OR component = &quot;Infra&quot;)">Add either component</button>
+            </div>
+            <div class="jira-custom-clause">
+              <div>
+                <label for="jira-clause">Any JQL clause</label>
+                <input id="jira-clause" spellcheck="false" placeholder='status IN ("To Do", "In Progress")'>
+              </div>
+              <button id="jira-add-clause" class="secondary" type="button">Add clause</button>
+              <button id="jira-clear-query" class="secondary" type="button">Clear filter</button>
+            </div>
+          </div>
+          <form id="jira-search-form" class="jira-search-form">
+            <div>
+              <label id="jira-search-label" for="jira-query">JQL filter</label>
+              <textarea id="jira-query" maxlength="2000" spellcheck="false" required>ORDER BY updated DESC</textarea>
+            </div>
+            <div>
+              <label for="jira-user">User (optional)</label>
+              <input id="jira-user" placeholder="All users" spellcheck="false">
+            </div>
+            <div>
+              <label for="jira-limit">Max results</label>
+              <input id="jira-limit" type="number" min="1" max="100" value="20" required>
+            </div>
+            <button id="jira-search-button" class="primary" type="submit">Search tasks</button>
+          </form>
+          <div id="jira-search-error" class="form-error" role="alert" hidden></div>
+          <p id="jira-result-count" class="jira-result-count" role="status" aria-live="polite">No search run yet.</p>
+          <div id="jira-results" class="jira-results"><p>Search results will appear here.</p></div>
+        </section>
+        <section class="codegraph-card">
+          <div class="card-heading"><div><h3>Issue lookup</h3><p>Fetch an issue by its full key and inspect the response, including visible comments.</p></div></div>
+          <form id="jira-issue-form" class="jira-issue-form">
+            <div><label for="jira-issue-key">Issue key</label><input id="jira-issue-key" placeholder="WEPOD-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required></div>
+            <button id="jira-issue-button" class="secondary" type="submit">Get issue</button>
+            <button id="jira-title-button" class="secondary" type="button">Get title only</button>
+          </form>
+          <div id="jira-issue-error" class="form-error" role="alert" hidden></div>
+          <div id="jira-issue-result" class="jira-issue-result"><p>No issue loaded.</p></div>
+          <button id="jira-select-task" class="primary" type="button" disabled>Use this task</button>
+          <p id="jira-selected-task" class="field-guide" role="status" aria-live="polite">No Jira task selected.</p>
+        </section>
+        <section class="codegraph-card">
+          <div class="card-heading"><div><h3>Create issue</h3><p>Submit standard Jira fields and optional custom fields. Jira may require additional fields for the chosen project and issue type.</p></div></div>
+          <form id="jira-create-form">
+            <div class="jira-create-grid">
+              <div><label for="jira-create-project">Project key</label><input id="jira-create-project" value="OPIM" required></div>
+              <div><label for="jira-create-type">Issue type</label><input id="jira-create-type" value="Application Change" required></div>
+            </div>
+            <label for="jira-create-summary">Summary</label>
+            <input id="jira-create-summary" maxlength="255" required>
+            <label for="jira-create-description">Description</label>
+            <textarea id="jira-create-description"></textarea>
+            <label for="jira-create-fields">Additional Jira fields (JSON object)</label>
+            <textarea id="jira-create-fields" class="jira-json-input" spellcheck="false">{}</textarea>
+            <div class="jira-form-actions"><button id="jira-create-button" class="primary" type="submit">Create issue</button></div>
+          </form>
+          <div id="jira-create-error" class="form-error" role="alert" hidden></div>
+          <p id="jira-create-result" class="jira-feedback" role="status" aria-live="polite"></p>
+        </section>
+        <section class="codegraph-card">
+          <div class="card-heading"><div><h3>Add comment</h3><p>Post a comment to an existing Jira issue.</p></div></div>
+          <form id="jira-comment-form">
+            <label for="jira-comment-key">Issue key</label>
+            <input id="jira-comment-key" placeholder="WEPOD-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required>
+            <label for="jira-comment-text">Comment</label>
+            <textarea id="jira-comment-text" required></textarea>
+            <div class="jira-form-actions"><button id="jira-comment-button" class="primary" type="submit">Post comment</button></div>
+          </form>
+          <div id="jira-comment-error" class="form-error" role="alert" hidden></div>
+          <p id="jira-comment-result" class="jira-feedback" role="status" aria-live="polite"></p>
+        </section>
+      </div>
+    </section>
     <section id="codegraph-panel" class="codegraph-panel" hidden>
       <div class="section-heading">
         <div>
@@ -124,11 +241,6 @@
         </div>
       </div>
 
-      <div class="setup-step-nav" role="tablist" aria-label="Run setup steps">
-        <button id="connection-step-button" class="setup-step-button active" type="button" role="tab" aria-controls="connection-settings" aria-selected="true"><b>1</b> Connection</button>
-        <button id="run-step-button" class="setup-step-button" type="button" role="tab" aria-controls="run-settings" aria-selected="false"><b>2</b> Run setup</button>
-      </div>
-
       <section class="team-map" aria-labelledby="team-map-title">
         <div class="team-map-heading">
           <div>
@@ -166,20 +278,50 @@
       <form id="run-form">
         <fieldset>
           <legend>Repository</legend>
-          <label for="repository">GitHub repository URL</label>
-          <input id="repository" name="repository" type="url" required
-                 value="https://github.com/arash7388/JiraCommenter.git"
-                 placeholder="https://github.com/owner/repository">
-          <div class="two-columns">
-            <div>
-              <label for="branch">Base branch</label>
-              <input id="branch" name="branch" value="master" required>
-            </div>
-            <div>
+          <label for="source-control">Source control</label>
+          <select id="source-control" name="sourceControl">
+            <option value="github">GitHub</option>
+            <option value="gitlab" selected>GitLab</option>
+          </select>
+          <section class="repository-source-panel" data-repository-source="github" hidden>
+            <div class="two-columns">
+              <div>
+                <label for="github-repository">GitHub repository URL</label>
+                <input id="github-repository" name="githubRepository" type="url"
+                       value="https://github.com/arash7388/JiraCommenter.git"
+                       placeholder="https://github.com/owner/repository.git" disabled>
+              </div>
+              <div>
               <label for="github-token">GitHub token</label>
               <input id="github-token" name="githubToken" type="password"
-                     autocomplete="off" placeholder="Uses the server-local default when blank">
+                     autocomplete="off" placeholder="Uses the server-local default when blank" disabled>
+              </div>
             </div>
+          </section>
+          <section class="repository-source-panel" data-repository-source="gitlab">
+            <div>
+              <label for="project-key">Configured project</label>
+              <select id="project-key" name="projectKey">
+                <option value="">Enter a GitLab project URL manually</option>
+              </select>
+            </div>
+            <div class="two-columns">
+              <div>
+                <label for="gitlab-repository">GitLab project URL</label>
+                <input id="gitlab-repository" name="gitlabRepository" type="url" required
+                       placeholder="https://gitlab.dotin.ir/group/project.git">
+              </div>
+              <div>
+                <label for="gitlab-token">GitLab access token</label>
+                <input id="gitlab-token" name="gitlabToken" type="password"
+                       autocomplete="off" placeholder="Uses the server-local default when blank">
+              </div>
+            </div>
+            <p class="field-guide">For self-managed GitLab, configure the server's <code>GitLab:Host</code> setting.</p>
+          </section>
+          <div>
+            <label for="branch">Base branch</label>
+            <input id="branch" name="branch" value="Develop" required>
           </div>
         </fieldset>
 
@@ -195,7 +337,7 @@
 
         <fieldset>
           <legend>Provider credentials</legend>
-          <p class="field-guide">Only keys for providers selected above are required. Entering one provider key switches all agents to that provider; you can then adjust individual cards. Keys remain in server memory for this run.</p>
+          <p class="field-guide">Enter credentials for the providers you intend to use. Entering one provider key switches all agents to that provider; adjust individual models in step 3. Keys remain in server memory for this run.</p>
           <div class="credential-grid">
             <div>
               <label for="openai-key">OpenAI API key</label>
@@ -216,7 +358,7 @@
           <legend>Instruction</legend>
           <label for="task">Requested code change</label>
           <textarea id="task" name="task" rows="7" maxlength="20000" required
-                    placeholder="Example: Add pagination to the orders endpoint and include tests for empty and final pages.">change the bitbuecket projectkey to :"abc"</textarea>
+                    placeholder="Describe the change to implement for the selected Jira task, including expected behavior and tests."></textarea>
           <p class="field-guide">Include expected behavior, constraints, and tests. The agent edits only an isolated clone.</p>
           <label class="check-row" for="codegraph-enabled">
             <input id="codegraph-enabled" name="codeGraphEnabled" type="checkbox" checked>
@@ -227,11 +369,11 @@
 
         <fieldset>
           <legend>Reference documents (optional)</legend>
-          <p class="field-guide">Attach supporting material for this run. Files are embedded into a temporary Qdrant collection, available to agents through search, and removed after the run. Supported: text, Markdown, CSV, JSON, XML, YAML, HTML, source files, and DOCX.</p>
+          <p class="field-guide">Attach supporting material for this run. Files are embedded into a temporary Qdrant collection, available to agents through search, and removed after the run. Supported: text, Markdown, CSV, JSON, XML, YAML, HTML, source files, PDF with text, and DOCX.</p>
           <div class="two-columns">
             <div>
               <label for="reference-files">Files</label>
-              <input id="reference-files" type="file" multiple accept=".txt,.md,.csv,.json,.jsonc,.xml,.yml,.yaml,.toml,.html,.htm,.docx,.cs,.js,.ts,.tsx,.jsx,.py,.java,.sql,.ps1,.sh">
+              <input id="reference-files" type="file" multiple accept=".txt,.md,.csv,.json,.jsonc,.xml,.yml,.yaml,.toml,.html,.htm,.docx,.pdf,.cs,.js,.ts,.tsx,.jsx,.py,.java,.sql,.ps1,.sh">
             </div>
             <div>
               <label for="reference-folder">Folder</label>
@@ -257,6 +399,34 @@
           <p id="reference-status" class="field-guide" aria-live="polite">No reference documents attached.</p>
         </fieldset>
 
+        <fieldset id="cognia-settings">
+          <legend>Cognia knowledge base</legend>
+          <p class="field-guide">Optionally search organization documents through Cognia's search service. Cognia remains a separate source from uploaded Qdrant documents.</p>
+          <label class="check-row" for="cognia-enabled">
+            <input id="cognia-enabled" type="checkbox">
+            <span>Use Cognia organization knowledge</span>
+          </label>
+          <div id="cognia-fields" hidden>
+            <label for="cognia-endpoint">Cognia endpoint</label>
+            <input id="cognia-endpoint" type="url" autocomplete="off"
+                   value="http://cogniaapi.sandpod.ir" placeholder="https://cognia.example.com">
+            <div class="two-columns">
+              <div>
+                <label for="cognia-client-id">Client ID</label>
+                <input id="cognia-client-id" type="text" autocomplete="off" placeholder="Cognia client application ID">
+              </div>
+              <div>
+                <label for="cognia-client-secret">Client secret</label>
+                <input id="cognia-client-secret" type="password" autocomplete="off" placeholder="Kept only for this run">
+              </div>
+            </div>
+            <label for="cognia-knowledge-base-ids">Knowledge base IDs</label>
+            <input id="cognia-knowledge-base-ids" type="text" inputmode="numeric" autocomplete="off"
+                   placeholder="Example: 12, 27">
+            <p class="field-guide">Enter one or more numeric IDs separated by commas. Agents search active Cognia chunks through <code>/api/engine/search</code>.</p>
+          </div>
+        </fieldset>
+
         <div id="form-error" class="form-error" role="alert" hidden></div>
         <div class="form-actions">
           <button id="run-button" class="primary" type="submit">Start agent run</button>
@@ -272,6 +442,8 @@
           <p id="session-label">No active session</p>
         </div>
         <div class="run-meta">
+          <button id="back-button" class="secondary" type="button" hidden>Back</button>
+          <button class="secondary report-button" type="button" hidden>Report</button>
           <span id="elapsed-timer" class="elapsed-timer" hidden aria-live="off"><span aria-hidden="true"></span><b>Elapsed</b> <time>00:00</time></span>
           <span id="status-badge" class="status idle">Idle</span>
         </div>
@@ -292,6 +464,7 @@
           <p id="diff-summary">Waiting for agent changes</p>
         </div>
         <div class="review-actions">
+          <button class="secondary report-button" type="button" hidden>Report</button>
           <a id="pull-request-link" class="button-link" target="_blank" rel="noopener noreferrer" hidden>View PR</a>
           <button id="generate-pr-button" class="secondary" type="button" hidden>Generate PR</button>
           <button id="reject-button" class="danger" type="button" hidden>Reject</button>
@@ -316,9 +489,9 @@
       <input id="commit-message" value="Apply agent-proposed change" maxlength="200" required>
       <label class="check-row" for="push-branch">
         <input id="push-branch" type="checkbox">
-        <span>Push the new branch to GitHub</span>
+        <span id="push-branch-label">Push the new branch to the remote repository</span>
       </label>
-      <p class="field-guide">Push requires a GitHub token with repository contents write permission.</p>
+      <p id="push-branch-guide" class="field-guide">Push requires a source-control token with repository write permission.</p>
       <div class="dialog-actions">
         <button id="dialog-cancel" class="secondary" type="button">Cancel</button>
         <button class="primary" type="submit">Commit approved diff</button>
@@ -326,6 +499,22 @@
     </form>
   </dialog>
 
-  <script src="/app.js?v=20260914-1" defer></script>
+  <dialog id="report-dialog" class="report-dialog" aria-labelledby="report-title">
+    <div class="report-shell">
+      <div class="dialog-header report-header">
+        <div>
+          <h2 id="report-title">Run report</h2>
+          <p id="report-summary">Loading related records…</p>
+        </div>
+        <button id="close-report-dialog" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="report-content" class="run-log-content" aria-live="polite"></div>
+      <div class="dialog-actions report-actions">
+        <button id="report-dialog-close" class="secondary" type="button">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/app.js?v=20260927-2" defer></script>
 </body>
 </html>

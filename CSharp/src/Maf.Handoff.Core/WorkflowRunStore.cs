@@ -8,7 +8,56 @@ public interface IWorkflowRunStore
     void Create(Guid runId, string workflowType, string configJson, DateTimeOffset createdAt);
 
     void UpdateStatus(Guid runId, string status, string? error = null);
+
+    WorkflowRunLog GetLog(Guid runId);
 }
+
+public sealed record WorkflowRunLog(
+    WorkflowLogEntry Workflow,
+    WorkflowRunLogEntry Run,
+    IReadOnlyList<AgentRunLogEntry> AgentRuns,
+    IReadOnlyList<ToolCallLogEntry> ToolCalls);
+
+public sealed record WorkflowLogEntry(
+    string Id,
+    string Type,
+    int ConfigVersion,
+    string ConfigJson,
+    DateTimeOffset CreatedAt);
+
+public sealed record WorkflowRunLogEntry(
+    string Id,
+    string WorkflowId,
+    string Status,
+    string? Error,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? FinishedAt);
+
+public sealed record AgentRunLogEntry(
+    string Id,
+    string Agent,
+    string Model,
+    string Status,
+    int Attempt,
+    string InputJson,
+    string? ResponseJson,
+    string? ErrorJson,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? CompletedAt);
+
+public sealed record ToolCallLogEntry(
+    string Id,
+    string Agent,
+    string Tool,
+    string Status,
+    string InputJson,
+    string? ResponseJson,
+    string? ErrorJson,
+    long? DurationMilliseconds,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? CompletedAt);
 
 public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
 {
@@ -64,6 +113,93 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
         command.Parameters.AddWithValue("$updated_at", DateTimeOffset.UtcNow.ToString("O"));
         command.ExecuteNonQuery();
     }
+
+    public WorkflowRunLog GetLog(Guid runId)
+    {
+        string workflowId = runId.ToString("D");
+        WorkflowLogEntry? workflow = null;
+        WorkflowRunLogEntry? run = null;
+        List<AgentRunLogEntry> agentRuns = [];
+        List<ToolCallLogEntry> toolCalls = [];
+        using SqliteConnection connection = Open();
+
+        using (SqliteCommand command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT w.id, w.workflow_type, w.config_version, w.config_json, w.created_at,
+                       r.id, r.status, r.error, r.created_at, r.updated_at, r.started_at, r.finished_at
+                FROM workflow_runs r
+                JOIN workflows w ON w.id = r.workflow_id
+                WHERE r.id = $run_id;
+                """;
+            command.Parameters.AddWithValue("$run_id", workflowId);
+            using SqliteDataReader reader = command.ExecuteReader();
+            if (reader.Read())
+            {
+                workflow = new(reader.GetString(0), reader.GetString(1), reader.GetInt32(2),
+                    reader.GetString(3), DateTimeOffset.Parse(reader.GetString(4)));
+                run = new(reader.GetString(5), reader.GetString(0), reader.GetString(6),
+                    ReadNullableString(reader, 7), DateTimeOffset.Parse(reader.GetString(8)),
+                    DateTimeOffset.Parse(reader.GetString(9)), ReadNullableDateTimeOffset(reader, 10),
+                    ReadNullableDateTimeOffset(reader, 11));
+            }
+        }
+
+        if (workflow is null || run is null)
+        {
+            throw new KeyNotFoundException($"Workflow run '{runId:D}' was not found.");
+        }
+
+        using (SqliteCommand command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT id, agent_name, model, status, attempt_number, input_json,
+                       response_json, error_json, created_at, completed_at
+                FROM llm_checkpoints
+                WHERE workflow_id = $workflow_id
+                ORDER BY created_at, attempt_number;
+                """;
+            command.Parameters.AddWithValue("$workflow_id", workflowId);
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                agentRuns.Add(new(
+                    reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                    reader.GetInt32(4), reader.GetString(5), ReadNullableString(reader, 6),
+                    ReadNullableString(reader, 7), DateTimeOffset.Parse(reader.GetString(8)),
+                    ReadNullableDateTimeOffset(reader, 9)));
+            }
+        }
+
+        using (SqliteCommand command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT id, agent_name, tool_name, status, input_json, response_json,
+                       error_json, duration_ms, started_at, completed_at
+                FROM tool_calls
+                WHERE workflow_id = $workflow_id
+                ORDER BY started_at;
+                """;
+            command.Parameters.AddWithValue("$workflow_id", workflowId);
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                toolCalls.Add(new(
+                    reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                    reader.GetString(4), ReadNullableString(reader, 5), ReadNullableString(reader, 6),
+                    reader.IsDBNull(7) ? null : reader.GetInt64(7), DateTimeOffset.Parse(reader.GetString(8)),
+                    ReadNullableDateTimeOffset(reader, 9)));
+            }
+        }
+
+        return new(workflow, run, agentRuns, toolCalls);
+    }
+
+    private static string? ReadNullableString(SqliteDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+
+    private static DateTimeOffset? ReadNullableDateTimeOffset(SqliteDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? null : DateTimeOffset.Parse(reader.GetString(ordinal));
 
     private static void InitializeWorkflowSchema(SqliteConnection connection)
     {

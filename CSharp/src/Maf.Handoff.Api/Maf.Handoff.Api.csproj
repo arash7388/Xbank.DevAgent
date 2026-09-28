@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Maf.Handoff.Core\Maf.Handoff.Core.csproj" />
     <PackageReference Include="DocumentFormat.OpenXml" />
+    <PackageReference Include="PdfPig" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
 

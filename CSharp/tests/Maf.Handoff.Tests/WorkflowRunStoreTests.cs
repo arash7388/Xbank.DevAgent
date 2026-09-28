@@ -70,6 +70,46 @@ public sealed class WorkflowRunStoreTests
         }
     }
 
+    [Fact]
+    public async Task ReadsAgentAndToolExecutionLogsForRun()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"maf-workflow-log-{Guid.NewGuid():N}");
+        try
+        {
+            SqliteLlmCheckpointStore store = new(Path.Combine(directory, "checkpoints.db"));
+            Guid runId = Guid.NewGuid();
+            string workflowId = runId.ToString("D");
+            store.Create(runId, "repository_change", "{}", DateTimeOffset.UtcNow);
+
+            string checkpointId = await store.StartAsync(
+                workflowId, "cache-key", "developer", "model-a", "{\"messages\":[]}");
+            await store.CompleteAsync(checkpointId, "{\"text\":\"done\"}", reusable: false);
+            string toolCallId = await store.StartToolCallAsync(
+                workflowId, "developer", "read_repository_file", "{\"path\":\"README.md\"}");
+            await store.CompleteToolCallAsync(toolCallId, "{\"content\":\"hello\"}", 12);
+
+            WorkflowRunLog log = store.GetLog(runId);
+
+            Assert.Equal("repository_change", log.Workflow.Type);
+            Assert.Equal(runId.ToString("D"), log.Run.Id);
+            Assert.Equal("created", log.Run.Status);
+            AgentRunLogEntry agentRun = Assert.Single(log.AgentRuns);
+            Assert.Equal("developer", agentRun.Agent);
+            Assert.Equal("completed", agentRun.Status);
+            Assert.Equal("{\"text\":\"done\"}", agentRun.ResponseJson);
+            ToolCallLogEntry toolCall = Assert.Single(log.ToolCalls);
+            Assert.Equal("read_repository_file", toolCall.Tool);
+            Assert.Equal(12, toolCall.DurationMilliseconds);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
     private static SqliteConnection OpenReadOnly(string databasePath)
     {
         SqliteConnection connection = new(new SqliteConnectionStringBuilder

@@ -18,8 +18,8 @@ public sealed class WorkflowSettingsTests
         WorkflowSettings settings = new("https://example.test", "model", "key");
 
         Assert.Equal(60, settings.MaxTotalMessages);
-        Assert.Equal(18, settings.MaxAgentTurns);
-        Assert.Equal(20, settings.MaxLlmRequests);
+        Assert.Equal(25, settings.MaxAgentTurns);
+        Assert.Equal(25, settings.MaxLlmRequests);
     }
 
     [Fact]

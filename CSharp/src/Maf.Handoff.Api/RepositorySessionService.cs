@@ -6,8 +6,11 @@ namespace Maf.Handoff.Api;
 
 public sealed class RepositorySessionService(
     GitHubPullRequestClient pullRequestClient,
+    GitLabMergeRequestClient mergeRequestClient,
     ReferenceDocumentService referenceDocuments,
+    CogniaDocumentSearchService cogniaDocuments,
     CodeGraphService codeGraph,
+    JiraService jira,
     ILlmCheckpointStore checkpointStore,
     IWorkflowRunStore workflowRunStore,
     IConfiguration configuration)
@@ -17,9 +20,15 @@ public sealed class RepositorySessionService(
 
     public SessionSnapshot Create(CreateSessionRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.GitHubToken))
+        RepositoryProvider provider = ParseProvider(request.SourceControl);
+        request = request with { SourceControl = provider.ToString().ToLowerInvariant() };
+        if (provider == RepositoryProvider.GitHub && string.IsNullOrWhiteSpace(request.GitHubToken))
         {
             request = request with { GitHubToken = configuration["GitHub:Token"] };
+        }
+        else if (provider == RepositoryProvider.GitLab && string.IsNullOrWhiteSpace(request.GitLabToken))
+        {
+            request = request with { GitLabToken = configuration["GitLab:Token"] };
         }
         request = request with
         {
@@ -33,6 +42,7 @@ public sealed class RepositorySessionService(
         {
             throw new ArgumentException("The attached document collection was not found or has expired.");
         }
+        _ = request.Cognia?.NormalizeAndValidate();
         Guid id = Guid.NewGuid();
         SessionState state = new(id, request);
         if (!_sessions.TryAdd(id, state))
@@ -134,14 +144,23 @@ public sealed class RepositorySessionService(
                 state.MarkPullRequestBranchPushed();
             }
 
-            PullRequestResult result = await pullRequestClient.CreateAsync(
-                preparation.RepositoryUrl,
-                preparation.GitHubToken,
-                preparation.Title,
-                preparation.HeadBranch,
-                preparation.BaseBranch,
-                preparation.Body,
-                cancellationToken);
+            PullRequestResult result = preparation.Provider == RepositoryProvider.GitHub
+                ? await pullRequestClient.CreateAsync(
+                    preparation.RepositoryUrl,
+                    preparation.AccessToken,
+                    preparation.Title,
+                    preparation.HeadBranch,
+                    preparation.BaseBranch,
+                    preparation.Body,
+                    cancellationToken)
+                : await mergeRequestClient.CreateAsync(
+                    preparation.RepositoryUrl,
+                    preparation.AccessToken,
+                    preparation.Title,
+                    preparation.HeadBranch,
+                    preparation.BaseBranch,
+                    preparation.Body,
+                    cancellationToken);
             state.CompletePullRequest(result);
         }
         catch (Exception exception) when (exception is RepositoryException or OperationCanceledException)
@@ -158,12 +177,15 @@ public sealed class RepositorySessionService(
         try
         {
             CreateSessionRequest request = state.Request;
+            RepositoryProvider provider = ParseProvider(request.SourceControl);
             RepositoryWorkspace workspace = await RepositoryWorkspace.CloneAsync(
                 request.RepositoryUrl,
                 request.BaseBranch,
-                request.GitHubToken,
+                AccessToken(request, provider),
                 _workspaceRoot,
-                state.Cancellation.Token);
+                state.Cancellation.Token,
+                provider,
+                ConfiguredGitLabHost());
             state.BeginAgentRun(workspace);
             Persist(state);
 
@@ -171,22 +193,24 @@ public sealed class RepositorySessionService(
                 pair => pair.Key,
                 pair => pair.Value.ToSettings(
                     maxTotalMessages: 60,
-                    maxAgentTurns: 18,
+                    maxAgentTurns: 25,
                     maxReviewerRemediationCycles: 5,
-                    maxLlmRequests: 20),
+                    maxLlmRequests: 25),
                 StringComparer.Ordinal);
-            IReferenceDocumentSearch? documents = request.ReferenceCollectionId is Guid collectionId
-                ? referenceDocuments.GetSearch(collectionId)
-                : null;
+            IReferenceDocumentSearch? documents = CreateDocumentSearch(request);
             HandoffWorkflowRunner runner = new(
                 settingsByAgent,
                 workspace,
                 documents,
                 request.CodeGraphEnabled && codeGraph.IsWorkflowEnabled ? codeGraph : null,
-                checkpointStore);
+                checkpointStore,
+                jira);
             string? terminalStatus = null;
 
-            await foreach (RunEvent runEvent in runner.RunAsync(request.Task, state.Cancellation.Token))
+            await foreach (RunEvent runEvent in runner.RunAsync(
+                request.Task,
+                state.Cancellation.Token,
+                state.Id.ToString("D")))
             {
                 state.AddEvent(runEvent);
                 if (runEvent.Type == "error")
@@ -261,8 +285,17 @@ public sealed class RepositorySessionService(
         request.BaseBranch,
         request.Task,
         request.ReferenceCollectionId,
+        cognia = request.Cognia is null ? null : new
+        {
+            request.Cognia.Endpoint,
+            request.Cognia.KnowledgeBaseIds,
+            clientIdConfigured = !string.IsNullOrWhiteSpace(request.Cognia.ClientId),
+            clientSecretConfigured = !string.IsNullOrWhiteSpace(request.Cognia.ClientSecret),
+        },
         request.CodeGraphEnabled,
         githubTokenConfigured = !string.IsNullOrWhiteSpace(request.GitHubToken),
+        gitlabTokenConfigured = !string.IsNullOrWhiteSpace(request.GitLabToken),
+        request.SourceControl,
         agents = request.Agents.ToDictionary(
             pair => pair.Key,
             pair => new
@@ -275,11 +308,32 @@ public sealed class RepositorySessionService(
         limits = new
         {
             maxTotalMessages = 60,
-            maxAgentTurns = 18,
+            maxAgentTurns = 25,
             maxReviewerRemediationCycles = 5,
-            maxLlmRequests = 20,
+            maxLlmRequests = 25,
         },
     });
+
+    private IReferenceDocumentSearch? CreateDocumentSearch(CreateSessionRequest request)
+    {
+        List<(string Name, IReferenceDocumentSearch Search)> sources = [];
+        if (request.ReferenceCollectionId is Guid collectionId)
+        {
+            sources.Add(("Attached documents (Qdrant)", referenceDocuments.GetSearch(collectionId)));
+        }
+
+        if (request.Cognia is not null)
+        {
+            sources.Add(("Cognia organization knowledge", cogniaDocuments.CreateSearch(request.Cognia)));
+        }
+
+        return sources.Count switch
+        {
+            0 => null,
+            1 => sources[0].Search,
+            _ => new CompositeReferenceDocumentSearch(sources),
+        };
+    }
 
     private SessionState GetState(Guid id) => _sessions.TryGetValue(id, out SessionState? state)
         ? state
@@ -287,6 +341,7 @@ public sealed class RepositorySessionService(
 
     private static void Validate(CreateSessionRequest request)
     {
+        _ = ParseProvider(request.SourceControl);
         if (string.IsNullOrWhiteSpace(request.RepositoryUrl) ||
             string.IsNullOrWhiteSpace(request.BaseBranch) ||
             string.IsNullOrWhiteSpace(request.Task) ||
@@ -317,15 +372,32 @@ public sealed class RepositorySessionService(
             {
                 configuration.ToSettings(
                     maxTotalMessages: 60,
-                    maxAgentTurns: 18,
+                    maxAgentTurns: 25,
                     maxReviewerRemediationCycles: 5,
-                    maxLlmRequests: 20);
+                    maxLlmRequests: 25);
             }
             catch (ConfigurationException exception)
             {
                 throw new ArgumentException($"Agent '{agentName}': {exception.Message}", nameof(request), exception);
             }
         }
+    }
+
+    private static RepositoryProvider ParseProvider(string? sourceControl) =>
+        sourceControl?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "gitlab" => RepositoryProvider.GitLab,
+            "github" => RepositoryProvider.GitHub,
+            _ => throw new ArgumentException("Source control must be either 'github' or 'gitlab'."),
+        };
+
+    private static string? AccessToken(CreateSessionRequest request, RepositoryProvider provider) =>
+        provider == RepositoryProvider.GitHub ? request.GitHubToken : request.GitLabToken;
+
+    private string? ConfiguredGitLabHost()
+    {
+        string? configured = configuration["GitLab:Host"];
+        return string.IsNullOrWhiteSpace(configured) ? null : configured;
     }
 
     private sealed class SessionState
@@ -437,14 +509,19 @@ public sealed class RepositorySessionService(
                     throw new InvalidOperationException("An approved agent branch is required before creating a pull request.");
                 }
 
-                if (string.IsNullOrWhiteSpace(Request.GitHubToken))
+                RepositoryProvider provider = ParseProvider(Request.SourceControl);
+                string? accessToken = AccessToken(Request, provider);
+                if (string.IsNullOrWhiteSpace(accessToken))
                 {
-                    throw new InvalidOperationException("A GitHub token is required to create a pull request.");
+                    string requiredRequestName = provider == RepositoryProvider.GitHub ? "pull request" : "merge request";
+                    throw new InvalidOperationException(
+                        $"A {provider.DisplayName()} token is required to create a {requiredRequestName}.");
                 }
 
                 string title = PullRequestTitle(Request.Task);
+                string requestName = provider == RepositoryProvider.GitHub ? "pull request" : "merge request";
                 string body = $"""
-                    Automated pull request generated by Repository Change Workbench.
+                    Automated {requestName} generated by Repository Change Workbench.
 
                     Requested change:
                     {Request.Task[..Math.Min(Request.Task.Length, 10_000)]}
@@ -455,14 +532,15 @@ public sealed class RepositorySessionService(
                 _error = null;
                 _events.Add(RunEvent.Trace(
                     null,
-                    $"Creating a pull request from {_approval.Branch} into {Request.BaseBranch}.",
+                    $"Creating a {requestName} from {_approval.Branch} into {Request.BaseBranch}.",
                     "pull_request"));
                 TrimEvents();
                 return new(
                     _workspace,
                     !_approval.Pushed,
                     Request.RepositoryUrl,
-                    Request.GitHubToken,
+                    provider,
+                    accessToken,
                     title,
                     _approval.Branch,
                     Request.BaseBranch,
@@ -487,7 +565,9 @@ public sealed class RepositorySessionService(
             {
                 _pullRequest = result;
                 _status = "pull_request_created";
-                _events.Add(RunEvent.Trace(null, $"Created pull request #{result.Number}.", "pull_request"));
+                RepositoryProvider provider = ParseProvider(Request.SourceControl);
+                string requestName = provider == RepositoryProvider.GitHub ? "pull request" : "merge request";
+                _events.Add(RunEvent.Trace(null, $"Created {requestName} #{result.Number}.", "pull_request"));
                 TrimEvents();
             }
         }
@@ -498,7 +578,9 @@ public sealed class RepositorySessionService(
             {
                 _error = error;
                 _status = _approval is { Pushed: true } ? "pushed" : "committed";
-                _events.Add(RunEvent.Trace(null, $"Pull request creation failed: {error}", "pull_request"));
+                RepositoryProvider provider = ParseProvider(Request.SourceControl);
+                string requestName = provider == RepositoryProvider.GitHub ? "Pull request" : "Merge request";
+                _events.Add(RunEvent.Trace(null, $"{requestName} creation failed: {error}", "pull_request"));
                 TrimEvents();
             }
         }
@@ -555,6 +637,7 @@ public sealed class RepositorySessionService(
                 return new(
                     Id,
                     Request.RepositoryUrl,
+                    Request.SourceControl,
                     Request.BaseBranch,
                     Request.Task,
                     StartedAt,
@@ -592,7 +675,12 @@ public sealed record CreateSessionRequest(
     IReadOnlyDictionary<string, AgentModelConfiguration> Agents,
     string? GitHubToken,
     Guid? ReferenceCollectionId = null,
-    bool CodeGraphEnabled = true);
+    bool CodeGraphEnabled = true,
+    string? GitLabToken = null,
+    string SourceControl = "gitlab",
+    CogniaSearchConfiguration? Cognia = null);
+
+public sealed record ProjectRepositoryInfo(string Key, string? GitLabProjectPath);
 
 public sealed record ApproveSessionRequest(
     string Branch,
@@ -603,7 +691,8 @@ internal sealed record PullRequestPreparation(
     RepositoryWorkspace Workspace,
     bool PushRequired,
     string RepositoryUrl,
-    string GitHubToken,
+    RepositoryProvider Provider,
+    string AccessToken,
     string Title,
     string HeadBranch,
     string BaseBranch,
@@ -612,6 +701,7 @@ internal sealed record PullRequestPreparation(
 public sealed record SessionSnapshot(
     Guid Id,
     string RepositoryUrl,
+    string SourceControl,
     string BaseBranch,
     string Task,
     DateTimeOffset StartedAt,

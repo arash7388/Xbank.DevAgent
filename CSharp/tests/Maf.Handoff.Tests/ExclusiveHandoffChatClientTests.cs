@@ -25,6 +25,7 @@ public sealed class ExclusiveHandoffChatClientTests
         FunctionCallContent handoff = Assert.Single(
             deferred.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
         Assert.Equal("handoff_to_1", handoff.Name);
+        AssertDeferredReasoning(deferred.Messages);
         Assert.Equal(1, inner.CallCount);
     }
 
@@ -74,12 +75,21 @@ public sealed class ExclusiveHandoffChatClientTests
                 .SelectMany(message => message.Contents)
                 .OfType<FunctionCallContent>());
         Assert.Equal("handoff_to_1", handoff.Name);
+        AssertDeferredReasoning(deferred.ToChatResponse().Messages);
         Assert.Equal(1, inner.CallCount);
+    }
+
+    private static void AssertDeferredReasoning(IEnumerable<ChatMessage> messages)
+    {
+        TextReasoningContent reasoning = Assert.Single(
+            messages.SelectMany(message => message.Contents).OfType<TextReasoningContent>());
+        Assert.Equal("reasoning required by DeepSeek", reasoning.Text);
     }
 
     private static ChatResponse MixedResponse() => new(new ChatMessage(
         ChatRole.Assistant,
         [
+            new TextReasoningContent("reasoning required by DeepSeek"),
             new FunctionCallContent("tool-1", "read_repository_file", new Dictionary<string, object?>()),
             new FunctionCallContent("handoff-1", "handoff_to_1", new Dictionary<string, object?>()),
         ]));

@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Maf.Handoff.Core\Maf.Handoff.Core.csproj" />
+    <ProjectReference Include="..\..\src\Maf.Handoff.Api\Maf.Handoff.Api.csproj" />
   </ItemGroup>
 
 </Project>

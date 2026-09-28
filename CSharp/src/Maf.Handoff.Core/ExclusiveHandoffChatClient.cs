@@ -12,14 +12,14 @@ namespace Maf.Handoff.Core;
 internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : IChatClient
 {
     private readonly Lock _pendingLock = new();
-    private FunctionCallContent? _pendingHandoff;
+    private DeferredHandoff? _pendingHandoff;
 
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        if (TryTakePendingHandoff(out FunctionCallContent? pending) && pending is not null)
+        if (TryTakePendingHandoff(out DeferredHandoff? pending) && pending is not null)
         {
             return DeferredHandoffResponse(pending);
         }
@@ -35,7 +35,7 @@ internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : ICha
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (TryTakePendingHandoff(out FunctionCallContent? pending) && pending is not null)
+        if (TryTakePendingHandoff(out DeferredHandoff? pending) && pending is not null)
         {
             foreach (ChatResponseUpdate update in DeferredHandoffResponse(pending).ToChatResponseUpdates())
             {
@@ -67,7 +67,7 @@ internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : ICha
         }
 
         ChatResponse response = toolCallTail.ToChatResponse();
-        FunctionCallContent? deferred = RemoveHandoffsWhenOrdinaryToolsArePresent(response.Messages);
+        DeferredHandoff? deferred = RemoveHandoffsWhenOrdinaryToolsArePresent(response.Messages);
         StorePendingHandoff(deferred);
         IEnumerable<ChatResponseUpdate> safeUpdates = deferred is not null
             ? response.ToChatResponseUpdates()
@@ -88,7 +88,7 @@ internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : ICha
         // This decorator does not own the provider client, which is shared by workflow agents.
     }
 
-    private static FunctionCallContent? RemoveHandoffsWhenOrdinaryToolsArePresent(
+    private static DeferredHandoff? RemoveHandoffsWhenOrdinaryToolsArePresent(
         IEnumerable<ChatMessage> messages)
     {
         ChatMessage[] materializedMessages = [.. messages];
@@ -98,7 +98,16 @@ internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : ICha
             return null;
         }
 
-        FunctionCallContent deferred = calls.First(IsHandoff);
+        FunctionCallContent deferredCall = calls.First(IsHandoff);
+        TextReasoningContent[] reasoning =
+        [
+            .. materializedMessages
+                .Where(message => message.Contents.Contains(deferredCall))
+                .SelectMany(message => message.Contents)
+                .OfType<TextReasoningContent>()
+                .Where(content => !string.IsNullOrWhiteSpace(content.Text))
+                .Select(content => new TextReasoningContent(content.Text)),
+        ];
 
         foreach (ChatMessage message in materializedMessages)
         {
@@ -111,10 +120,10 @@ internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : ICha
             }
         }
 
-        return deferred;
+        return new(deferredCall, reasoning);
     }
 
-    private void StorePendingHandoff(FunctionCallContent? handoff)
+    private void StorePendingHandoff(DeferredHandoff? handoff)
     {
         if (handoff is null)
         {
@@ -127,7 +136,7 @@ internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : ICha
         }
     }
 
-    private bool TryTakePendingHandoff(out FunctionCallContent? handoff)
+    private bool TryTakePendingHandoff(out DeferredHandoff? handoff)
     {
         lock (_pendingLock)
         {
@@ -137,8 +146,8 @@ internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : ICha
         }
     }
 
-    private static ChatResponse DeferredHandoffResponse(FunctionCallContent handoff) =>
-        new(new ChatMessage(ChatRole.Assistant, [handoff]));
+    private static ChatResponse DeferredHandoffResponse(DeferredHandoff handoff) =>
+        new(new ChatMessage(ChatRole.Assistant, [.. handoff.Reasoning, handoff.Call]));
 
     private static bool HasMixedCalls(IReadOnlyList<FunctionCallContent> calls) =>
         calls.Any(IsHandoff) && calls.Any(call => !IsHandoff(call));
@@ -148,4 +157,8 @@ internal sealed class ExclusiveHandoffChatClient(IChatClient innerClient) : ICha
 
     private static FunctionCallContent[] GetFunctionCalls(IEnumerable<ChatMessage> messages) =>
         [.. messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>()];
+
+    private sealed record DeferredHandoff(
+        FunctionCallContent Call,
+        IReadOnlyList<TextReasoningContent> Reasoning);
 }

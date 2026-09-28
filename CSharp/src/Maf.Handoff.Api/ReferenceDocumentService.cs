@@ -25,7 +25,7 @@ public sealed class ReferenceDocumentService(
     private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".txt", ".md", ".csv", ".json", ".jsonc", ".xml", ".yml", ".yaml", ".toml",
-        ".html", ".htm", ".docx", ".cs", ".js", ".ts", ".tsx", ".jsx", ".py", ".java",
+        ".html", ".htm", ".docx", ".pdf", ".cs", ".js", ".ts", ".tsx", ".jsx", ".py", ".java",
         ".sql", ".ps1", ".sh",
     };
     private readonly ConcurrentDictionary<Guid, ReferenceCollection> _collections = new();
@@ -366,9 +366,24 @@ public sealed class ReferenceDocumentService(
         await DeleteAsync(id);
     }
 
-    private static async Task<string> ExtractTextAsync(IFormFile file, CancellationToken cancellationToken)
+    internal static async Task<string> ExtractTextAsync(IFormFile file, CancellationToken cancellationToken)
     {
         string extension = Path.GetExtension(file.FileName);
+        if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            await using MemoryStream pdfStream = new();
+            await file.CopyToAsync(pdfStream, cancellationToken);
+            using var pdf = UglyToad.PdfPig.PdfDocument.Open(pdfStream.ToArray());
+            StringBuilder text = new();
+            foreach (var page in pdf.GetPages())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                text.AppendLine(UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor.ContentOrderTextExtractor.GetText(page));
+                if (text.Length >= MaxDocumentCharacters) break;
+            }
+            if (string.IsNullOrWhiteSpace(text.ToString())) throw new ArgumentException("PDF has no extractable text; scanned PDFs require OCR.");
+            return LimitText(text.ToString());
+        }
         if (extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
         {
             await using MemoryStream stream = new();
@@ -415,7 +430,7 @@ public sealed class ReferenceDocumentService(
         }
     }
 
-    private static void ValidateFile(IFormFile file)
+    internal static void ValidateFile(IFormFile file)
     {
         if (file.Length is <= 0 or > MaxFileBytes)
         {

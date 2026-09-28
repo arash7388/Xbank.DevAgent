@@ -13,6 +13,7 @@ public sealed class HandoffWorkflowRunner
     private readonly IChatClient? _chatClient;
     private readonly IReferenceDocumentSearch? _referenceDocuments;
     private readonly ICodeGraphTools? _codeGraphTools;
+    private readonly IJiraIssueSearch? _jira;
     private readonly ILlmCheckpointStore? _checkpointStore;
 
     public HandoffWorkflowRunner(
@@ -21,13 +22,15 @@ public sealed class HandoffWorkflowRunner
         IChatClient? chatClient = null,
         IReferenceDocumentSearch? referenceDocuments = null,
         ICodeGraphTools? codeGraphTools = null,
-        ILlmCheckpointStore? checkpointStore = null)
+        ILlmCheckpointStore? checkpointStore = null,
+        IJiraIssueSearch? jira = null)
     {
         _settings = settings;
         _workspace = workspace;
         _chatClient = chatClient;
         _referenceDocuments = referenceDocuments;
         _codeGraphTools = codeGraphTools;
+        _jira = jira;
         _checkpointStore = checkpointStore;
     }
 
@@ -36,21 +39,24 @@ public sealed class HandoffWorkflowRunner
         RepositoryWorkspace? workspace = null,
         IReferenceDocumentSearch? referenceDocuments = null,
         ICodeGraphTools? codeGraphTools = null,
-        ILlmCheckpointStore? checkpointStore = null)
+        ILlmCheckpointStore? checkpointStore = null,
+        IJiraIssueSearch? jira = null)
     {
         _settingsByAgent = settingsByAgent;
         _workspace = workspace;
         _referenceDocuments = referenceDocuments;
         _codeGraphTools = codeGraphTools;
+        _jira = jira;
         _checkpointStore = checkpointStore;
     }
 
     public async IAsyncEnumerable<RunEvent> RunAsync(
         string task,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default,
+        string? workflowId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(task);
-        string workflowId = Guid.NewGuid().ToString("N");
+        workflowId ??= Guid.NewGuid().ToString("N");
 
         WorkflowBundle bundle;
         WorkflowSettings workflowSettings;
@@ -95,7 +101,8 @@ public sealed class HandoffWorkflowRunner
                 _codeGraphTools,
                 codeGraphAudit,
                 _checkpointStore as IToolCallStore,
-                workflowId);
+                workflowId,
+                _jira);
         }
         else
         {
@@ -120,7 +127,8 @@ public sealed class HandoffWorkflowRunner
                 _codeGraphTools,
                 codeGraphAudit,
                 _checkpointStore as IToolCallStore,
-                workflowId);
+                workflowId,
+                _jira);
         }
         string status = "stopped_without_release_approval";
         string? activeAgent = null;

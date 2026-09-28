@@ -16,11 +16,12 @@ public static class AgentTeamFactory
         ICodeGraphTools? codeGraphTools = null,
         CodeGraphAudit? codeGraphAudit = null,
         IToolCallStore? toolCallStore = null,
-        string? workflowId = null)
+        string? workflowId = null,
+        IJiraIssueSearch? jira = null)
     {
         Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(name => name, _ => chatClient);
         Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => settings);
-        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId);
+        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId, jira);
     }
 
     public static AgentTeam Create(
@@ -31,7 +32,8 @@ public static class AgentTeamFactory
         ICodeGraphTools? codeGraphTools = null,
         CodeGraphAudit? codeGraphAudit = null,
         IToolCallStore? toolCallStore = null,
-        string? workflowId = null)
+        string? workflowId = null,
+        IJiraIssueSearch? jira = null)
     {
         bool codeGraphAvailable = workspace?.ContainsCSharpSource() is true && codeGraphTools is not null;
         if (codeGraphAvailable)
@@ -61,7 +63,8 @@ public static class AgentTeamFactory
         }
 
         return new(
-            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Read-only Jira issue and project context retrieval.", AgentPrompts.Jira, tools: null, codeGraphAvailable),
+            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Read-only Jira issue context retrieval.", AgentPrompts.Jira,
+                jira is null ? null : AuditTools(JiraToolFactory.Create(jira), AgentNames.Jira), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Planner), Get(settingsByAgent, AgentNames.Planner), AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, CreateTools(AgentNames.Planner, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Developer), Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, CreateTools(AgentNames.Developer, true), codeGraphAvailable),
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, false), codeGraphAvailable),
@@ -94,7 +97,10 @@ public static class AgentTeamFactory
             {
                 IList<AITool> repositoryTools = developer
                     ? RepositoryToolFactory.CreateDeveloperTools(workspace, referenceDocuments)
-                    : RepositoryToolFactory.CreateReadTools(workspace, referenceDocuments);
+                    : RepositoryToolFactory.CreateReadTools(
+                        workspace,
+                        referenceDocuments,
+                        compactFileReads: agentName == AgentNames.Planner);
                 tools = [.. repositoryTools];
             }
 
@@ -103,22 +109,15 @@ public static class AgentTeamFactory
                 tools.AddRange(CodeGraphToolFactory.Create(codeGraphTools!, codeGraphAudit!, agentName));
             }
 
-            if (toolCallStore is not null && !string.IsNullOrWhiteSpace(workflowId))
-            {
-                tools =
-                [
-                    .. tools.Select(tool => tool is AIFunction function
-                        ? (AITool)new ToolCallAuditingAIFunction(
-                            function,
-                            toolCallStore,
-                            workflowId,
-                            agentName)
-                        : tool),
-                ];
-            }
-
-            return tools.Count == 0 ? null : tools;
+            return tools.Count == 0 ? null : AuditTools(tools, agentName);
         }
+
+        IList<AITool> AuditTools(IList<AITool> tools, string agentName) =>
+            toolCallStore is null || string.IsNullOrWhiteSpace(workflowId)
+                ? tools
+                : [.. tools.Select(tool => tool is AIFunction function
+                    ? (AITool)new ToolCallAuditingAIFunction(function, toolCallStore, workflowId, agentName)
+                    : tool)];
     }
 
     private static ChatClientAgent? CreateOptionalAgent(

@@ -5,6 +5,52 @@ namespace Maf.Handoff.Tests;
 
 public sealed class RepositoryWorkspaceTests
 {
+    [Fact]
+    public void CompactReadMinifiesJsonWithoutChangingItsStructure()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-workspace-test", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "settings.json"), """
+                {
+                  "enabled": true,
+                  "items": [1, 2, 3]
+                }
+                """);
+            RepositoryWorkspace workspace = CreateWorkspace(root);
+
+            Assert.Equal(
+                "{\"enabled\":true,\"items\":[1,2,3]}",
+                workspace.ReadFileCompact("settings.json"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CompactReadPreservesIndentationAndCommentsWhileRemovingWastefulWhitespace()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-workspace-test", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "example.py"),
+                "def run():   \r\n    # explanation  \r\n\r\n\r\n    return True  \r\n");
+            RepositoryWorkspace workspace = CreateWorkspace(root);
+
+            Assert.Equal(
+                "def run():\n    # explanation\n\n    return True",
+                workspace.ReadFileCompact("example.py"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("../main")]
     [InlineData("feature@{1")]
@@ -26,6 +72,43 @@ public sealed class RepositoryWorkspaceTests
             githubToken: null,
             root,
             CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CloneRejectsGitLabUrlFromUnconfiguredHostAsync()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-workspace-test", Guid.NewGuid().ToString("N"));
+
+        RepositoryException exception = await Assert.ThrowsAsync<RepositoryException>(() => RepositoryWorkspace.CloneAsync(
+            "https://gitlab.example.com/group/repository.git",
+            "main",
+            githubToken: null,
+            root,
+            CancellationToken.None,
+            RepositoryProvider.GitLab));
+
+        Assert.Contains("gitlab.com", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RepositoryValidationAcceptsConfiguredSelfManagedGitLabHost()
+    {
+        RepositoryWorkspace.ValidateRepositoryUrl(
+            "https://gitlab.dotin.ir/platform/orders.git",
+            RepositoryProvider.GitLab,
+            "gitlab.dotin.ir");
+    }
+
+    [Fact]
+    public void RepositoryValidationStillRejectsOtherGitLabHosts()
+    {
+        RepositoryException exception = Assert.Throws<RepositoryException>(() =>
+            RepositoryWorkspace.ValidateRepositoryUrl(
+                "https://untrusted.example/platform/orders.git",
+                RepositoryProvider.GitLab,
+                "gitlab.dotin.ir"));
+
+        Assert.Contains("gitlab.dotin.ir", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

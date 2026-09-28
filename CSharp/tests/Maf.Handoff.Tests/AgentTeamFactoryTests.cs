@@ -121,7 +121,7 @@ public sealed class AgentTeamFactoryTests
         Assert.Equal("custom prompt", settings.Prompt);
         Assert.Equal(80, settings.MaxTotalMessages);
         Assert.Equal(20, settings.MaxAgentTurns);
-        Assert.Equal(20, settings.MaxLlmRequests);
+        Assert.Equal(25, settings.MaxLlmRequests);
     }
 
     [Theory]
@@ -210,7 +210,9 @@ public sealed class AgentTeamFactoryTests
     public void PublishesAvailableToolsForEveryAgent()
     {
         Assert.Equal(AgentNames.All, AgentToolCatalog.ByAgent.Keys);
-        Assert.Empty(AgentToolCatalog.ByAgent[AgentNames.Jira]);
+        Assert.Equal(
+            [AgentToolCatalog.SearchJiraIssues, AgentToolCatalog.GetJiraIssueTitle, AgentToolCatalog.ListJiraAttachments, AgentToolCatalog.ReadJiraAttachment],
+            AgentToolCatalog.ByAgent[AgentNames.Jira]);
         Assert.Contains(
             AgentToolCatalog.WriteRepositoryFile,
             AgentToolCatalog.ByAgent[AgentNames.Developer]);

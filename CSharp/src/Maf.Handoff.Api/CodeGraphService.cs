@@ -26,10 +26,10 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
 
     private readonly object _statusLock = new();
     private readonly bool _workflowEnabled = configuration.GetValue("CodeGraph:Enabled", true);
-    private readonly string _rootPath = Path.GetFullPath(configuration["CodeGraph:RootPath"] ?? @"E:\CodeGraph");
+    private readonly string _rootPath = Path.GetFullPath(configuration["CodeGraph:RootPath"] ?? @"C:\\Users\\a.masir\\source\\repos\\CodeGraph\\CodeGraph");
     private readonly string _agentDatabasePath = Path.GetFullPath(
         configuration["CodeGraph:DatabasePath"] ??
-        Path.Combine(configuration["CodeGraph:RootPath"] ?? @"E:\CodeGraph", "codegraph.db"));
+        Path.Combine(configuration["CodeGraph:RootPath"] ?? @"C:\\Users\\a.masir\\source\\repos\\CodeGraph\\CodeGraph", "codegraph.db"));
     private CodeGraphIndexStatus _status = new("idle", null, null, null, null, null, []);
     private bool _sawWorkspaceFailure;
 

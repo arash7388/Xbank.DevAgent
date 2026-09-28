@@ -7,10 +7,9 @@
       "command": "dotnet",
       "args": [
         "build",
-        "${workspaceFolder}/CSharp/Maf.HandoffWorkflow.slnx",
+        "${workspaceFolder}/CSharp/src/Maf.Handoff.Api/Maf.Handoff.Api.csproj",
         "--configuration",
-        "Debug",
-        "--no-restore"
+        "Debug"
       ],
       "problemMatcher": "$msCompile",
       "group": {

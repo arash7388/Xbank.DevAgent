@@ -9,7 +9,7 @@ public sealed record AgentModelConfiguration(
         int maxTotalMessages,
         int maxAgentTurns,
         int maxReviewerRemediationCycles = 5,
-        int maxLlmRequests = 20)
+        int maxLlmRequests = 25)
     {
         if (Provider is null)
         {

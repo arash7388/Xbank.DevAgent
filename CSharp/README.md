@@ -1,6 +1,6 @@
 # Repository Change Workbench
 
-A .NET 10 sample that connects Microsoft Agent Framework 1.19 handoff agents to a GitHub
+A .NET 10 sample that connects Microsoft Agent Framework 1.19 handoff agents to a GitHub or GitLab
 repository. The agents inspect and edit an isolated clone, then the browser shows the exact Git diff
 and requires user confirmation before any commit or push.
 
@@ -22,14 +22,14 @@ unavailable graph data never blocks a handoff or the workflow. Configuration, do
 non-C# work normally needs no graph call.
 
 Each agent has an independent OpenAI, DeepSeek, or Claude provider selector, model selector, and
-reasoning-effort selector. All agents default to DeepSeek `deepseek-flash` with high reasoning,
+reasoning-effort selector. All agents default to DeepSeek `deepseek-flash` with low reasoning,
 but can be configured individually. Provider credentials are entered once and reused only by agents
 assigned to that provider. Endpoints and capability metadata remain internal.
 
 Jira, reviewer, and security are optional and start disabled. Every run uses Planner to produce a
 repository-backed implementation contract before Developer changes the repository. When Jira is enabled,
 it supplies issue context to Planner first. Planner, Developer, and Release Manager are required. Enable the
-optional review gates only when the work's context or risk needs them. A run stops after 20 actual
+optional review gates only when the work's context or risk needs them. A run stops after 25 actual
 provider requests by default (`MAF_MAX_LLM_REQUESTS`) so tool or
 remediation loops cannot consume the much larger transcript-message allowance unchecked.
 When Planner is enabled, it receives at most three ordinary repository-tool rounds; its next request is
@@ -54,13 +54,15 @@ caller agent, tool name, input JSON, response or error JSON, status, duration, t
 
 The same database also keeps an audit record for every repository workflow. `workflows` contains the
 immutable, versioned input/configuration snapshot, while `workflow_runs` contains execution status and
-timestamps. Secret values (provider API keys and GitHub tokens) are never written to the snapshot; only a
+timestamps. Secret values (provider API keys and source-control tokens) are never written to the snapshot; only a
 boolean indicating whether each credential was configured is retained. The session ID returned by the API
 is the `workflow_runs.id`, so checkpoints and tool calls can be correlated with the recorded run.
 
 ## Safety model
 
-- Only HTTPS `github.com/{owner}/{repository}` URLs are accepted.
+- GitHub accepts HTTPS `github.com/{owner}/{repository}` URLs. GitLab accepts HTTPS URLs on the
+  configured `GitLab:Host`, including nested groups. This deployment defaults to `gitlab.dotin.ir`;
+  set `GitLab__Host` to override the self-managed GitLab hostname.
 - Git credentials are passed to Git through process environment configuration, never clone URLs.
 - Repository tools are limited to bounded text-source list, search, read, write, status, and diff.
 - Absolute paths, traversal, `.git`, symbolic links, binary files, and oversized files are blocked.
@@ -130,18 +132,34 @@ or different embedding models with
 `Rag__OpenAiEmbeddingEndpoint`, and `Rag__OpenAiEmbeddingModel` environment variables. Do not expose
 an unsecured Qdrant or Ollama endpoint on a network.
 
+### Cognia organization knowledge
+
+The connection step can also enable Cognia as a separate, read-only knowledge source. Enter the
+Cognia base URL, client application ID, client secret, and one or more numeric knowledge-base IDs.
+The server exchanges the client credentials for a short-lived machine bearer token and calls
+`POST /api/engine/search`; it does not upload, update, or delete Cognia knowledge. Credentials remain
+in server memory for the run and are not written into the workflow configuration or returned to the
+browser. Prefer an HTTPS Cognia endpoint because client credentials are sent to its authentication
+API.
+
+When both Cognia and uploaded reference files are enabled, the agents' `search_documents` tool
+queries Cognia and the temporary Qdrant collection in parallel. A failure in one source is reported
+without discarding results returned by the other source.
+
 The UI requests:
 
-1. GitHub repository URL and base branch.
-2. GitHub token for a private clone, optional push, or pull-request creation.
+1. GitHub repository URL or GitLab project URL, plus the base branch.
+2. The selected source controller's token for a private clone, optional push, and pull/merge-request creation.
 3. AI provider, model, and reasoning effort for each agent, plus keys for selected providers.
 4. A concrete code-change instruction with expected behavior and tests.
 
-To push an approved branch, the GitHub token needs repository Contents read/write access. The
-Generate PR action also needs Pull requests read/write access. It pushes a locally committed agent
-branch when necessary, then creates a pull request into the selected base branch. For a public
-repository with no push or pull request, the GitHub token may be omitted. Provider API keys are
-always required and are never reused as GitHub credentials.
+To push an approved branch, the selected token needs repository write access. On GitHub, the
+Generate PR action also needs pull-request write access. On GitLab, Generate MR requires API access
+and permission to create a merge request. The action pushes a locally committed agent branch when
+necessary, then opens a request into the selected base branch. For a public repository with no push
+or pull/merge request, the source-control token may be omitted. Provider API keys are always required
+and are never reused as source-control credentials. Blank UI tokens fall back to `GitHub__Token` or
+`GitLab__Token` in server configuration.
 
 The session API accepts an `agents` object keyed by the stable names `jira`, `planner`, `developer`,
 `reviewer`, `security`, and `release_manager`. Every entry contains an independent `provider`

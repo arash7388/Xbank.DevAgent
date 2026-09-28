@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Maf.Handoff.Core;
@@ -21,14 +22,19 @@ public sealed partial class RepositoryWorkspace
         "Dockerfile", "Makefile", "LICENSE", "global.json", ".editorconfig", ".gitignore",
     };
 
-    private readonly string? _githubToken;
+    private readonly string? _accessToken;
+    private RepositoryProvider _provider;
 
-    private RepositoryWorkspace(string rootPath, string repositoryUrl, string baseBranch, string? githubToken)
+    private RepositoryWorkspace(string rootPath, string repositoryUrl, string baseBranch, string? accessToken)
     {
         RootPath = rootPath;
         RepositoryUrl = repositoryUrl;
         BaseBranch = baseBranch;
-        _githubToken = githubToken;
+        _accessToken = accessToken;
+        _provider = Uri.TryCreate(repositoryUrl, UriKind.Absolute, out Uri? uri) &&
+            uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+                ? RepositoryProvider.GitHub
+                : RepositoryProvider.GitLab;
     }
 
     public string RootPath { get; }
@@ -48,9 +54,11 @@ public sealed partial class RepositoryWorkspace
         string baseBranch,
         string? githubToken,
         string workspaceRoot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RepositoryProvider provider = RepositoryProvider.GitHub,
+        string? gitLabHost = null)
     {
-        ValidateRepositoryUrl(repositoryUrl);
+        ValidateRepositoryUrl(repositoryUrl, provider, gitLabHost);
         ValidateBranchName(baseBranch);
 
         string root = Path.GetFullPath(workspaceRoot);
@@ -63,7 +71,10 @@ public sealed partial class RepositoryWorkspace
         }
 
         Directory.CreateDirectory(clonePath);
-        RepositoryWorkspace workspace = new(clonePath, repositoryUrl, baseBranch, githubToken);
+        RepositoryWorkspace workspace = new(clonePath, repositoryUrl, baseBranch, githubToken)
+        {
+            _provider = provider,
+        };
         GitResult result = await workspace.RunGitAsync(
             workingDirectory: root,
             ["clone", "--depth", "1", "--branch", baseBranch, "--", repositoryUrl, clonePath],
@@ -93,6 +104,14 @@ public sealed partial class RepositoryWorkspace
 
     [Description("Reads one text source file. Paths must be relative to the repository and cannot access .git or secrets.")]
     public string ReadFile([Description("Repository-relative path returned by list_repository_files.")] string path)
+        => ReadFileCore(path, compact: false);
+
+    [Description("Reads one text source file in a compact, token-efficient form for repository planning.")]
+    public string ReadFileCompact(
+        [Description("Repository-relative path returned by list_repository_files.")] string path)
+        => ReadFileCore(path, compact: true);
+
+    private string ReadFileCore(string path, bool compact)
     {
         string fullPath = ResolveSourcePath(path, mustExist: false);
         if (!File.Exists(fullPath))
@@ -106,7 +125,50 @@ public sealed partial class RepositoryWorkspace
             return $"File is too large to read safely ({file.Length} bytes; limit {MaxFileBytes}).";
         }
 
-        return File.ReadAllText(fullPath);
+        string content = File.ReadAllText(fullPath);
+        return compact ? CompactFileContent(path, content) : content;
+    }
+
+    private static string CompactFileContent(string path, string content)
+    {
+        string extension = Path.GetExtension(path);
+        if (extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(content);
+                return JsonSerializer.Serialize(document.RootElement);
+            }
+            catch (JsonException)
+            {
+                // Preserve malformed JSON for diagnosis and apply only safe whitespace normalization.
+            }
+        }
+
+        string normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        string[] lines = normalized.Split('\n');
+        StringBuilder compact = new(normalized.Length);
+        bool previousLineWasBlank = false;
+        foreach (string line in lines)
+        {
+            string trimmed = line.TrimEnd();
+            bool isBlank = trimmed.Length == 0;
+            if (isBlank && previousLineWasBlank)
+            {
+                continue;
+            }
+
+            if (compact.Length > 0)
+            {
+                compact.Append('\n');
+            }
+
+            compact.Append(trimmed);
+            previousLineWasBlank = isBlank;
+        }
+
+        return compact.ToString().TrimEnd('\n');
     }
 
     [Description("Searches tracked text source files and returns matching file names, line numbers, and lines.")]
@@ -272,29 +334,41 @@ public sealed partial class RepositoryWorkspace
     public async Task PushAsync(string branch, CancellationToken cancellationToken)
     {
         ValidateBranchName(branch);
-        if (string.IsNullOrWhiteSpace(_githubToken))
+        if (string.IsNullOrWhiteSpace(_accessToken))
         {
-            throw new RepositoryException("A GitHub token is required to push the approved branch.");
+            throw new RepositoryException($"A {_provider.DisplayName()} token is required to push the approved branch.");
         }
 
         await EnsureGitSuccessAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], cancellationToken);
     }
 
-    private static void ValidateRepositoryUrl(string repositoryUrl)
+    internal static void ValidateRepositoryUrl(
+        string repositoryUrl,
+        RepositoryProvider provider,
+        string? gitLabHost)
     {
+        string requiredHost = provider == RepositoryProvider.GitHub
+            ? "github.com"
+            : string.IsNullOrWhiteSpace(gitLabHost) ? "gitlab.com" : gitLabHost.Trim();
         if (!Uri.TryCreate(repositoryUrl, UriKind.Absolute, out Uri? uri) ||
             uri.Scheme != Uri.UriSchemeHttps ||
-            !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.Host, requiredHost, StringComparison.OrdinalIgnoreCase) ||
             !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
             !string.IsNullOrEmpty(uri.Fragment))
         {
-            throw new RepositoryException("Repository URL must be an HTTPS github.com URL.");
+            throw new RepositoryException(
+                $"Repository URL must be an HTTPS {requiredHost} URL for {provider.DisplayName()}.");
         }
 
         string[] segments = uri.AbsolutePath.Trim('/').Split('/');
-        if (segments.Length != 2 || segments.Any(string.IsNullOrWhiteSpace))
+        bool invalidSegmentCount = provider == RepositoryProvider.GitHub
+            ? segments.Length != 2
+            : segments.Length < 2;
+        if (invalidSegmentCount || segments.Any(string.IsNullOrWhiteSpace))
         {
-            throw new RepositoryException("Repository URL must identify one owner and repository.");
+            throw new RepositoryException(provider == RepositoryProvider.GitHub
+                ? "Repository URL must identify one owner and repository."
+                : "Repository URL must identify a GitLab namespace and project.");
         }
     }
 
@@ -406,9 +480,10 @@ public sealed partial class RepositoryWorkspace
         startInfo.Environment[$"GIT_CONFIG_VALUE_{configIndex}"] = emptyHooksPath;
         configIndex++;
 
-        if (!string.IsNullOrWhiteSpace(_githubToken))
+        if (!string.IsNullOrWhiteSpace(_accessToken))
         {
-            string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"x-access-token:{_githubToken}"));
+            string userName = _provider == RepositoryProvider.GitHub ? "x-access-token" : "oauth2";
+            string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{userName}:{_accessToken}"));
             startInfo.Environment[$"GIT_CONFIG_KEY_{configIndex}"] = "http.extraHeader";
             startInfo.Environment[$"GIT_CONFIG_VALUE_{configIndex}"] = $"Authorization: Basic {credentials}";
             configIndex++;

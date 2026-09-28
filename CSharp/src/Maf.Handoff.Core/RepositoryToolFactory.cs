@@ -6,7 +6,8 @@ internal static class RepositoryToolFactory
 {
     internal static IList<AITool> CreateReadTools(
         RepositoryWorkspace workspace,
-        IReferenceDocumentSearch? referenceDocuments = null)
+        IReferenceDocumentSearch? referenceDocuments = null,
+        bool compactFileReads = false)
     {
         List<AITool> tools =
         [
@@ -14,7 +15,9 @@ internal static class RepositoryToolFactory
             (Func<string?, string>)workspace.ListFiles,
             name: AgentToolCatalog.ListRepositoryFiles.Name),
         AIFunctionFactory.Create(
-            (Func<string, string>)workspace.ReadFile,
+            compactFileReads
+                ? (Func<string, string>)workspace.ReadFileCompact
+                : workspace.ReadFile,
             name: AgentToolCatalog.ReadRepositoryFile.Name),
         AIFunctionFactory.Create(
             (Func<string, string?, string>)workspace.Search,
@@ -38,7 +41,7 @@ internal static class RepositoryToolFactory
         RepositoryWorkspace workspace,
         IReferenceDocumentSearch? referenceDocuments = null) =>
     [
-        .. CreateReadTools(workspace, referenceDocuments),
+        .. CreateReadTools(workspace, referenceDocuments, compactFileReads: true),
         AIFunctionFactory.Create(
             (Func<string, string, string>)workspace.WriteFile,
             name: AgentToolCatalog.WriteRepositoryFile.Name),

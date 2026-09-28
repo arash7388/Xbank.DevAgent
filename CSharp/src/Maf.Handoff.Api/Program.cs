@@ -8,15 +8,28 @@ builder.Services.AddHttpClient<GitHubPullRequestClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(30);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("maf-repository-workbench/1.0");
 });
+builder.Services.AddHttpClient<GitLabMergeRequestClient>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("maf-repository-workbench/1.0");
+});
+builder.Services.AddHttpClient<JiraService>(client => client.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.Configure<RagOptions>(builder.Configuration.GetSection(RagOptions.SectionName));
 builder.Services.AddHttpClient("qdrant", client => client.Timeout = TimeSpan.FromSeconds(45));
 builder.Services.AddHttpClient("embeddings", client => client.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddHttpClient("cognia", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(45);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("maf-repository-workbench/1.0");
+});
 builder.Services.AddHttpClient<DeepSeekPricingService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("maf-repository-workbench/1.0");
 });
 builder.Services.AddSingleton<ReferenceDocumentService>();
+builder.Services.AddSingleton<CogniaDocumentSearchService>();
 builder.Services.AddSingleton<SqliteLlmCheckpointStore>(_ =>
 {
     string configuredPath = builder.Configuration["Checkpointing:DatabasePath"] ??
@@ -59,7 +72,7 @@ app.Use(async (context, next) =>
     catch (HttpRequestException exception)
     {
         await WriteErrorAsync(context, StatusCodes.Status503ServiceUnavailable,
-            $"The configured document service could not be reached: {exception.Message}");
+            $"The configured remote service could not be reached: {exception.Message}");
     }
 });
 
@@ -80,10 +93,60 @@ app.MapGet("/api/agents/default-prompts", () => Results.Ok(AgentPrompts.Defaults
 
 app.MapGet("/api/agents/tools", () => Results.Ok(AgentToolCatalog.ByAgent));
 
+app.MapGet("/api/jira/issues/{key}", async (string key, JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(new { key, summary = await jira.GetIssueTitleByKeyAsync(key, cancellationToken) }));
+
+app.MapGet("/api/jira/search", async (string jql, int? maxResults, JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(await jira.SearchIssuesAsync(jql, maxResults ?? 10, cancellationToken)));
+
+app.MapGet("/api/jira/projects/{projectKey}/issues", async (string projectKey, int? maxResults, JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(await jira.GetTasksByProjectAsync(projectKey, maxResults ?? 20, cancellationToken)));
+
+app.MapGet("/api/jira/text-search", async (string term, int? maxResults, JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(await jira.GetTasksByTextSearchAsync(term, maxResults ?? 20, cancellationToken)));
+
+app.MapGet("/api/jira/issues/{key}/attachments", async (string key, JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(await jira.GetAttachmentsAsync(key, cancellationToken)));
+
+app.MapGet("/api/jira/issues/{key}/attachments/{attachmentId}/text", async (string key, string attachmentId, int? offset, JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(await jira.ReadAttachmentAsync(key, attachmentId, offset ?? 0, cancellationToken)));
+
+app.MapGet("/api/jira/settings", (IConfiguration configuration) =>
+    Results.Ok(new { user = configuration["Jira:User"] ?? "", baseUrl = configuration["Jira:BaseUrl"] ?? "", authMode = configuration["Jira:AuthMode"] ?? "Basic" }));
+
+app.MapGet("/api/jira/myself", async (JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(await jira.GetCurrentUserAsync(cancellationToken)));
+
+app.MapGet("/api/jira/issues/{key}/details", async (string key, JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(await jira.GetIssueDetailsAsync(key, cancellationToken)));
+
+app.MapPost("/api/jira/issues", async (JiraCreateIssueRequest request, JiraService jira, CancellationToken cancellationToken) =>
+{
+    string key = await jira.CreateIssueAsync(request, cancellationToken);
+    return Results.Created($"/api/jira/issues/{key}/details", new { key });
+});
+
+app.MapPost("/api/jira/issues/{key}/comments", async (string key, JiraCommentRequest request, JiraService jira, CancellationToken cancellationToken) =>
+    Results.Ok(await jira.PostCommentAsync(key, request.Comment, cancellationToken)));
+
 app.MapGet("/api/providers/configured", (IConfiguration configuration) => Results.Ok(new
 {
     deepseek = !string.IsNullOrWhiteSpace(configuration["Providers:DeepSeek:ApiKey"]),
 }));
+
+app.MapGet("/api/projects", (IConfiguration configuration) =>
+{
+    ProjectRepositoryInfo[] projects = configuration.GetSection("Projects")
+        .GetChildren()
+        .Select(project => new ProjectRepositoryInfo(
+            project["Key"] ?? project.Key,
+            project["GitLabProjectPath"]))
+        .Where(project => !string.IsNullOrWhiteSpace(project.Key))
+        .OrderBy(project => project.Key, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    return Results.Ok(projects);
+});
 
 app.MapGet("/api/codegraph/config", (CodeGraphService codeGraph) => Results.Ok(codeGraph.GetConfiguration()));
 
@@ -147,6 +210,19 @@ app.MapPost("/api/sessions", (CreateSessionRequest request, RepositorySessionSer
 app.MapGet("/api/sessions/{id:guid}", (Guid id, RepositorySessionService sessions) =>
     Results.Ok(sessions.Get(id)));
 
+app.MapGet("/api/sessions/{id:guid}/logs", (Guid id, RepositorySessionService sessions, IWorkflowRunStore runs) =>
+{
+    _ = sessions.Get(id);
+    return Results.Ok(runs.GetLog(id));
+});
+
+app.MapGet("/api/sessions/{id:guid}/report", (Guid id, RepositorySessionService sessions, IWorkflowRunStore runs) =>
+    Results.Ok(new
+    {
+        session = sessions.Get(id),
+        database = runs.GetLog(id),
+    }));
+
 app.MapPost("/api/sessions/{id:guid}/cancel", (Guid id, RepositorySessionService sessions) =>
 {
     sessions.Cancel(id);
@@ -195,3 +271,5 @@ static async Task WriteErrorAsync(HttpContext context, int statusCode, string me
 }
 
 public partial class Program;
+
+public sealed record JiraCommentRequest(string Comment);
