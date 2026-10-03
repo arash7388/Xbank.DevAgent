@@ -282,6 +282,8 @@ public sealed class HandoffWorkflowRunner
         string workflowId)
     {
         IChatClient provider = new CompletedToolCycleFilteringChatClient(client);
+        if (_checkpointStore is IAiCallStore audit)
+            provider = new DurableUsageChatClient(provider, audit, workflowId, agent, settings);
         IChatClient effective = new UsageTrackingChatClient(provider, agent, usageCollector);
         return _checkpointStore is null
             ? effective

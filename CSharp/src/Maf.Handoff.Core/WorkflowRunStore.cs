@@ -10,13 +10,25 @@ public interface IWorkflowRunStore
     void UpdateStatus(Guid runId, string status, string? error = null);
 
     WorkflowRunLog GetLog(Guid runId);
+
+    void SaveSnapshot(Guid runId, string snapshotJson);
+    string? GetSnapshot(Guid runId);
+    void AppendEvent(Guid runId, RunEvent runEvent);
+    IReadOnlyList<WorkflowRunLogEntry> ListRuns(int limit = 100);
 }
 
 public sealed record WorkflowRunLog(
     WorkflowLogEntry Workflow,
     WorkflowRunLogEntry Run,
     IReadOnlyList<AgentRunLogEntry> AgentRuns,
-    IReadOnlyList<ToolCallLogEntry> ToolCalls);
+    IReadOnlyList<ToolCallLogEntry> ToolCalls,
+    IReadOnlyList<AiCallLogEntry>? AiCalls = null,
+    IReadOnlyList<CheckpointHitLogEntry>? CheckpointHits = null,
+    RunUsageMetrics? Usage = null,
+    IReadOnlyList<RunEvent>? Events = null,
+    IReadOnlyList<RunStatusLogEntry>? StatusHistory = null);
+
+public sealed record RunStatusLogEntry(string Status, string? Error, DateTimeOffset OccurredAt);
 
 public sealed record WorkflowLogEntry(
     string Id,
@@ -89,6 +101,15 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
             command.ExecuteNonQuery();
         }
 
+        SaveRunUsage(connection, transaction, runId.ToString("D"));
+        using (SqliteCommand history = connection.CreateCommand())
+        {
+            history.Transaction = transaction;
+            history.CommandText = "INSERT INTO run_status_history(run_id,status,occurred_at) VALUES($run,'created',$now)";
+            history.Parameters.AddWithValue("$run", runId.ToString("D"));
+            history.Parameters.AddWithValue("$now", now);
+            history.ExecuteNonQuery();
+        }
         transaction.Commit();
     }
 
@@ -96,8 +117,14 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(status);
         using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
         using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
+            INSERT INTO run_status_history(run_id,status,error,occurred_at)
+            SELECT id,$status,$error,$updated_at FROM workflow_runs
+            WHERE id=$id AND (status != $status OR error IS NOT $error);
+
             UPDATE workflow_runs
             SET status = $status, error = $error, updated_at = $updated_at,
                 started_at = CASE WHEN $status = 'running' AND started_at IS NULL THEN $updated_at ELSE started_at END,
@@ -112,6 +139,7 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
         command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
         command.Parameters.AddWithValue("$updated_at", DateTimeOffset.UtcNow.ToString("O"));
         command.ExecuteNonQuery();
+        transaction.Commit();
     }
 
     public WorkflowRunLog GetLog(Guid runId)
@@ -122,9 +150,11 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
         List<AgentRunLogEntry> agentRuns = [];
         List<ToolCallLogEntry> toolCalls = [];
         using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction(deferred: true);
 
         using (SqliteCommand command = connection.CreateCommand())
         {
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT w.id, w.workflow_type, w.config_version, w.config_json, w.created_at,
                        r.id, r.status, r.error, r.created_at, r.updated_at, r.started_at, r.finished_at
@@ -152,6 +182,7 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
 
         using (SqliteCommand command = connection.CreateCommand())
         {
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT id, agent_name, model, status, attempt_number, input_json,
                        response_json, error_json, created_at, completed_at
@@ -173,6 +204,7 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
 
         using (SqliteCommand command = connection.CreateCommand())
         {
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT id, agent_name, tool_name, status, input_json, response_json,
                        error_json, duration_ms, started_at, completed_at
@@ -192,7 +224,82 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
             }
         }
 
-        return new(workflow, run, agentRuns, toolCalls);
+        List<AiCallLogEntry> calls = ReadAuditRows<AiCallLogEntry>(connection, transaction, "ai_calls", workflowId);
+        List<CheckpointHitLogEntry> hits = ReadAuditRows<CheckpointHitLogEntry>(connection, transaction, "checkpoint_hits", workflowId);
+        RunUsageMetrics? usage = null;
+        using (SqliteCommand command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT summary_json FROM run_usage WHERE run_id=$run";
+            command.Parameters.AddWithValue("$run", workflowId);
+            if (command.ExecuteScalar() is string json)
+                usage = System.Text.Json.JsonSerializer.Deserialize<RunUsageMetrics>(json, AuditJson);
+        }
+        List<RunStatusLogEntry> history = [];
+        using (SqliteCommand command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT status,error,occurred_at FROM run_status_history WHERE run_id=$run ORDER BY sequence";
+            command.Parameters.AddWithValue("$run", workflowId);
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read()) history.Add(new(reader.GetString(0), ReadNullableString(reader, 1), DateTimeOffset.Parse(reader.GetString(2))));
+        }
+        return new(workflow, run, agentRuns, toolCalls, calls, hits, usage, ReadEvents(connection, workflowId, transaction), history);
+    }
+
+    public void SaveSnapshot(Guid runId, string snapshotJson)
+    {
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO run_snapshots VALUES($run,$json) ON CONFLICT(run_id) DO UPDATE SET snapshot_json=$json";
+        command.Parameters.AddWithValue("$run", runId.ToString("D"));
+        command.Parameters.AddWithValue("$json", snapshotJson);
+        command.ExecuteNonQuery();
+    }
+
+    public string? GetSnapshot(Guid runId)
+    {
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT snapshot_json FROM run_snapshots WHERE run_id=$run";
+        command.Parameters.AddWithValue("$run", runId.ToString("D"));
+        return command.ExecuteScalar() as string;
+    }
+
+    public void AppendEvent(Guid runId, RunEvent runEvent)
+    {
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO run_events(run_id,event_json) VALUES($run,$json)";
+        command.Parameters.AddWithValue("$run", runId.ToString("D"));
+        command.Parameters.AddWithValue("$json", System.Text.Json.JsonSerializer.Serialize(runEvent, AuditJson));
+        command.ExecuteNonQuery();
+    }
+
+    private static List<RunEvent> ReadEvents(SqliteConnection connection, string runId, SqliteTransaction transaction)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT event_json FROM run_events WHERE run_id=$run ORDER BY sequence";
+        command.Parameters.AddWithValue("$run", runId);
+        using SqliteDataReader reader = command.ExecuteReader();
+        List<RunEvent> events = [];
+        while (reader.Read()) events.Add(System.Text.Json.JsonSerializer.Deserialize<RunEvent>(reader.GetString(0), AuditJson)!);
+        return events;
+    }
+
+    public IReadOnlyList<WorkflowRunLogEntry> ListRuns(int limit = 100)
+    {
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT id,workflow_id,status,error,created_at,updated_at,started_at,finished_at FROM workflow_runs ORDER BY created_at DESC LIMIT $limit";
+        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 1000));
+        using SqliteDataReader reader = command.ExecuteReader();
+        List<WorkflowRunLogEntry> runs = [];
+        while (reader.Read()) runs.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), ReadNullableString(reader, 3),
+            DateTimeOffset.Parse(reader.GetString(4)), DateTimeOffset.Parse(reader.GetString(5)),
+            ReadNullableDateTimeOffset(reader, 6), ReadNullableDateTimeOffset(reader, 7)));
+        return runs;
     }
 
     private static string? ReadNullableString(SqliteDataReader reader, int ordinal) =>

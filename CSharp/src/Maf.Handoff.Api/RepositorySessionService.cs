@@ -38,13 +38,22 @@ public sealed class RepositorySessionService(
                 StringComparer.Ordinal),
         };
         Validate(request);
+        _ = TaskBranchName.FromTask(request.JiraIssueKey, request.Task);
         if (request.ReferenceCollectionId is Guid collectionId && !referenceDocuments.Exists(collectionId))
         {
             throw new ArgumentException("The attached document collection was not found or has expired.");
         }
         _ = request.Cognia?.NormalizeAndValidate();
+        if (request.JiraIssueKey is not null &&
+            !System.Text.RegularExpressions.Regex.IsMatch(request.JiraIssueKey, @"^[A-Za-z][A-Za-z0-9_]*-\d+$"))
+            throw new ArgumentException("A valid Jira issue key is required for attachment selection.");
+        if (request.JiraAttachmentIds is not null &&
+            (request.JiraIssueKey is null || request.JiraAttachmentIds.Count > 5 ||
+             request.JiraAttachmentIds.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 100)))
+            throw new ArgumentException("Select at most 5 Jira attachments and provide their issue key.");
+        request = request with { JiraAttachmentIds = request.JiraAttachmentIds?.ToArray() };
         Guid id = Guid.NewGuid();
-        SessionState state = new(id, request);
+        SessionState state = new(id, request, runEvent => workflowRunStore.AppendEvent(id, runEvent));
         if (!_sessions.TryAdd(id, state))
         {
             throw new InvalidOperationException("Unable to allocate a repository session.");
@@ -53,6 +62,8 @@ public sealed class RepositorySessionService(
         try
         {
             workflowRunStore.Create(id, "repository_change", SerializeWorkflowConfig(request), state.StartedAt);
+            workflowRunStore.UpdateStatus(id, "cloning");
+            workflowRunStore.SaveSnapshot(id, JsonSerializer.Serialize(state.Snapshot()));
         }
         catch
         {
@@ -82,7 +93,27 @@ public sealed class RepositorySessionService(
         return agent with { ApiKey = configuration["Providers:DeepSeek:ApiKey"] ?? string.Empty };
     }
 
-    public SessionSnapshot Get(Guid id) => GetState(id).Snapshot();
+    public SessionSnapshot Get(Guid id)
+    {
+        if (_sessions.TryGetValue(id, out SessionState? state)) return state.Snapshot();
+        WorkflowRunLog log = workflowRunStore.GetLog(id);
+        if (workflowRunStore.GetSnapshot(id) is string json)
+        {
+            SessionSnapshot saved = JsonSerializer.Deserialize<SessionSnapshot>(json)!;
+            return saved with
+            {
+                Status = log.Run.Status, Error = log.Run.Error,
+                Events = log.Events ?? saved.Events,
+                Usage = log.Usage?.TokenUsage ?? saved.Usage,
+            };
+        }
+        // Older databases retain configuration and execution logs, but no session snapshot.
+        using JsonDocument config = JsonDocument.Parse(log.Workflow.ConfigJson);
+        string Read(string name, string fallback = "") => config.RootElement.TryGetProperty(name, out JsonElement value)
+            ? value.GetString() ?? fallback : fallback;
+        return new(id, Read("RepositoryUrl"), Read("SourceControl", "gitlab"), Read("BaseBranch"), Read("Task"),
+            log.Run.CreatedAt, log.Run.Status, log.Events ?? [], "", log.Run.Error, null, null, log.Usage?.TokenUsage);
+    }
 
     public void Cancel(Guid id)
     {
@@ -104,10 +135,9 @@ public sealed class RepositorySessionService(
         CancellationToken cancellationToken)
     {
         SessionState state = GetState(id);
+        string branch = TaskBranchName.ForApproval(state.Request.JiraIssueKey, state.Request.Task, request.Branch);
         RepositoryWorkspace workspace = state.BeginApproval();
-        string branch = string.IsNullOrWhiteSpace(request.Branch)
-            ? $"agent/change-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{id:N}"[..42]
-            : request.Branch.Trim();
+        Persist(state);
 
         try
         {
@@ -135,6 +165,7 @@ public sealed class RepositorySessionService(
         {
             return state.Snapshot();
         }
+        Persist(state);
 
         try
         {
@@ -142,6 +173,7 @@ public sealed class RepositorySessionService(
             {
                 await preparation.Workspace.PushAsync(preparation.HeadBranch, cancellationToken);
                 state.MarkPullRequestBranchPushed();
+                Persist(state);
             }
 
             PullRequestResult result = preparation.Provider == RepositoryProvider.GitHub
@@ -198,21 +230,30 @@ public sealed class RepositorySessionService(
                     maxLlmRequests: 25),
                 StringComparer.Ordinal);
             IReferenceDocumentSearch? documents = CreateDocumentSearch(request);
+            IJiraIssueSearch workflowJira = jira;
+            string workflowTask = request.Task;
+            if (request.JiraIssueKey is not null)
+            {
+                SelectedJiraAttachments selectedAttachments = new(jira, request.JiraIssueKey, request.JiraAttachmentIds ?? []);
+                workflowJira = selectedAttachments;
+                workflowTask += await selectedAttachments.LoadContextAsync(state.Cancellation.Token);
+            }
             HandoffWorkflowRunner runner = new(
                 settingsByAgent,
                 workspace,
                 documents,
                 request.CodeGraphEnabled && codeGraph.IsWorkflowEnabled ? codeGraph : null,
                 checkpointStore,
-                jira);
+                workflowJira);
             string? terminalStatus = null;
 
             await foreach (RunEvent runEvent in runner.RunAsync(
-                request.Task,
+                workflowTask,
                 state.Cancellation.Token,
                 state.Id.ToString("D")))
             {
                 state.AddEvent(runEvent);
+                Persist(state);
                 if (runEvent.Type == "error")
                 {
                     state.MarkFailed(runEvent.Text ?? "The agent workflow failed.");
@@ -239,6 +280,8 @@ public sealed class RepositorySessionService(
                         "An agent reached its model turn limit before release approval, including tool rounds and repeated activations. Review the final agent activity.",
                     "rejected_by_release" =>
                         "The release manager rejected the patch. Review its concrete blocking finding before starting a corrected run.",
+                    "review_approval_missing" =>
+                        "The mandatory reviewer did not confirm the latest implementation with REVIEW_APPROVED. The patch cannot proceed to approval.",
                     "input_required" =>
                         "The workflow requested additional input before release approval. Review the agent activity for the request.",
                     "stopped_without_release_approval" =>
@@ -279,6 +322,7 @@ public sealed class RepositorySessionService(
     {
         SessionSnapshot snapshot = state.Snapshot();
         workflowRunStore.UpdateStatus(snapshot.Id, snapshot.Status, snapshot.Error);
+        workflowRunStore.SaveSnapshot(snapshot.Id, JsonSerializer.Serialize(snapshot));
     }
 
     private static string SerializeWorkflowConfig(CreateSessionRequest request) => JsonSerializer.Serialize(new
@@ -287,6 +331,8 @@ public sealed class RepositorySessionService(
         request.BaseBranch,
         request.Task,
         request.ReferenceCollectionId,
+        request.JiraIssueKey,
+        request.JiraAttachmentIds,
         cognia = request.Cognia is null ? null : new
         {
             request.Cognia.Endpoint,
@@ -406,6 +452,7 @@ public sealed class RepositorySessionService(
     {
         private readonly Lock _lock = new();
         private readonly List<RunEvent> _events = [];
+        private readonly Action<RunEvent> _persistEvent;
         private RepositoryWorkspace? _workspace;
         private string _status = "cloning";
         private string _diff = string.Empty;
@@ -414,10 +461,11 @@ public sealed class RepositorySessionService(
         private ApprovalResult? _approval;
         private PullRequestResult? _pullRequest;
 
-        internal SessionState(Guid id, CreateSessionRequest request)
+        internal SessionState(Guid id, CreateSessionRequest request, Action<RunEvent> persistEvent)
         {
             Id = id;
             Request = request;
+            _persistEvent = persistEvent;
             StartedAt = DateTimeOffset.UtcNow;
         }
 
@@ -442,6 +490,7 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
+                _persistEvent(runEvent);
                 if (runEvent.Usage is not null)
                 {
                     _usage = runEvent.Usage;
@@ -532,7 +581,7 @@ public sealed class RepositorySessionService(
                     """;
                 _status = "creating_pull_request";
                 _error = null;
-                _events.Add(RunEvent.Trace(
+                AddEvent(RunEvent.Trace(
                     null,
                     $"Creating a {requestName} from {_approval.Branch} into {Request.BaseBranch}.",
                     "pull_request"));
@@ -569,7 +618,7 @@ public sealed class RepositorySessionService(
                 _status = "pull_request_created";
                 RepositoryProvider provider = ParseProvider(Request.SourceControl);
                 string requestName = provider == RepositoryProvider.GitHub ? "pull request" : "merge request";
-                _events.Add(RunEvent.Trace(null, $"Created {requestName} #{result.Number}.", "pull_request"));
+                AddEvent(RunEvent.Trace(null, $"Created {requestName} #{result.Number}.", "pull_request"));
                 TrimEvents();
             }
         }
@@ -582,7 +631,7 @@ public sealed class RepositorySessionService(
                 _status = _approval is { Pushed: true } ? "pushed" : "committed";
                 RepositoryProvider provider = ParseProvider(Request.SourceControl);
                 string requestName = provider == RepositoryProvider.GitHub ? "Pull request" : "Merge request";
-                _events.Add(RunEvent.Trace(null, $"{requestName} creation failed: {error}", "pull_request"));
+                AddEvent(RunEvent.Trace(null, $"{requestName} creation failed: {error}", "pull_request"));
                 TrimEvents();
             }
         }
@@ -649,7 +698,8 @@ public sealed class RepositorySessionService(
                     _error,
                     _approval,
                     _pullRequest,
-                    _usage);
+                    _usage,
+                    TaskBranchName.FromTask(Request.JiraIssueKey, Request.Task));
             }
         }
 
@@ -680,7 +730,9 @@ public sealed record CreateSessionRequest(
     bool CodeGraphEnabled = true,
     string? GitLabToken = null,
     string SourceControl = "gitlab",
-    CogniaSearchConfiguration? Cognia = null);
+    CogniaSearchConfiguration? Cognia = null,
+    string? JiraIssueKey = null,
+    IReadOnlyList<string>? JiraAttachmentIds = null);
 
 public sealed record ProjectRepositoryInfo(string Key, string? GitLabProjectPath);
 
@@ -713,4 +765,5 @@ public sealed record SessionSnapshot(
     string? Error,
     ApprovalResult? Approval,
     PullRequestResult? PullRequest,
-    TokenUsageSummary? Usage);
+    TokenUsageSummary? Usage,
+    string? Branch = null);

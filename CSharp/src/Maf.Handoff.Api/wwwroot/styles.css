@@ -59,7 +59,7 @@ h1, h2, p { margin: 0; }
 .steps {
   height: 58px;
   display: grid;
-  grid-template-columns: repeat(7, minmax(110px, 1fr));
+  grid-template-columns: repeat(8, minmax(110px, 1fr));
   overflow-x: auto;
   align-items: center;
   padding: 0 24px;
@@ -103,13 +103,24 @@ button.step:disabled { opacity: 1; cursor: default; }
 .setup-step-button.active { color: #174fae; background: #fff; border-color: #c9dafa; box-shadow: 0 2px 6px #274a8320; }
 .setup-step-button.active b { color: #fff; border-color: var(--blue); background: var(--blue); }
 .setup-step-content { min-width: 0; }
+.run-review-summary { display: grid; gap: 16px; margin: 20px 0; }
+.run-review-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.run-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.run-review-heading h3, .run-review-agent h4 { margin: 0; font-size: 14px; }
+.run-review-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr); gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.run-review-row strong { color: var(--muted); font-weight: 500; }
+.run-review-row > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-review-agent { margin-top: 16px; }
+.run-review-agent h4 { margin-bottom: 8px; }
+@media (max-width: 600px) { .run-review-row { grid-template-columns: 1fr; gap: 4px; } }
 .setup-navigation { display: flex; justify-content: space-between; gap: 12px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
 .setup-navigation > :only-child, .setup-navigation > [hidden] + button { margin-left: auto; }
-.setup-panel > .jira-panel { background: transparent !important; }
+.setup-panel > .jira-panel { overflow: visible; background: transparent !important; }
 .setup-panel > .jira-panel > .section-heading { display: none; }
 .setup-panel > .jira-panel .jira-content { width: 100%; margin: 0; }
-.jira-additional-actions > summary { padding: 12px 0; color: var(--muted); cursor: pointer; font-size: 13px; }
-.jira-additional-actions > section { margin-top: 12px; }
+.jira-additional-actions > summary { padding: 14px 16px; color: #45546c; cursor: pointer; font-size: 13px; font-weight: 600; }
+.jira-additional-actions { border: 1px solid var(--line); border-radius: 12px; background: #f8faff; }
+.jira-additional-grid { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 16px; padding: 0 16px 16px; }
 .change-source-choice { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 #manual-change { width: 100%; min-height: 180px; }
 .qdrant-settings { padding-top: 0; }
@@ -266,10 +277,22 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .jira-content { display: grid; gap: 16px; width: min(1240px, calc(100% - 32px)); margin: 16px auto 40px; }
 .jira-message { padding: 12px 14px; color: #45546c; background: #fff; border: 1px solid #dbe3ef; border-radius: 10px; font-size: 12px; }
 .jira-message.success { color: #08734f; background: var(--green-bg); border-color: #b5e8d1; }
+.jira-message.error { color: #a02b3e; background: var(--red-bg); border-color: #f0c4cc; }
+.jira-panel .card-heading h3, .jira-results-heading h3 { margin: 0; font-size: 15px; }
+.jira-panel .card-heading p { margin-top: 5px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.jira-panel button:focus-visible, .jira-panel summary:focus-visible, .jira-issue-result:focus-visible { outline: 3px solid #2563eb80; outline-offset: 3px; }
+.jira-panel .field-guide { line-height: 1.5; }
+.jira-selection { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; border: 1px solid #a9ddc7; border-left: 4px solid var(--green); border-radius: 12px; background: var(--green-bg); }
+.jira-selection > div { min-width: 0; }
+.jira-selection p { margin-top: 4px; color: #14553c; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.jira-selection button { flex-shrink: 0; }
+.jira-eyebrow { color: #287458; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .jira-search-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 4px; }
-.jira-search-tab { min-height: 32px; padding: 6px 11px; color: #47566d; background: #f4f6f9; border-color: #d9e0e9; font-size: 12px; }
-.jira-search-tab.active { color: #fff; background: var(--blue); border-color: var(--blue); }
-.jira-jql-helper { margin: 12px 0 8px; padding: 13px; border: 1px solid #dce5f2; border-radius: 10px; background: #f8faff; }
+.jira-search-tab { min-height: 38px; padding: 8px 14px; color: #47566d; background: #f4f6f9; border-color: #d9e0e9; font-size: 13px; }
+.jira-search-tab.active { color: #184caf; background: #eaf1ff; border-color: #abc4f5; }
+.jira-jql-helper { margin-top: 16px; padding: 12px 14px; border: 1px solid #dce5f2; border-radius: 10px; background: #f8faff; }
+.jira-jql-helper > summary, .jira-custom-fields > summary { color: #47566d; cursor: pointer; font-size: 12px; font-weight: 600; }
+.jira-jql-helper[open] > summary { margin-bottom: 12px; }
 .jira-jql-helper > p { color: #526078; font-size: 12px; line-height: 1.55; }
 .jira-jql-helper .jira-jql-example { margin-top: 6px; overflow-wrap: anywhere; }
 .jira-clause-tools, .jira-custom-clause { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
@@ -277,24 +300,59 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .jira-clause-tools label, .jira-custom-clause label { margin-top: 0; }
 .jira-custom-clause > div { flex: 1 1 280px; }
 .jira-clause-tools button, .jira-custom-clause button { min-height: 39px; }
-.jira-search-form, .jira-issue-form { display: grid; grid-template-columns: minmax(250px, 1fr) 130px auto; align-items: end; gap: 10px; }
-.jira-search-form { grid-template-columns: minmax(250px, 1fr) minmax(150px, 200px) 130px auto; }
-.jira-search-form textarea { min-height: 100px; font: 12px/1.5 "Cascadia Code", Consolas, monospace; }
-.jira-search-form textarea.jira-simple-query { min-height: 39px; height: 39px; }
-.jira-issue-form { grid-template-columns: minmax(250px, 1fr) auto auto; }
-.jira-result-count { margin: 15px 0 9px; color: var(--muted); font-size: 12px; }
-.jira-results { overflow-x: auto; border: 1px solid #dfe5ed; border-radius: 9px; }
-.jira-results > p { padding: 14px; color: var(--muted); font-size: 12px; }
-.jira-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.jira-table th { color: #35435a; background: #edf3fb; text-align: left; }
-.jira-table th, .jira-table td { padding: 10px 12px; border-bottom: 1px solid #e5eaf1; vertical-align: top; }
-.jira-table tbody tr:hover { background: #f4f8ff; }
-.jira-key-button { min-height: 0; padding: 0; color: var(--blue); background: transparent; font-weight: 650; }
-.jira-issue-result { margin-top: 14px; padding: 14px; border: 1px solid #dfe5ed; border-radius: 9px; background: #fafcff; overflow-wrap: anywhere; }
-.jira-issue-result h4 { margin: 0 0 8px; }
-.jira-issue-result p { color: var(--muted); font-size: 12px; }
-.jira-issue-result pre { max-height: 350px; padding: 12px; overflow: auto; background: #eef3fb; border-radius: 8px; font: 12px/1.5 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
-.jira-issue-result details { margin-top: 12px; font-size: 12px; }
+.jira-search-form { display: grid; grid-template-columns: minmax(0, 1fr) 120px auto; align-items: start; gap: 0 14px; }
+.jira-query-field { grid-column: 1 / -1; }
+.jira-search-form textarea { min-height: 70px; font: 13px/1.6 "Cascadia Code", Consolas, monospace; }
+.jira-search-form textarea.jira-simple-query { min-height: 42px; height: 42px; font: inherit; }
+.jira-search-form > button { margin-top: 29px; min-height: 39px; }
+.jira-browser { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: start; gap: 16px; }
+.jira-browser > section { min-width: 0; }
+.jira-preview-card { position: sticky; top: 0; }
+.jira-issue-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.jira-issue-form .text-button { grid-column: 1 / -1; justify-self: end; font-size: 12px; padding: 4px 0; }
+.jira-results-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 14px; }
+.jira-result-count { color: var(--muted); font-size: 12px; }
+.jira-results { max-height: 650px; overflow-y: auto; border: 1px solid #dfe5ed; border-radius: 10px; }
+.jira-empty-state { padding: 32px 20px; text-align: center; }
+.jira-empty-icon { display: grid; place-items: center; width: 42px; height: 42px; margin: 0 auto 12px; border-radius: 12px; color: #5272a2; background: #edf3fb; font-size: 26px; }
+.jira-empty-state h4 { margin: 0 0 8px; color: #35435a; font-size: 14px; }
+.jira-empty-state p { max-width: 300px; margin: 0 auto; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.jira-task-list { list-style: none; margin: 0; padding: 0; }
+.jira-task-list li + li { border-top: 1px solid #e5eaf1; }
+.jira-task-row { display: grid; gap: 8px; width: 100%; min-height: 100px; padding: 15px; border-radius: 0; color: var(--ink); background: #fff; text-align: left; font-weight: 400; }
+.jira-task-row:hover { background: #f6f9ff; }
+.jira-task-row.active { background: #edf4ff; box-shadow: inset 3px 0 var(--blue); }
+.jira-task-row.selected { box-shadow: inset 3px 0 var(--green); }
+.jira-task-row:focus-visible { outline-offset: -3px !important; }
+.jira-task-top, .jira-task-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.jira-task-key { color: #215bc1; font-size: 12px; font-weight: 700; }
+.jira-task-summary { font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.jira-task-meta { color: var(--muted); font-size: 11px; }
+.jira-status { display: inline-flex; padding: 3px 7px; border-radius: 5px; color: #4a586c; background: #eef1f5; font-size: 10px; font-weight: 700; line-height: 1.4; }
+.jira-status[data-tone="progress"] { color: #215bc1; background: #e7efff; }
+.jira-status[data-tone="done"] { color: #146343; background: #def5e9; }
+.jira-status[data-tone="blocked"] { color: #9a3442; background: #ffe7eb; }
+.jira-issue-result { margin-top: 14px; padding-top: 16px; border-top: 1px solid #e4eaf2; overflow-wrap: anywhere; }
+.jira-issue-result h4 { margin: 0 0 10px; font-size: 15px; line-height: 1.5; }
+.jira-issue-result p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.jira-issue-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 18px; }
+.jira-description { color: #34435a; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+.jira-issue-result h5 { margin: 20px 0 8px; color: #45546c; font-size: 12px; }
+.jira-issue-result pre { max-height: 300px; padding: 12px; overflow: auto; background: #f3f6fb; border-radius: 8px; font: 12px/1.5 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
+.jira-issue-result details { margin-top: 20px; font-size: 12px; }
+.jira-issue-result summary { cursor: pointer; color: #45546c; font-weight: 600; }
+.jira-comment { margin-top: 12px; padding: 12px; border: 1px solid #e4eaf2; border-radius: 8px; }
+.jira-comment .jira-description { margin-top: 8px; }
+.jira-attachment { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; padding: 12px; border: 1px solid #e4eaf2; border-radius: 8px; }
+.jira-attachment > p { flex: 1 1 100%; color: #34435a; }
+.jira-attachment > label { display: flex; align-items: center; gap: 8px; flex: 1 1 100%; margin: 0; color: #34435a; overflow-wrap: anywhere; }
+.jira-attachment input[type="checkbox"] { width: auto; min-height: 0; margin: 0; flex-shrink: 0; }
+.jira-attachment > pre { width: 100%; margin: 0; }
+.jira-attachment button { min-height: 32px; padding: 6px 10px; font-size: 11px; }
+.jira-preview-actions { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e4eaf2; }
+.jira-preview-actions > button { width: 100%; }
+.jira-preview-actions > p { margin-top: 8px; text-align: center; }
+.jira-custom-fields { margin-top: 16px; }
 .jira-create-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .jira-json-input { font: 12px/1.5 "Cascadia Code", Consolas, monospace; }
 .jira-form-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
@@ -416,6 +474,17 @@ dialog p { margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1
 .report-header { flex: 0 0 auto; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .report-header p { margin-top: 4px; }
 .report-dialog .run-log-content { flex: 1 1 auto; max-height: none; min-height: 180px; padding: 8px 20px; }
+.report-dialog .run-log-entry { --category-color: #475569; --category-background: #f1f5f9; margin: 8px 0; border: 1px solid #e8ebee; border-left: 4px solid var(--category-color); border-radius: 6px; }
+.report-dialog .run-log-entry[data-category="session"] { --category-color: #475569; --category-background: #f1f5f9; }
+.report-dialog .run-log-entry[data-category="workflow-row"] { --category-color: #92400e; --category-background: #fffbeb; }
+.report-dialog .run-log-entry[data-category="run-row"] { --category-color: #166534; --category-background: #f0fdf4; }
+.report-dialog .run-log-entry[data-category="agent-run"] { --category-color: #6b21a8; --category-background: #faf5ff; }
+.report-dialog .run-log-entry[data-category="tool-call"] { --category-color: #075985; --category-background: #f0f9ff; }
+.report-dialog .run-log-entry summary { padding: 11px 10px; background: var(--category-background); border-radius: 5px; }
+.report-dialog .run-log-entry summary b { color: var(--category-color); background: #fff; border: 1px solid currentColor; }
+.report-dialog .run-log-entry summary:hover { box-shadow: inset 0 0 0 1px var(--category-color); }
+.report-dialog .run-log-entry summary:focus-visible { outline: 2px solid var(--category-color); outline-offset: 2px; }
+.report-dialog .run-log-entry-body { padding: 0 10px 13px; }
 .report-actions { flex: 0 0 auto; margin: 0; padding: 12px 20px; border-top: 1px solid var(--line); }
 
 [hidden] { display: none !important; }
@@ -429,7 +498,7 @@ dialog p { margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1
   .app-header h1, .app-header p { display: none; }
   .app-mode-nav { margin-right: auto; }
   .connection { display: none; }
-  .steps { height: auto; padding: 10px 15px; grid-template-columns: repeat(7, minmax(40px, 1fr)); }
+  .steps { height: auto; padding: 10px 15px; grid-template-columns: repeat(8, minmax(40px, 1fr)); }
   .step { justify-content: center; }
   .step span { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .setup-panel { border-inline: 0; }
@@ -444,7 +513,14 @@ dialog p { margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1
   .usage-price-card { grid-template-columns: 1fr; }
   .codegraph-content { width: calc(100% - 20px); }
   .jira-content { width: calc(100% - 20px); }
-  .jira-search-form, .jira-issue-form, .jira-create-grid { grid-template-columns: 1fr; }
+  .setup-panel { padding: 20px 16px; }
+  .jira-browser, .jira-additional-grid, .jira-create-grid { grid-template-columns: 1fr; }
+  .jira-preview-card { position: static; }
+  .jira-search-form { grid-template-columns: minmax(0, 1fr) 90px; }
+  .jira-search-form > button { grid-column: 1 / -1; margin-top: 12px; }
+  .jira-selection { align-items: start; flex-direction: column; }
+  .jira-results { max-height: 420px; }
+  .jira-clause-tools > div, .jira-custom-clause > div { width: 100%; }
   .codegraph-paths, .codegraph-summary-grid, .codegraph-tool-form, .codegraph-table-controls { grid-template-columns: 1fr; }
   .codegraph-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .codegraph-index-actions { flex-wrap: wrap; align-items: center; }

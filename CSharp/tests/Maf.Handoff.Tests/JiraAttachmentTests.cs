@@ -11,6 +11,77 @@ namespace Maf.Handoff.Tests;
 public sealed class JiraAttachmentTests
 {
     [Fact]
+    public async Task AutomaticContextLimitLeavesRemainingSelectedFilesAvailableToTools()
+    {
+        Handler handler = new(Encoding.UTF8.GetBytes(new string('x', 13000)), "requirements.txt", attachmentCount: 5);
+        var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", ["123", "124", "125", "126", "127"]);
+        string context = await selected.LoadContextAsync();
+        Assert.Equal(48000, context.Split('\n').Select(line => line.TrimEnd('\r'))
+            .Where(line => line.Length > 0 && line.All(character => character == 'x')).Sum(line => line.Length));
+        Assert.Contains("Attachment TEST-1/127:", context);
+        Assert.Contains("automatic context limit reached", context);
+        Assert.Equal(4, handler.Downloads);
+        Assert.Equal(12000, (await selected.ReadAttachmentAsync("TEST-1", "127")).Text.Length);
+        Assert.Equal(5, handler.Downloads);
+    }
+
+    [Fact]
+    public async Task AutomaticallyLoadsSelectedAttachmentTextAndReportsPaging()
+    {
+        Handler handler = new(Encoding.UTF8.GetBytes(new string('x', 13000)), "requirements.txt");
+        var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", ["123"]);
+        string context = await selected.LoadContextAsync();
+        Assert.Contains("Filename: requirements.txt", context);
+        Assert.Contains(new string('x', 12000), context);
+        Assert.Contains("offset 12000", context);
+        Assert.Equal(1, handler.Downloads);
+        Assert.Equal(1000, (await selected.ReadAttachmentAsync("TEST-1", "123", 12000)).Text.Length);
+    }
+
+    [Fact]
+    public async Task ExcludingAttachmentsDoesNotDownloadAndBlocksAgentAccess()
+    {
+        Handler handler = new(Encoding.UTF8.GetBytes("Private requirements"), "requirements.txt");
+        var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", []);
+        Assert.Contains("excluded all attachments", await selected.LoadContextAsync());
+        Assert.Empty(await selected.GetAttachmentsAsync("TEST-1"));
+        await Assert.ThrowsAsync<ArgumentException>(() => selected.ReadAttachmentAsync("TEST-1", "123"));
+        Assert.Equal(0, handler.Downloads);
+    }
+
+    [Fact]
+    public async Task SelectionFiltersListingAndBlocksOtherFilesAndIssues()
+    {
+        Handler handler = new(Encoding.UTF8.GetBytes("requirements"), "requirements.txt");
+        var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", ["123"]);
+        Assert.Single(await selected.GetAttachmentsAsync("test-1"));
+        Assert.Empty(await selected.GetAttachmentsAsync("TEST-2"));
+        await Assert.ThrowsAsync<ArgumentException>(() => selected.ReadAttachmentAsync("TEST-1", "999"));
+        await Assert.ThrowsAsync<ArgumentException>(() => selected.ReadAttachmentAsync("TEST-2", "123"));
+        Assert.Equal(0, handler.Downloads);
+    }
+
+    [Fact]
+    public async Task AutomaticLoadingReportsUnsupportedAttachmentsWithoutFailingWorkflow()
+    {
+        Handler handler = new(Encoding.UTF8.GetBytes("image data"), "image.png");
+        var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", ["123"]);
+        Assert.Contains("Could not load this attachment", await selected.LoadContextAsync());
+        Assert.Equal(0, handler.Downloads);
+    }
+
+    [Fact]
+    public async Task AutomaticLoadingHonorsCancellation()
+    {
+        Handler handler = new(Encoding.UTF8.GetBytes("requirements"), "requirements.txt");
+        var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", ["123"]);
+        using CancellationTokenSource cancellation = new();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => selected.LoadContextAsync(cancellation.Token));
+        Assert.Equal(0, handler.Downloads);
+    }
+
+    [Fact]
     public async Task ListsAttachmentsAndReadsAuthenticatedTextInPages()
     {
         Handler handler = new(Encoding.UTF8.GetBytes(new string('x', 13000)), "requirements.txt");
@@ -74,7 +145,7 @@ public sealed class JiraAttachmentTests
             ["Jira:BaseUrl"] = "https://jira.example.test", ["Jira:User"] = "test", ["Jira:Password"] = "secret",
         }).Build());
 
-    private sealed class Handler(byte[] bytes, string filename, string url = "https://jira.example.test/file", long? reportedSize = null) : HttpMessageHandler
+    private sealed class Handler(byte[] bytes, string filename, string url = "https://jira.example.test/file", long? reportedSize = null, int attachmentCount = 1) : HttpMessageHandler
     {
         public int Downloads { get; private set; }
         public string? DownloadAuthentication { get; private set; }
@@ -83,7 +154,7 @@ public sealed class JiraAttachmentTests
             if (request.RequestUri!.AbsolutePath.Contains("/issue/"))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
                 {
-                    fields = new { attachment = new[] { new { id = "123", filename, mimeType = "text/plain", size = reportedSize ?? bytes.Length, content = url } } },
+                    fields = new { attachment = Enumerable.Range(123, attachmentCount).Select(id => new { id = id.ToString(), filename, mimeType = "text/plain", size = reportedSize ?? bytes.Length, content = url }).ToArray() },
                 })) });
             Downloads++;
             DownloadAuthentication = request.Headers.Authorization?.Scheme;

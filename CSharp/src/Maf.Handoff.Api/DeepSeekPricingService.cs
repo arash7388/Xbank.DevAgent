@@ -18,7 +18,7 @@ public sealed record DeepSeekPricingSnapshot(
     string SourceUrl,
     IReadOnlyList<DeepSeekModelPrice> Models);
 
-public sealed class DeepSeekPricingService(HttpClient httpClient)
+public sealed class DeepSeekPricingService(HttpClient httpClient, TimeProvider? timeProvider = null)
 {
     public const string PricingUrl = "https://api-docs.deepseek.com/quick_start/pricing/";
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(15);
@@ -27,7 +27,7 @@ public sealed class DeepSeekPricingService(HttpClient httpClient)
 
     public async Task<DeepSeekPricingSnapshot> GetCurrentAsync(CancellationToken cancellationToken)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = (timeProvider ?? TimeProvider.System).GetUtcNow();
         PriceTable table = _cached is { } cached && now - cached.FetchedAt < CacheDuration
             ? cached
             : await RefreshAsync(now, cancellationToken);
@@ -40,9 +40,24 @@ public sealed class DeepSeekPricingService(HttpClient httpClient)
         return new("deepseek", peak ? "peak" : "off-peak", now, table.FetchedAt, PricingUrl, models);
     }
 
-    internal static bool IsPeak(DateTimeOffset utc) =>
-        utc.DayOfWeek is >= DayOfWeek.Monday and <= DayOfWeek.Friday &&
-        (utc.Hour is >= 1 and < 4 || utc.Hour is >= 6 and < 10);
+    internal static bool IsPeak(DateTimeOffset timestamp)
+    {
+        DateTimeOffset utc = timestamp.ToUniversalTime();
+        return utc.DayOfWeek is >= DayOfWeek.Monday and <= DayOfWeek.Friday &&
+            !IsChinesePublicHoliday(DateOnly.FromDateTime(utc.UtcDateTime)) &&
+            (utc.Hour is >= 1 and < 4 || utc.Hour is >= 6 and < 10);
+    }
+
+    private static bool IsChinesePublicHoliday(DateOnly date) => date.Year == 2026 &&
+        // State Council's published 2026 schedule. Update annually:
+        // https://en.bjhd.gov.cn/workinginhaidian/supportingservices/publicholidays/202512/t20251211_4797062.shtml
+        (date.Month, date.Day) switch
+        {
+            (1, >= 1 and <= 3) or (2, >= 15 and <= 23) or (4, >= 4 and <= 6) or
+            (5, >= 1 and <= 5) or (6, >= 19 and <= 21) or (9, >= 25 and <= 27) or
+            (10, >= 1 and <= 7) => true,
+            _ => false,
+        };
 
     private async Task<PriceTable> RefreshAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {

@@ -252,6 +252,7 @@ public sealed partial class SqliteLlmCheckpointStore : ILlmCheckpointStore, IToo
 
         InitializeToolCallSchema(connection);
         InitializeWorkflowSchema(connection);
+        InitializeAiCallSchema(connection);
     }
 
     private SqliteConnection Open()
@@ -357,6 +358,7 @@ internal sealed class CheckpointingChatClient(
         if (checkpoint is not null)
         {
             metrics.RecordHit();
+            (store as IAiCallStore)?.RecordCheckpointHit(workflowId, agent, settings.Model, request.CacheKey);
             return CheckpointSerialization.DeserializeResponse(checkpoint.ResponseJson);
         }
 
@@ -412,6 +414,7 @@ internal sealed class CheckpointingChatClient(
         if (checkpoint is not null)
         {
             metrics.RecordHit();
+            (store as IAiCallStore)?.RecordCheckpointHit(workflowId, agent, settings.Model, request.CacheKey);
             foreach (ChatResponseUpdate update in CheckpointSerialization
                 .DeserializeResponse(checkpoint.ResponseJson)
                 .ToChatResponseUpdates())
@@ -580,7 +583,8 @@ internal static class CheckpointSerialization
                 message.Contents
                     .Where(content => content is not UsageContent)
                     .Select(ProjectResponseContent)
-                    .ToArray())).ToArray());
+                    .ToArray())).ToArray(), response.Usage, response.ResponseId, response.CreatedAt,
+            response.AdditionalProperties);
         return new(JsonSerializer.Serialize(dto, JsonOptions), reusable);
     }
 
@@ -606,10 +610,14 @@ internal static class CheckpointSerialization
         }).ToList();
         return new ChatResponse(messages)
         {
+            // Retained in the durable JSON for audit, but replaying a checkpoint
+            // must never report its original usage as newly billed usage.
             FinishReason = string.IsNullOrWhiteSpace(dto.FinishReason)
                 ? null
                 : new ChatFinishReason(dto.FinishReason),
             ModelId = dto.ModelId,
+            ResponseId = dto.ResponseId,
+            CreatedAt = dto.CreatedAt,
         };
     }
 
@@ -769,7 +777,11 @@ internal static class CheckpointSerialization
         int FormatVersion,
         string? FinishReason,
         string? ModelId,
-        IReadOnlyList<MessageDto> Messages);
+        IReadOnlyList<MessageDto> Messages,
+        UsageDetails? Usage = null,
+        string? ResponseId = null,
+        DateTimeOffset? CreatedAt = null,
+        AdditionalPropertiesDictionary? AdditionalProperties = null);
 
     private sealed record MessageDto(
         string Role,

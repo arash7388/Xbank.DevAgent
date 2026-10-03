@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20260927-2">
+  <link rel="stylesheet" href="/styles.css?v=20261003-2">
 </head>
 <body>
   <header class="app-header">
@@ -15,7 +15,6 @@
     <nav class="app-mode-nav" aria-label="Workbench views">
       <button class="app-mode active" type="button" data-app-mode="workflow" aria-pressed="true">Agent workflow</button>
       <button class="app-mode" type="button" data-app-mode="codegraph" aria-pressed="false">Code graph</button>
-      <button class="app-mode" type="button" data-app-mode="jira" aria-pressed="false">Jira task</button>
     </nav>
     <div id="connection" class="connection"><span></span> Local service</div>
   </header>
@@ -25,9 +24,10 @@
     <button type="button" data-step="jira" class="step"><b>2</b><span>Change request</span></button>
     <button type="button" data-step="agents" class="step"><b>3</b><span>Agents</span></button>
     <button type="button" data-step="request" class="step"><b>4</b><span>Request &amp; references</span></button>
-    <div data-step="running" class="step"><b>5</b><span>Agent work</span></div>
-    <div data-step="review" class="step"><b>6</b><span>Review diff</span></div>
-    <div data-step="finish" class="step"><b>7</b><span>Commit or push</span></div>
+    <button type="button" data-step="confirm" class="step"><b>5</b><span>Review &amp; confirm</span></button>
+    <div data-step="running" class="step"><b>6</b><span>Agent work</span></div>
+    <div data-step="review" class="step"><b>7</b><span>Review diff</span></div>
+    <div data-step="finish" class="step"><b>8</b><span>Commit or push</span></div>
   </nav>
 
   <main class="workspace">
@@ -52,16 +52,37 @@
       <div id="change-source-error" class="form-error" role="alert" hidden></div>
       <div class="jira-content" id="jira-change-panel">
         <div id="jira-connection-status" class="jira-message" role="status" aria-live="polite">Connection not checked.</div>
-        <section class="codegraph-card">
-          <div class="card-heading"><div><h3>Find Jira tasks</h3><p>Enter Jira Query Language (JQL), such as <code>project = OPIM ORDER BY updated DESC</code>.</p></div></div>
+        <div id="jira-selection" class="jira-selection" hidden>
+          <div><span class="jira-eyebrow">Selected for this workflow</span><p id="jira-selected-task" role="status" aria-live="polite">No Jira task selected.</p></div>
+          <button id="jira-clear-selection" class="secondary" type="button">Clear selection</button>
+        </div>
+        <section class="codegraph-card jira-search-card">
+          <div class="card-heading"><div><h3>Find a task</h3><p>Search for a task, preview its details, then add it to your workflow.</p></div></div>
           <div class="jira-search-tabs" role="group" aria-label="Jira search mode">
             <button class="jira-search-tab active" type="button" data-jira-search="jql" aria-pressed="true">JQL filter</button>
             <button class="jira-search-tab" type="button" data-jira-search="project" aria-pressed="false">Project</button>
             <button class="jira-search-tab" type="button" data-jira-search="text" aria-pressed="false">Text search</button>
           </div>
-          <div id="jira-jql-helper" class="jira-jql-helper">
-            <p>Write any valid JQL directly, including parentheses, <code>AND</code>, <code>OR</code>, <code>IN</code>, <code>NOT IN</code>, comparisons, functions, and <code>ORDER BY</code>. Jira stores Backend and Infra as separate components; the “Backend + Infra” preset requires both.</p>
-            <p class="jira-jql-example">Example: <code>(component = "Backend" AND component = "Infra") AND updated >= -30d ORDER BY updated DESC</code></p>
+          <form id="jira-search-form" class="jira-search-form">
+            <div class="jira-query-field">
+              <label id="jira-search-label" for="jira-query">JQL filter</label>
+              <textarea id="jira-query" maxlength="2000" rows="2" spellcheck="false" aria-describedby="jira-query-guide" required>ORDER BY updated DESC</textarea>
+              <p id="jira-query-guide" class="field-guide">Use a JQL query to filter tasks. Ctrl+Enter or ⌘+Enter to search.</p>
+            </div>
+            <div>
+              <label for="jira-user">Assignee</label>
+              <input id="jira-user" placeholder="All assignees" spellcheck="false" aria-describedby="jira-user-guide">
+              <p id="jira-user-guide" class="field-guide">Leave empty to include everyone.</p>
+            </div>
+            <div>
+              <label for="jira-limit">Result limit</label>
+              <input id="jira-limit" type="number" min="1" max="100" value="20" required>
+            </div>
+            <button id="jira-search-button" class="primary" type="submit">Search tasks</button>
+          </form>
+          <details id="jira-jql-helper" class="jira-jql-helper">
+            <summary>Build a filter with JQL helpers</summary>
+            <p>Combine clauses with AND or OR. “Backend + Infra” requires both components; “Either component” matches either one.</p>
             <div class="jira-clause-tools">
               <div>
                 <label for="jira-clause-join">Combine with</label>
@@ -80,39 +101,31 @@
               <button id="jira-add-clause" class="secondary" type="button">Add clause</button>
               <button id="jira-clear-query" class="secondary" type="button">Clear filter</button>
             </div>
-          </div>
-          <form id="jira-search-form" class="jira-search-form">
-            <div>
-              <label id="jira-search-label" for="jira-query">JQL filter</label>
-              <textarea id="jira-query" maxlength="2000" spellcheck="false" required>ORDER BY updated DESC</textarea>
-            </div>
-            <div>
-              <label for="jira-user">User (optional)</label>
-              <input id="jira-user" placeholder="All users" spellcheck="false">
-            </div>
-            <div>
-              <label for="jira-limit">Max results</label>
-              <input id="jira-limit" type="number" min="1" max="100" value="20" required>
-            </div>
-            <button id="jira-search-button" class="primary" type="submit">Search tasks</button>
-          </form>
+          </details>
           <div id="jira-search-error" class="form-error" role="alert" hidden></div>
-          <p id="jira-result-count" class="jira-result-count" role="status" aria-live="polite">No search run yet.</p>
-          <div id="jira-results" class="jira-results"><p>Search results will appear here.</p></div>
         </section>
-        <section class="codegraph-card">
-          <div class="card-heading"><div><h3>Issue lookup</h3><p>Fetch an issue by its full key and inspect the response, including visible comments.</p></div></div>
+        <div class="jira-browser">
+        <section class="codegraph-card jira-results-card" aria-labelledby="jira-results-title">
+          <div class="jira-results-heading"><h3 id="jira-results-title">Tasks</h3><p id="jira-result-count" class="jira-result-count" role="status" aria-live="polite">Ready to search</p></div>
+          <div id="jira-results" class="jira-results">
+            <div class="jira-empty-state"><span class="jira-empty-icon" aria-hidden="true">⌕</span><h4>Find your next task</h4><p>Use the filters above to find Jira tasks, or open an issue by key in the preview.</p></div>
+          </div>
+        </section>
+        <section class="codegraph-card jira-preview-card" aria-labelledby="jira-preview-title">
+          <div class="card-heading"><div><h3 id="jira-preview-title">Task preview</h3><p>Choose a result or open an issue by key.</p></div></div>
           <form id="jira-issue-form" class="jira-issue-form">
-            <div><label for="jira-issue-key">Issue key</label><input id="jira-issue-key" placeholder="WEPOD-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required></div>
-            <button id="jira-issue-button" class="secondary" type="submit">Get issue</button>
-            <button id="jira-title-button" class="secondary" type="button">Get title only</button>
+            <div><label for="jira-issue-key">Issue key</label><input id="jira-issue-key" placeholder="e.g. OPIM-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required></div>
+            <button id="jira-issue-button" class="secondary" type="submit">Open issue</button>
+            <button id="jira-title-button" class="text-button" type="button">Title only</button>
           </form>
           <div id="jira-issue-error" class="form-error" role="alert" hidden></div>
-          <div id="jira-issue-result" class="jira-issue-result"><p>No issue loaded.</p></div>
-          <button id="jira-select-task" class="primary" type="button" disabled>Use this task</button>
-          <p id="jira-selected-task" class="field-guide" role="status" aria-live="polite">No Jira task selected.</p>
+          <div class="jira-preview-actions"><button id="jira-select-task" class="primary" type="button" disabled>Use this task</button><p class="field-guide">Adds task context to your change request.</p></div>
+          <div id="jira-issue-result" class="jira-issue-result" tabindex="-1">
+            <div class="jira-empty-state"><span class="jira-empty-icon" aria-hidden="true">▤</span><h4>Review before you select</h4><p>Task details, comments, and attachments will appear here.</p></div>
+          </div>
         </section>
-        <section class="codegraph-card">
+        </div>
+        <section class="codegraph-card jira-create-card">
           <div class="card-heading"><div><h3>Create issue</h3><p>Submit standard Jira fields and optional custom fields. Jira may require additional fields for the chosen project and issue type.</p></div></div>
           <form id="jira-create-form">
             <div class="jira-create-grid">
@@ -123,14 +136,16 @@
             <input id="jira-create-summary" maxlength="255" required>
             <label for="jira-create-description">Description</label>
             <textarea id="jira-create-description"></textarea>
-            <label for="jira-create-fields">Additional Jira fields (JSON object)</label>
-            <textarea id="jira-create-fields" class="jira-json-input" spellcheck="false">{}</textarea>
+            <details class="jira-custom-fields"><summary>Additional fields (advanced)</summary>
+              <label for="jira-create-fields">Additional Jira fields (JSON object)</label>
+              <textarea id="jira-create-fields" class="jira-json-input" spellcheck="false">{}</textarea>
+            </details>
             <div class="jira-form-actions"><button id="jira-create-button" class="primary" type="submit">Create issue</button></div>
           </form>
           <div id="jira-create-error" class="form-error" role="alert" hidden></div>
           <p id="jira-create-result" class="jira-feedback" role="status" aria-live="polite"></p>
         </section>
-        <section class="codegraph-card">
+        <section class="codegraph-card jira-comment-card">
           <div class="card-heading"><div><h3>Add comment</h3><p>Post a comment to an existing Jira issue.</p></div></div>
           <form id="jira-comment-form">
             <label for="jira-comment-key">Issue key</label>
@@ -254,7 +269,7 @@
         </div>
         <div class="team-map-canvas">
           <svg id="team-map" viewBox="0 0 1120 330" role="img" aria-labelledby="team-map-title team-map-description">
-            <desc id="team-map-description">Optional Jira context flows into the required Planner, then Developer, optional Reviewer and Security gates, and the terminal Release manager. Review and security may return work to the Developer to resolve issues.</desc>
+            <desc id="team-map-description">Optional Jira context flows into the required Planner, then Developer, mandatory Reviewer, optional Security, and the terminal Release manager. Review and security may return work to the Developer to resolve issues.</desc>
             <defs>
               <marker id="handoff-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker>
             </defs>
@@ -330,7 +345,7 @@
             <legend>Agent models</legend>
             <button id="copy-planner-settings" class="text-button" type="button">Apply planner model to all</button>
           </div>
-          <p class="field-guide">Planner, Developer, and the final Release Manager are required. Planner creates the implementation contract and Developer executes it. Jira, review, and security are optional and start disabled.</p>
+          <p class="field-guide">Planner, Developer, Reviewer, and the final Release Manager are required. Planner creates the implementation contract, Developer executes it, and Reviewer independently confirms the changes. Jira and security are optional and start disabled.</p>
           <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Each agent's current model pricing appears below its prompt and remains editable.</p>
           <div id="agent-models" class="agent-model-grid"></div>
         </fieldset>
@@ -359,7 +374,7 @@
           <label for="task">Requested code change</label>
           <textarea id="task" name="task" rows="7" maxlength="20000" required
                     placeholder="Describe the change to implement for the selected Jira task, including expected behavior and tests."></textarea>
-          <p class="field-guide">Include expected behavior, constraints, and tests. The agent edits only an isolated clone.</p>
+          <p class="field-guide">Include expected behavior, constraints, and tests. For a manual request, include WEPOD-12345 or task number 12345. The task number is required to create the user/WEPOD-12345 branch. The agent edits only an isolated clone.</p>
           <label class="check-row" for="codegraph-enabled">
             <input id="codegraph-enabled" name="codeGraphEnabled" type="checkbox" checked>
             <span>Use CodeGraph for C# analysis</span>
@@ -429,7 +444,7 @@
 
         <div id="form-error" class="form-error" role="alert" hidden></div>
         <div class="form-actions">
-          <button id="run-button" class="primary" type="submit">Start agent run</button>
+          <button id="run-button" class="primary" type="submit">Confirm and start agent run</button>
           <button id="cancel-button" class="secondary" type="button" hidden>Cancel</button>
         </div>
       </form>
@@ -484,7 +499,7 @@
       </div>
       <p>The approved patch will be committed to a new branch. The base branch is never updated directly.</p>
       <label for="target-branch">New branch</label>
-      <input id="target-branch" required>
+      <input id="target-branch" required readonly placeholder="user/WEPOD-12345">
       <label for="commit-message">Commit message</label>
       <input id="commit-message" value="Apply agent-proposed change" maxlength="200" required>
       <label class="check-row" for="push-branch">
@@ -515,6 +530,6 @@
     </div>
   </dialog>
 
-  <script src="/app.js?v=20260927-2" defer></script>
+  <script src="/app.js?v=20261003-2" defer></script>
 </body>
 </html>

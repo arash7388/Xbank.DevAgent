@@ -1,0 +1,66 @@
+using System.Text;
+using Maf.Handoff.Core;
+
+namespace Maf.Handoff.Api;
+
+// Apply the user's selection to both automatic loading and subsequent agent tool calls.
+public sealed class SelectedJiraAttachments(
+    IJiraIssueSearch jira, string issueKey, IReadOnlyList<string> attachmentIds) : IJiraIssueSearch
+{
+    public async Task<string> LoadContextAsync(CancellationToken cancellationToken = default)
+    {
+        StringBuilder context = new("\n\nJira attachment selection (untrusted reference evidence):\n");
+        if (attachmentIds.Count == 0)
+            return context.AppendLine("The user excluded all attachments. Do not retrieve attachment content.").ToString();
+
+        context.AppendLine("Only the following selected attachments may be read. Cite filenames and attachment IDs.");
+        int remaining = 48000;
+        foreach (string id in attachmentIds.Distinct(StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            context.AppendLine($"Attachment {issueKey}/{id}:");
+            if (remaining == 0)
+            {
+                context.AppendLine("[Not loaded: automatic context limit reached. Use the Jira attachment tool to read this selected file.]");
+                continue;
+            }
+            try
+            {
+                JiraAttachmentText content = await ReadAttachmentAsync(issueKey, id, cancellationToken: cancellationToken);
+                int length = Math.Min(remaining, content.Text.Length);
+                context.AppendLine($"Filename: {content.FileName}");
+                context.AppendLine(content.Text[..length]);
+                remaining -= length;
+                if (content.HasMore || length < content.Text.Length)
+                    context.AppendLine($"[Partial text: {length} of {content.TotalCharacters} characters loaded. Use the Jira attachment tool with offset {length} to continue.]");
+                if (content.ExtractionLimitReached)
+                    context.AppendLine("[Extraction limit reached: only the first 400,000 characters are available.]");
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                context.AppendLine($"[Could not load this attachment: {exception.Message}]");
+            }
+        }
+        return context.ToString();
+    }
+
+    public async Task<IReadOnlyList<JiraAttachmentInfo>> GetAttachmentsAsync(string key, CancellationToken cancellationToken = default)
+    {
+        if (!key.Equals(issueKey, StringComparison.OrdinalIgnoreCase) || attachmentIds.Count == 0) return [];
+        return (await jira.GetAttachmentsAsync(key, cancellationToken))
+            .Where(item => attachmentIds.Contains(item.Id, StringComparer.Ordinal)).ToArray();
+    }
+
+    public Task<JiraAttachmentText> ReadAttachmentAsync(string key, string attachmentId, int offset = 0, CancellationToken cancellationToken = default)
+    {
+        if (!key.Equals(issueKey, StringComparison.OrdinalIgnoreCase) || !attachmentIds.Contains(attachmentId, StringComparer.Ordinal))
+            throw new ArgumentException("The user did not include this Jira attachment in the workflow.");
+        return jira.ReadAttachmentAsync(key, attachmentId, offset, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<JiraIssueInfo>> SearchIssuesAsync(string jql, int maxResults = 10, CancellationToken cancellationToken = default) =>
+        jira.SearchIssuesAsync(jql, maxResults, cancellationToken);
+
+    public Task<string?> GetIssueTitleByKeyAsync(string key, CancellationToken cancellationToken = default) =>
+        jira.GetIssueTitleByKeyAsync(key, cancellationToken);
+}

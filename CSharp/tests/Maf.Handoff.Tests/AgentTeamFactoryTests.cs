@@ -6,6 +6,19 @@ namespace Maf.Handoff.Tests;
 public sealed class AgentTeamFactoryTests
 {
     [Fact]
+    public void RejectsConfigurationWithoutMandatoryReviewer()
+    {
+        WorkflowSettings settings = new("https://example.test", "test-model", "test-key");
+        string[] names = [AgentNames.Planner, AgentNames.Developer, AgentNames.ReleaseManager];
+        Dictionary<string, IChatClient> clients = names.ToDictionary(name => name, _ => (IChatClient)new RecordingChatClient());
+
+        ConfigurationException exception = Assert.Throws<ConfigurationException>(() =>
+            HandoffWorkflowFactory.Create(clients, names.ToDictionary(name => name, _ => settings)));
+
+        Assert.Contains("reviewer", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RequiresAConfigurationForEveryAgent()
     {
         Dictionary<string, IChatClient> clients = [];
@@ -29,7 +42,7 @@ public sealed class AgentTeamFactoryTests
 
         Assert.NotNull(team.Planner);
         Assert.Null(team.Jira);
-        Assert.Null(team.Reviewer);
+        Assert.NotNull(team.Reviewer);
         Assert.Null(team.Security);
         Assert.Equal(AgentNames.Planner, team.StartAgent.Name);
         Assert.Equal(AgentNames.Required, team.All.Select(agent => agent.Name));
@@ -59,7 +72,7 @@ public sealed class AgentTeamFactoryTests
         Assert.NotNull(bundle.Workflow);
         Assert.NotNull(bundle.Team.Planner);
         Assert.Null(bundle.Team.Jira);
-        Assert.Null(bundle.Team.Reviewer);
+        Assert.NotNull(bundle.Team.Reviewer);
         Assert.Null(bundle.Team.Security);
     }
 

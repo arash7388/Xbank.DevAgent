@@ -41,5 +41,5 @@ depends on its timeout/cancellation handling; count limits cannot interrupt a ca
 The broader suite also covers repository boundaries, per-agent configuration, optional CodeGraph
 fallbacks, tool-history filtering, checkpoints, and token accounting.
 
-The Python implementation uses a separate Foundry workflow and is not validated by the C# suite.
+The Python implementation uses a separate Foundry workflow and is not validated by the C# suite.![alt text](image.png)
 Its tests must be run in a Python environment with the dependencies in `Python/pyproject.toml`.

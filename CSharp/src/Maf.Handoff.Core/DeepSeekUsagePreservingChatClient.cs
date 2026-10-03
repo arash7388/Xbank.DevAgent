@@ -9,7 +9,8 @@ namespace Maf.Handoff.Core;
 /// The non-streaming mapper retains ChatResponse.Usage, so adapt that complete response back into
 /// framework updates until the upstream streaming mapper accepts DeepSeek's current chunk shape.
 /// </summary>
-internal sealed class DeepSeekUsagePreservingChatClient(IChatClient innerClient) : IChatClient
+internal sealed class DeepSeekUsagePreservingChatClient(
+    IChatClient innerClient, DeepSeekUsageCapture? usageCapture = null, IDisposable? ownedTransport = null) : IChatClient
 {
     private readonly ConcurrentDictionary<string, string> _reasoningByCallId = new(StringComparer.Ordinal);
 
@@ -18,8 +19,16 @@ internal sealed class DeepSeekUsagePreservingChatClient(IChatClient innerClient)
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        DeepSeekUsageCapture.CallUsage? call = usageCapture?.BeginCall();
         ChatResponse response = await innerClient.GetResponseAsync(
             RestoreReasoning(messages), options, cancellationToken).ConfigureAwait(false);
+        if (call?.Usage is { } usage) response.Usage = usage;
+        if (call?.RawUsage is { } rawUsage)
+        {
+            response.AdditionalProperties ??= [];
+            response.AdditionalProperties["provider_usage"] = rawUsage;
+        }
+        response.ResponseId ??= call?.ResponseId;
         RememberReasoning(response.Messages);
         return response;
     }
@@ -29,10 +38,7 @@ internal sealed class DeepSeekUsagePreservingChatClient(IChatClient innerClient)
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ChatResponse response = await innerClient.GetResponseAsync(
-            RestoreReasoning(messages), options, cancellationToken)
-            .ConfigureAwait(false);
-        RememberReasoning(response.Messages);
+        ChatResponse response = await GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         foreach (ChatResponseUpdate update in response.ToChatResponseUpdates())
         {
             yield return update;
@@ -113,5 +119,6 @@ internal sealed class DeepSeekUsagePreservingChatClient(IChatClient innerClient)
     public void Dispose()
     {
         // The decorator does not own the provider client.
+        ownedTransport?.Dispose();
     }
 }

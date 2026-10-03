@@ -79,7 +79,7 @@ public static class AgentTeamFactory
                 jira is null ? null : AuditTools(JiraToolFactory.Create(jira), AgentNames.Jira), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Planner), Get(settingsByAgent, AgentNames.Planner), AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, CreateTools(AgentNames.Planner, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Developer), Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, CreateTools(AgentNames.Developer, true), codeGraphAvailable),
-            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, false), codeGraphAvailable),
+            CreateAgent(Get(effectiveClients, AgentNames.Reviewer), Get(settingsByAgent, AgentNames.Reviewer), AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, false), codeGraphAvailable),
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Security, "Threat modeling and security review.", AgentPrompts.Security, CreateTools(AgentNames.Security, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.ReleaseManager), Get(settingsByAgent, AgentNames.ReleaseManager), AgentNames.ReleaseManager, "Final evidence gate.", AgentPrompts.ReleaseManager, CreateTools(AgentNames.ReleaseManager, false), codeGraphAvailable));
 

@@ -6,6 +6,8 @@ public static class HandoffTopology
 {
     public const string CompletionMarker = "WORKFLOW_COMPLETE";
 
+    public const string ReviewApprovalMarker = "REVIEW_APPROVED";
+
     public const string RequestLimitMarker = "WORKFLOW_REQUEST_LIMIT_REACHED";
 
     public const string AgentTurnLimitMarker = "WORKFLOW_AGENT_TURN_LIMIT_REACHED";
@@ -48,7 +50,18 @@ public static class HandoffTopology
         if (release is not null && !release.Contents.OfType<FunctionCallContent>().Any())
         {
             if (IsReleaseRejectionMessage(release.AuthorName, release.Text)) return "rejected_by_release";
-            if (IsCompletionMessage(release.AuthorName, release.Text)) return "completed";
+            if (IsCompletionMessage(release.AuthorName, release.Text))
+            {
+                bool reviewApproved = false;
+                foreach (ChatMessage message in assistantMessages.TakeWhile(message => !ReferenceEquals(message, release)))
+                {
+                    if (IsDeveloper(message.AuthorName)) reviewApproved = false;
+                    if (IsReviewer(message.AuthorName) && !string.IsNullOrWhiteSpace(message.Text))
+                        reviewApproved = message.Text.Contains(ReviewApprovalMarker, StringComparison.Ordinal);
+                }
+
+                return reviewApproved ? "completed" : "review_approval_missing";
+            }
         }
 
         return conversation.Count >= settings.MaxTotalMessages ? "message_limit_reached" : null;

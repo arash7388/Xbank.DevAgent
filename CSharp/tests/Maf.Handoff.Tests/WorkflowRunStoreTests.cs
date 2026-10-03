@@ -18,6 +18,9 @@ public sealed class WorkflowRunStoreTests
             store.Create(runId, "repository_change", "{\"task\":\"fix it\"}", createdAt);
             store.UpdateStatus(runId, "running");
             store.UpdateStatus(runId, "failed", "provider unavailable");
+            store.UpdateStatus(runId, "failed", "provider unavailable");
+            Assert.Equal(new[] { "created", "running", "failed" },
+                new SqliteLlmCheckpointStore(databasePath).GetLog(runId).StatusHistory!.Select(item => item.Status));
 
             using (SqliteConnection connection = OpenReadOnly(databasePath))
             using (SqliteCommand command = connection.CreateCommand())

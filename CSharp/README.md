@@ -26,10 +26,19 @@ reasoning-effort selector. All agents default to DeepSeek `deepseek-flash` with 
 but can be configured individually. Provider credentials are entered once and reused only by agents
 assigned to that provider. Endpoints and capability metadata remain internal.
 
-Jira, reviewer, and security are optional and start disabled. Every run uses Planner to produce a
+Before starting a run, **Review & confirm** shows the full change request, repository and service
+settings, enabled and disabled agents, model selections, reasoning, guidance, token pricing, and
+selected reference and Jira attachments. Credentials appear only as configured or missing.
+Use **Edit** to return to a setup step; returning to review rebuilds the summary from the current
+values. Documents are indexed and the session starts only after **Confirm and start agent run**.
+
+Jira and security are optional and start disabled. Every run uses Planner to produce a
 repository-backed implementation contract before Developer changes the repository. When Jira is enabled,
-it supplies issue context to Planner first. Planner, Developer, and Release Manager are required. Enable the
-optional review gates only when the work's context or risk needs them. A run allows at most 25 model
+it supplies issue context to Planner first. Planner, Developer, Reviewer, and Release Manager are required.
+Reviewer independently inspects and confirms every change before release. Completion requires a
+reviewer-issued `REVIEW_APPROVED` after the latest Developer work; missing approval stops the run with
+`review_approval_missing`. Enable Security when the work's
+context or risk needs it. A run allows at most 25 model
 requests by default (`MAF_MAX_LLM_REQUESTS`), including checkpoint replays. Each agent also has a hard
 limit of 25 model turns (`MAF_MAX_AGENT_TURNS`), counting its initial request, tool rounds, continuations,
 and later activations together. These limits apply even to workflows created directly through the
@@ -50,8 +59,14 @@ restricted to the Developer handoff so repeated inspection cannot consume the gl
 At the end of every run, the activity view and session response show provider-reported input/output
 tokens for every participating agent and the run total. To calculate an estimated USD cost, enter the
 current cached-input, uncached-input, and output price per million tokens for each agent model in
-**Usage pricing**. DeepSeek rates are refreshed from the provider's pricing page for the current UTC
-price band, with published peak rates as the fallback; these values remain editable. When a rate or provider
+**Usage pricing**. DeepSeek rates are refreshed from the provider's pricing page at page load and when
+continuing from Request & references to Review & confirm for the current UTC price band; these values remain editable.
+The confirmed run uses the displayed rates without refreshing them after confirmation. The price-band schedule includes
+weekends and the official 2026 Chinese public holidays (the holiday calendar needs updating annually).
+If refresh fails, the UI warns that displayed rates may be outdated. DeepSeek cache-hit input is preserved
+from the raw API response and billed separately from uncached input. Reasoning is included in output
+tokens and is not charged twice. Runs use their starting rates, so costs remain estimates if a run crosses
+a pricing-band boundary. When a rate or provider
 usage metadata is unavailable, the workbench reports the token count without inventing a dollar amount.
 
 Completed LLM calls are checkpointed in a separate SQLite database and reused when the agent, model,
@@ -69,6 +84,23 @@ immutable, versioned input/configuration snapshot, while `workflow_runs` contain
 timestamps. Secret values (provider API keys and source-control tokens) are never written to the snapshot; only a
 boolean indicating whether each credential was configured is retained. The session ID returned by the API
 is the `workflow_runs.id`, so checkpoints and tool calls can be correlated with the recorded run.
+
+Every outbound model call is also saved in `ai_calls` before contacting the provider. Each record keeps
+the agent/model/endpoint, request and response JSON, provider response ID and finish reason, usage,
+input/cache-hit/cache-miss/output/reasoning/total token columns, configured rates, estimated cost,
+streaming mode, status, timing, and errors. Partial streamed usage survives cancellation or failure.
+`run_usage` stores cumulative run and agent totals after every call change, including completed,
+failed, cancelled, pending, and missing-usage counts. Provider cache-hit and cache-miss call counts can
+overlap: one call can contain both kinds of input. Unknown cache usage is reported separately.
+Local checkpoint replays are saved in `checkpoint_hits` and never counted as billable AI calls.
+
+`run_events` retains the full event history even when the live UI trims its event list.
+`run_status_history` records lifecycle changes, and `run_snapshots` retains the patch diff, approval,
+pull/merge request result, and session details. Archive reads work after an API restart through
+`GET /api/runs?limit=100`, `GET /api/runs/{id}`, and the existing session/log/report endpoints.
+Archived sessions are available for review; approval and cancellation still require a live session.
+The tables are added automatically on startup without replacing existing data. Older runs without
+saved token metadata retain their existing logs; their missing usage cannot be reconstructed.
 
 ## Safety model
 
@@ -119,6 +151,23 @@ Start Qdrant locally before attaching reference files:
 ```powershell
 docker compose -f docker-compose.qdrant.yml up -d
 ```
+
+When selecting a Jira task, the first five supported attachments are checked by default. Uncheck individual files
+or choose **Exclude all** before using the task. Changes to checkboxes on the selected task take effect
+immediately. Selected files are automatically downloaded and their extracted text is sent to the LLM
+before the workflow starts, even if the Jira agent is disabled. Excluded files cannot be read by the
+workflow's Jira tools. Jira attachment loading supports text/source files, DOCX, and text-based PDF,
+up to 5 MB per file and 5 selected files. Automatic context includes up to 12,000 characters per file
+and 48,000 characters total; the Jira agent can page through the rest of selected files. Loading
+failures and truncation are reported in the model context. Images and scanned PDFs need conversion
+to text first. API callers can supply `jiraIssueKey` and `jiraAttachmentIds` on session creation;
+an empty list excludes all attachments for that task.
+
+Repository change branches use `user/WEPOD-12345`. The task number comes from the selected
+WEPOD Jira key, or from a key such as `WEPOD-12345` or an explicit `task number 12345`
+in the manual description. A missing or ambiguous task number returns a validation error
+before cloning or running agents. Approval uses the generated branch; other branch names
+are rejected.
 
 The UI accepts files or a folder containing text, Markdown, CSV, JSON, XML, YAML, HTML, source files,
 and DOCX. Local Ollama is the default embedding provider and needs no API key. Install it and pull the
@@ -175,7 +224,7 @@ and are never reused as source-control credentials. Blank UI tokens fall back to
 
 The session API accepts an `agents` object keyed by the stable names `jira`, `planner`, `developer`,
 `reviewer`, `security`, and `release_manager`. Every entry contains an independent `provider`
-definition and `apiKey`. Planner, developer, and release manager are required; Jira, reviewer, and
+definition and `apiKey`. Planner, developer, reviewer, and release manager are required; Jira and
 security are optional. For example, the planner entry is:
 
 ```json

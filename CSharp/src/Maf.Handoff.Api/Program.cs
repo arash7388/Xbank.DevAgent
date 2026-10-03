@@ -210,9 +210,11 @@ app.MapPost("/api/sessions", (CreateSessionRequest request, RepositorySessionSer
 app.MapGet("/api/sessions/{id:guid}", (Guid id, RepositorySessionService sessions) =>
     Results.Ok(sessions.Get(id)));
 
+app.MapGet("/api/runs", (IWorkflowRunStore runs, int? limit) => Results.Ok(runs.ListRuns(limit ?? 100)));
+app.MapGet("/api/runs/{id:guid}", (Guid id, IWorkflowRunStore runs) => Results.Ok(runs.GetLog(id)));
+
 app.MapGet("/api/sessions/{id:guid}/logs", (Guid id, RepositorySessionService sessions, IWorkflowRunStore runs) =>
 {
-    _ = sessions.Get(id);
     return Results.Ok(runs.GetLog(id));
 });
 

@@ -6,6 +6,21 @@ namespace Maf.Handoff.Tests;
 
 public sealed class ConversationTerminationTests
 {
+    [Fact]
+    public async Task ReleaseCompletionWithoutReviewerConfirmationFails()
+    {
+        ScriptedClient provider = new((call, options) => call < 4
+            ? Handoff(options, approveReview: false)
+            : Text(HandoffTopology.CompletionMarker));
+
+        List<RunEvent> events = await Run(provider);
+
+        Assert.Equal(4, provider.CallCount);
+        Assert.DoesNotContain(events, item => item.Type == "error");
+        Assert.Equal("review_approval_missing", Assert.Single(events, item => item.Type == "run_finished").Status);
+        Assert.DoesNotContain(events, item => item.Type == "decision" && item.Status == "completed");
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
@@ -13,20 +28,20 @@ public sealed class ConversationTerminationTests
     [InlineData(true, true)]
     public async Task ReleaseDecisionIsReportedWithWholeOrFragmentedStreamingMarkers(bool reject, bool fragment)
     {
-        ScriptedClient provider = new((call, options) => call < 3
+        ScriptedClient provider = new((call, options) => call < 4
             ? Handoff(options)
             : Text("Ready. " + (reject ? HandoffTopology.ReleaseRejectionMarker : HandoffTopology.CompletionMarker)), fragment);
 
         List<RunEvent> events = await Run(provider);
 
-        Assert.Equal(3, provider.CallCount);
+        Assert.Equal(4, provider.CallCount);
         Assert.DoesNotContain(events, item => item.Type == "error");
         Assert.Equal(reject ? "rejected_by_release" : "completed",
             Assert.Single(events, item => item.Type == "run_finished").Status);
-        Assert.Equal(new[] { (AgentNames.Planner, AgentNames.Developer), (AgentNames.Developer, AgentNames.ReleaseManager) },
+        Assert.Equal(new[] { (AgentNames.Planner, AgentNames.Developer), (AgentNames.Developer, AgentNames.Reviewer), (AgentNames.Reviewer, AgentNames.ReleaseManager) },
             events.Where(item => item.Type == "handoff").Select(item => (item.Source!, item.Target!)));
         Assert.Single(events, item => item.Type == "decision");
-        Assert.Equal(3, Assert.Single(events, item => item.Type == "usage").Usage!.LlmRequestCount);
+        Assert.Equal(4, Assert.Single(events, item => item.Type == "usage").Usage!.LlmRequestCount);
     }
 
     [Fact]
@@ -34,23 +49,23 @@ public sealed class ConversationTerminationTests
     {
         ScriptedClient provider = new((_, options) => Handoff(options));
 
-        List<RunEvent> events = await Run(provider, Settings() with { MaxLlmRequests = 2 });
+        List<RunEvent> events = await Run(provider, Settings() with { MaxLlmRequests = 3 });
 
-        Assert.Equal(2, provider.CallCount);
+        Assert.Equal(3, provider.CallCount);
         Assert.DoesNotContain(events, item => item.Type == "error");
         Assert.Equal("request_limit_reached", Assert.Single(events, item => item.Type == "run_finished").Status);
-        Assert.Equal(2, Assert.Single(events, item => item.Type == "usage").Usage!.LlmRequestCount);
+        Assert.Equal(3, Assert.Single(events, item => item.Type == "usage").Usage!.LlmRequestCount);
         Assert.DoesNotContain(events, item => item.Type == "decision" && item.Status == "completed");
     }
 
     [Fact]
     public async Task ApprovalOnTheLastAllowedRequestSucceeds()
     {
-        ScriptedClient provider = new((call, options) => call < 3 ? Handoff(options) : Text(HandoffTopology.CompletionMarker));
+        ScriptedClient provider = new((call, options) => call < 4 ? Handoff(options) : Text(HandoffTopology.CompletionMarker));
 
-        List<RunEvent> events = await Run(provider, Settings() with { MaxLlmRequests = 3, MaxAgentTurns = 1 });
+        List<RunEvent> events = await Run(provider, Settings() with { MaxLlmRequests = 4, MaxAgentTurns = 1 });
 
-        Assert.Equal(3, provider.CallCount);
+        Assert.Equal(4, provider.CallCount);
         Assert.Equal("completed", Assert.Single(events, item => item.Type == "run_finished").Status);
     }
 
@@ -59,14 +74,14 @@ public sealed class ConversationTerminationTests
     {
         ScriptedClient provider = new((call, options) => call switch
         {
-            1 or 2 => Handoff(options),
-            3 => WithPrematureApproval(),
+            1 or 2 or 3 => Handoff(options),
+            4 => WithPrematureApproval(),
             _ => Text(HandoffTopology.ReleaseRejectionMarker),
         });
 
         List<RunEvent> events = await Run(provider, referenceDocuments: new SearchResult("Blocking finding."));
 
-        Assert.Equal(4, provider.CallCount);
+        Assert.Equal(5, provider.CallCount);
         Assert.Equal("rejected_by_release", Assert.Single(events, item => item.Type == "run_finished").Status);
 
         static ChatResponse WithPrematureApproval()
@@ -86,7 +101,7 @@ public sealed class ConversationTerminationTests
         ScriptedClient provider = new((call, options) => call switch
         {
             1 => Text("Inspecting requirements."),
-            2 or 3 => Handoff(options),
+            2 or 3 or 4 => Handoff(options),
             _ => Text(HandoffTopology.CompletionMarker),
         });
         HandoffWorkflowRunner runner = new(Settings(), chatClient: provider);
@@ -94,7 +109,7 @@ public sealed class ConversationTerminationTests
         List<RunEvent> events = [];
         await foreach (RunEvent item in runner.RunAsync($"Implement handling for {marker}.", timeout.Token)) events.Add(item);
 
-        Assert.Equal(4, provider.CallCount);
+        Assert.Equal(5, provider.CallCount);
         Assert.Equal("completed", Assert.Single(events, item => item.Type == "run_finished").Status);
     }
 
@@ -128,6 +143,7 @@ public sealed class ConversationTerminationTests
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
+    [InlineData(4)]
     public async Task ProviderFailureAtAnyRequiredStageReportsErrorWithoutApproval(int failingCall)
     {
         ScriptedClient provider = new((call, options) => call == failingCall
@@ -148,6 +164,7 @@ public sealed class ConversationTerminationTests
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
+    [InlineData(4)]
     public async Task CancellationReachesTheActiveProviderAndDoesNotApprove(int cancellationCall)
     {
         using CancellationTokenSource cancellation = new();
@@ -204,13 +221,13 @@ public sealed class ConversationTerminationTests
         ScriptedClient provider = new((call, options) => call switch
         {
             1 => Tool(AgentToolCatalog.SearchDocuments.Name),
-            2 or 3 => Handoff(options),
+            2 or 3 or 4 => Handoff(options),
             _ => Text(HandoffTopology.CompletionMarker),
         });
 
         List<RunEvent> events = await Run(provider, referenceDocuments: new SearchResult(marker));
 
-        Assert.Equal(4, provider.CallCount);
+        Assert.Equal(5, provider.CallCount);
         Assert.Equal("completed", Assert.Single(events, item => item.Type == "run_finished").Status);
     }
 
@@ -220,13 +237,13 @@ public sealed class ConversationTerminationTests
         ScriptedClient provider = new((call, options) => call switch
         {
             1 => Tool(AgentToolCatalog.SearchDocuments.Name),
-            2 or 3 => Handoff(options),
+            2 or 3 or 4 => Handoff(options),
             _ => Text(HandoffTopology.CompletionMarker),
         });
 
         List<RunEvent> events = await Run(provider, referenceDocuments: new SearchResult(null));
 
-        Assert.Equal(4, provider.CallCount);
+        Assert.Equal(5, provider.CallCount);
         Assert.Contains(provider.Inputs[1].SelectMany(message => message.Contents).OfType<FunctionResultContent>(),
             result => result.Exception is not null || result.Result?.ToString()?.Contains("Error", StringComparison.OrdinalIgnoreCase) is true);
         Assert.Equal("completed", Assert.Single(events, item => item.Type == "run_finished").Status);
@@ -247,7 +264,13 @@ public sealed class ConversationTerminationTests
     }
 
     private static ChatResponse Text(string text) => new(new ChatMessage(ChatRole.Assistant, text));
-    private static ChatResponse Handoff(ChatOptions? options) => Tool(Assert.Single(options!.Tools!, tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal)).Name);
+    private static ChatResponse Handoff(ChatOptions? options, bool approveReview = true)
+    {
+        ChatResponse response = Tool(options!.Tools!.Last(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal)).Name);
+        if (approveReview && options.Instructions?.Contains("You are an independent senior code reviewer.", StringComparison.Ordinal) is true)
+            response.Messages[0].Contents.Insert(0, new TextContent(HandoffTopology.ReviewApprovalMarker));
+        return response;
+    }
     private static ChatResponse Tool(string name) => new(new ChatMessage(ChatRole.Assistant,
         [new FunctionCallContent(Guid.NewGuid().ToString("N"), name,
             name == AgentToolCatalog.SearchDocuments.Name
@@ -285,7 +308,7 @@ public sealed class ConversationTerminationTests
             cancellationToken.ThrowIfCancellationRequested();
             foreach (ChatResponseUpdate update in response.ToChatResponseUpdates())
             {
-                if (fragment && update.Text.Length > 1)
+                if (fragment && update.Text.Length > 1 && !update.Contents.OfType<FunctionCallContent>().Any())
                 {
                     foreach (char character in update.Text)
                     {

@@ -9,9 +9,9 @@ public sealed class AgentConversationScenarioTests
 {
     public static IEnumerable<object[]> GateScenarios()
     {
-        // A gate is absent, approves immediately, or returns one blocking finding before approval.
+        // Reviewer always runs; Security may be absent. Enabled gates approve or request remediation.
         foreach (bool jira in new[] { false, true })
-        foreach (int reviewer in new[] { 0, 1, 2 })
+        foreach (int reviewer in new[] { 1, 2 })
         foreach (int security in new[] { 0, 1, 2 })
         foreach (bool releaseRejects in new[] { false, true })
         {
@@ -134,7 +134,7 @@ public sealed class AgentConversationScenarioTests
                     message.Contents.OfType<FunctionResultContent>().Any(result =>
                         result.Result?.ToString()?.Contains("tool-evidence-42", StringComparison.Ordinal) is true));
             }
-            return Handoff(target, "evidence consumed");
+            return Handoff(target, name == AgentNames.Reviewer ? "REVIEW_APPROVED evidence consumed" : "evidence consumed");
         }));
 
         ChatMessage[] transcript = await Run(clients, referenceDocuments: search);
@@ -157,8 +157,8 @@ public sealed class AgentConversationScenarioTests
         int gateCalls = 0;
         Dictionary<string, IChatClient> clients = new[]
         {
-            AgentNames.Planner, AgentNames.Developer, gate, AgentNames.ReleaseManager,
-        }.ToDictionary(name => name, name => (IChatClient)new ScriptedClient((messages, options) =>
+            AgentNames.Planner, AgentNames.Developer, AgentNames.Reviewer, gate, AgentNames.ReleaseManager,
+        }.Distinct().ToDictionary(name => name, name => (IChatClient)new ScriptedClient((messages, options) =>
         {
             actual.Add(name);
             if (name == AgentNames.ReleaseManager) return Text(HandoffTopology.CompletionMarker);
@@ -174,12 +174,14 @@ public sealed class AgentConversationScenarioTests
             {
                 Assert.Contains(messages, message => message.Text.Contains("choose exactly one", StringComparison.Ordinal));
             }
-            return Handoff(handoffs[^1], "gate approved after reconsideration");
+            return Handoff(handoffs[^1], name == AgentNames.Reviewer ? "REVIEW_APPROVED gate approved after reconsideration" : "gate approved after reconsideration");
         }));
 
         ChatMessage[] transcript = await Run(clients);
 
-        Assert.Equal(new[] { AgentNames.Planner, AgentNames.Developer, gate, gate, AgentNames.ReleaseManager }, actual);
+        Assert.Equal(new[] { AgentNames.Planner, AgentNames.Developer, AgentNames.Reviewer }
+            .Concat(gate == AgentNames.Reviewer ? new[] { gate } : new[] { gate, gate })
+            .Append(AgentNames.ReleaseManager), actual);
         Assert.Contains(transcript, message => HandoffTopology.IsCompletionMessage(message.AuthorName, message.Text));
     }
 
@@ -197,7 +199,7 @@ public sealed class AgentConversationScenarioTests
                     releaseCalls++;
                     return Text(HandoffTopology.CompletionMarker);
                 }
-                return Handoff(Assert.Single(Handoffs(options)), "Continue the requested change.");
+                return Handoff(Handoffs(options)[^1], name == AgentNames.Reviewer ? "REVIEW_APPROVED" : "Continue the requested change.");
             }));
 
         ChatMessage[] transcript = await Run(clients, task: $"requested-change-42: remove the literal {marker} from documentation.");
@@ -219,7 +221,7 @@ public sealed class AgentConversationScenarioTests
             name => name, name => (IChatClient)new ScriptedClient((messages, options) =>
             {
                 if (name == AgentNames.ReleaseManager) return Text(HandoffTopology.CompletionMarker);
-                AITool handoff = Assert.Single(Handoffs(options));
+                AITool handoff = Handoffs(options)[^1];
                 if (name == AgentNames.Jira)
                 {
                     Assert.Equal(5, options!.Tools!.Count);
@@ -248,7 +250,7 @@ public sealed class AgentConversationScenarioTests
                 {
                     Assert.Contains(messages, message => message.Text.Contains(expectedEvidence, StringComparison.Ordinal));
                 }
-                return Handoff(handoff, "implementation-contract-42");
+                return Handoff(handoff, name == AgentNames.Reviewer ? "REVIEW_APPROVED" : "implementation-contract-42");
             }));
 
         ChatMessage[] transcript = await Run(clients, jira: jira);
@@ -267,6 +269,7 @@ public sealed class AgentConversationScenarioTests
             name => (IChatClient)new ScriptedClient((messages, options) =>
             {
                 if (name == AgentNames.ReleaseManager) return Text(HandoffTopology.CompletionMarker);
+                if (name == AgentNames.Reviewer) return Handoff(Handoffs(options)[^1], "REVIEW_APPROVED");
                 if (name == AgentNames.Developer)
                 {
                     Assert.Contains(messages, message => message.Text.Contains("implementation-contract-42", StringComparison.Ordinal));
@@ -290,14 +293,11 @@ public sealed class AgentConversationScenarioTests
         Assert.Contains(transcript, message => HandoffTopology.IsCompletionMessage(message.AuthorName, message.Text));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task RepeatedSecurityReturnsStopAtGlobalRequestLimit(bool reviewerEnabled)
+    [Fact]
+    public async Task RepeatedSecurityReturnsStopAtGlobalRequestLimit()
     {
         WorkflowSettings settings = new("https://example.test", "scripted-model", "test-key");
-        string[] names = [.. AgentNames.Required, AgentNames.Security,
-            .. reviewerEnabled ? new[] { AgentNames.Reviewer } : Array.Empty<string>()];
+        string[] names = [.. AgentNames.Required, AgentNames.Security];
         TokenUsageCollector collector = new(names.ToDictionary(name => name, _ => settings), maxLlmRequests: 8);
         int releaseCalls = 0;
         Dictionary<string, IChatClient> clients = names.ToDictionary(name => name,
@@ -332,7 +332,7 @@ public sealed class AgentConversationScenarioTests
     public async Task FactoryEnforcesRequestBudgetWithoutRunnerOrTelemetry(int limit)
     {
         int calls = 0;
-        string[] names = [.. AgentNames.Required, AgentNames.Reviewer];
+        string[] names = [.. AgentNames.Required];
         Dictionary<string, IChatClient> clients = names.ToDictionary(name => name,
             name => (IChatClient)new ScriptedClient((_, options) =>
             {
@@ -383,7 +383,7 @@ public sealed class AgentConversationScenarioTests
     public async Task AgentTurnBudgetPersistsAcrossReviewerHandoffs()
     {
         int developerCalls = 0;
-        string[] names = [.. AgentNames.Required, AgentNames.Reviewer];
+        string[] names = [.. AgentNames.Required];
         Dictionary<string, IChatClient> clients = names.ToDictionary(name => name,
             name => (IChatClient)new ScriptedClient((_, options) =>
             {

@@ -46,11 +46,11 @@ public static class AgentNames
     public static IReadOnlyList<string> All { get; } =
         [Jira, Planner, Developer, Reviewer, Security, ReleaseManager];
 
-    // Planner defines the implementation contract, Developer is the only role allowed to change
-    // the repository, and ReleaseManager is the terminal approval gate.
+    // Planner defines the contract, Developer changes the repository, Reviewer independently
+    // confirms the changes, and ReleaseManager is the terminal approval gate.
     public static IReadOnlyList<string> Required { get; } =
-        [Planner, Developer, ReleaseManager];
+        [Planner, Developer, Reviewer, ReleaseManager];
 
     public static IReadOnlyList<string> Optional { get; } =
-        [Jira, Reviewer, Security];
+        [Jira, Security];
 }

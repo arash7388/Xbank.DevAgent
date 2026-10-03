@@ -6,6 +6,59 @@ namespace Maf.Handoff.Tests;
 public sealed class HandoffTopologyTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MissingOrWithdrawnReviewerApprovalCannotComplete(bool previouslyApproved)
+    {
+        List<ChatMessage> transcript = [];
+        if (previouslyApproved)
+            transcript.Add(new(ChatRole.Assistant, HandoffTopology.ReviewApprovalMarker) { AuthorName = AgentNames.Reviewer });
+        transcript.Add(new(ChatRole.Assistant, "Blocking correctness issue") { AuthorName = AgentNames.Reviewer });
+        transcript.Add(new(ChatRole.Assistant, HandoffTopology.CompletionMarker) { AuthorName = AgentNames.ReleaseManager });
+
+        Assert.Equal("review_approval_missing",
+            HandoffTopology.GetTerminationStatus(transcript, new("https://example.test", "model", "key")));
+    }
+
+    [Theory]
+    [InlineData("reviewer", "assistant", true)]
+    [InlineData("software-delivery-reviewer", "assistant", true)]
+    [InlineData("developer", "assistant", false)]
+    [InlineData("release_manager", "assistant", false)]
+    [InlineData("reviewer", "tool", false)]
+    [InlineData("reviewer", "user", false)]
+    public void CompletionRequiresIndependentReviewerApproval(string author, string role, bool approved)
+    {
+        ChatMessage[] transcript =
+        [
+            new(ChatRole.Assistant, "Implemented") { AuthorName = AgentNames.Developer },
+            new(new ChatRole(role), HandoffTopology.ReviewApprovalMarker) { AuthorName = author },
+            new(ChatRole.Assistant, HandoffTopology.CompletionMarker) { AuthorName = AgentNames.ReleaseManager },
+        ];
+
+        Assert.Equal(approved ? "completed" : "review_approval_missing",
+            HandoffTopology.GetTerminationStatus(transcript, new("https://example.test", "model", "key")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DeveloperRemediationRequiresFreshReviewerApproval(bool reviewedAgain)
+    {
+        List<ChatMessage> transcript =
+        [
+            new(ChatRole.Assistant, HandoffTopology.ReviewApprovalMarker) { AuthorName = AgentNames.Reviewer },
+            new(ChatRole.Assistant, "Remediated security finding") { AuthorName = AgentNames.Developer },
+        ];
+        if (reviewedAgain)
+            transcript.Add(new(ChatRole.Assistant, HandoffTopology.ReviewApprovalMarker) { AuthorName = AgentNames.Reviewer });
+        transcript.Add(new(ChatRole.Assistant, HandoffTopology.CompletionMarker) { AuthorName = AgentNames.ReleaseManager });
+
+        Assert.Equal(reviewedAgain ? "completed" : "review_approval_missing",
+            HandoffTopology.GetTerminationStatus(transcript, new("https://example.test", "model", "key")));
+    }
+
+    [Theory]
     [InlineData(HandoffTopology.RequestLimitMarker, "request_limit_reached")]
     [InlineData(HandoffTopology.AgentTurnLimitMarker, "agent_turn_limit_reached")]
     [InlineData(HandoffTopology.ReviewerRemediationLimitMarker, "reviewer_remediation_limit_reached")]

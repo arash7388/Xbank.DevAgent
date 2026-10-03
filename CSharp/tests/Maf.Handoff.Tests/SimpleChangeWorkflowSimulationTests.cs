@@ -54,7 +54,7 @@ public sealed class SimpleChangeWorkflowSimulationTests
     }
 
     [Fact]
-    public async Task OneLineChangeUsesSevenCallsAcrossThreeRequiredAgentsAsync()
+    public async Task OneLineChangeUsesNineCallsAcrossFourRequiredAgentsAsync()
     {
         string root = Path.Combine(Path.GetTempPath(), "maf-simple-change-simulation", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -89,6 +89,18 @@ public sealed class SimpleChangeWorkflowSimulationTests
                 _ => Handoff(options, "developer-handoff"),
             });
             int releaseStep = 0;
+            int reviewerStep = 0;
+            ScriptedClient reviewer = new(options =>
+            {
+                if (reviewerStep++ == 0)
+                    return Tool("reviewer-diff", AgentToolCatalog.GetRepositoryDiff.Name, new());
+                string handoff = options!.Tools!.Last(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal)).Name;
+                return new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                [
+                    new TextContent("REVIEW_APPROVED: inspected the RetryLimit change from 3 to 4."),
+                    new FunctionCallContent("reviewer-handoff", handoff, new Dictionary<string, object?>()),
+                ]));
+            });
             ScriptedClient release = new(options => releaseStep++ == 0
                 ? Tool("release-diff", AgentToolCatalog.GetRepositoryDiff.Name, new())
                 : new ChatResponse(new ChatMessage(ChatRole.Assistant, "Ready. WORKFLOW_COMPLETE")));
@@ -103,6 +115,7 @@ public sealed class SimpleChangeWorkflowSimulationTests
             {
                 [AgentNames.Planner] = planner,
                 [AgentNames.Developer] = developer,
+                [AgentNames.Reviewer] = reviewer,
                 [AgentNames.ReleaseManager] = release,
             };
             Dictionary<string, WorkflowSettings> settingsByAgent = clients.Keys.ToDictionary(
@@ -117,13 +130,20 @@ public sealed class SimpleChangeWorkflowSimulationTests
                 "Change RetryLimit from 3 to 4.",
                 cancellationToken: timeout.Token);
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
-            await foreach (WorkflowEvent _ in run.WatchStreamAsync(timeout.Token))
+            ChatMessage[] transcript = [];
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(timeout.Token))
             {
+                Assert.IsNotType<WorkflowErrorEvent>(workflowEvent);
+                Assert.IsNotType<ExecutorFailedEvent>(workflowEvent);
+                if (workflowEvent is WorkflowOutputEvent output)
+                    transcript = [.. output.As<IEnumerable<ChatMessage>>() ?? []];
             }
 
             Assert.Equal(1, planner.CallCount);
             Assert.Equal(4, developer.CallCount);
+            Assert.Equal(2, reviewer.CallCount);
             Assert.Equal(2, release.CallCount);
+            Assert.Equal("completed", HandoffTopology.GetTerminationStatus(transcript, settings));
             Assert.Contains("RetryLimit = 4", workspace.GetDiff(), StringComparison.Ordinal);
         }
         finally

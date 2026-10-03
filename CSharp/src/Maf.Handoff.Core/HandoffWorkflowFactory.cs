@@ -59,7 +59,6 @@ public static class HandoffWorkflowFactory
 
     private static WorkflowBundle Create(AgentTeam team, WorkflowSettings settings)
     {
-        AIAgent nextAfterDeveloper = team.Reviewer ?? team.Security ?? team.ReleaseManager;
         AIAgent nextAfterReviewer = team.Security ?? team.ReleaseManager;
 
         var builder = AgentWorkflowBuilder.CreateHandoffBuilderWith(team.StartAgent);
@@ -73,16 +72,13 @@ public static class HandoffWorkflowFactory
                 "Route to the planner after the requested Jira context has been retrieved and summarized.");
         }
 
-        builder.WithHandoff(team.Developer, nextAfterDeveloper,
-            "Route after implementation and exact diff verification to the next enabled quality or release gate.");
+        builder.WithHandoff(team.Developer, team.Reviewer,
+            "Route after implementation and exact diff verification to the mandatory independent reviewer.");
 
-        if (team.Reviewer is not null)
-        {
-            builder.WithHandoff(team.Reviewer, team.Developer,
-                "Use only when a concrete blocking correctness issue in the proposed diff requires implementation changes.");
-            builder.WithHandoff(team.Reviewer, nextAfterReviewer,
-                "Use when correctness review passes and REVIEW_APPROVED has been recorded.");
-        }
+        builder.WithHandoff(team.Reviewer, team.Developer,
+            "Use only when a concrete blocking correctness issue in the proposed diff requires implementation changes.");
+        builder.WithHandoff(team.Reviewer, nextAfterReviewer,
+            "Use when correctness review passes and REVIEW_APPROVED has been recorded.");
 
         if (team.Security is not null)
         {

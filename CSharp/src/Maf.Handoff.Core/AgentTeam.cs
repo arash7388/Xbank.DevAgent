@@ -6,7 +6,7 @@ public sealed record AgentTeam(
     AIAgent? Jira,
     AIAgent Planner,
     AIAgent Developer,
-    AIAgent? Reviewer,
+    AIAgent Reviewer,
     AIAgent? Security,
     AIAgent ReleaseManager)
 {

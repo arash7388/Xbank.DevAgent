@@ -4,6 +4,7 @@ using DeepSeek.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using System.ClientModel;
+using System.ClientModel.Primitives;
 
 namespace Maf.Handoff.Core;
 
@@ -23,11 +24,14 @@ public static class ModelChatClientFactory
         {
             // The provider-native adapter writes TextReasoningContent back to DeepSeek's
             // reasoning_content field on every assistant tool-call turn.
-            IChatClient deepSeekClient = new DeepSeekClient(settings.ApiKey)
+            DeepSeekUsageCapture usageCapture = new() { InnerHandler = new HttpClientHandler() };
+            HttpClient httpClient = new(usageCapture);
+            IChatClient deepSeekClient = new DeepSeekClient(settings.ApiKey, new DeepSeekClientOptions
+                { Transport = new HttpClientPipelineTransport(httpClient) })
                 .GetChatClient(settings.Model)
                 .AsIChatClient();
             return new DeepSeekToolHistoryChatClient(
-                new DeepSeekUsagePreservingChatClient(deepSeekClient));
+                new DeepSeekUsagePreservingChatClient(deepSeekClient, usageCapture, httpClient));
         }
 
         OpenAIClient openAiClient = new(
