@@ -29,9 +29,21 @@ assigned to that provider. Endpoints and capability metadata remain internal.
 Jira, reviewer, and security are optional and start disabled. Every run uses Planner to produce a
 repository-backed implementation contract before Developer changes the repository. When Jira is enabled,
 it supplies issue context to Planner first. Planner, Developer, and Release Manager are required. Enable the
-optional review gates only when the work's context or risk needs them. A run stops after 25 actual
-provider requests by default (`MAF_MAX_LLM_REQUESTS`) so tool or
-remediation loops cannot consume the much larger transcript-message allowance unchecked.
+optional review gates only when the work's context or risk needs them. A run allows at most 25 model
+requests by default (`MAF_MAX_LLM_REQUESTS`), including checkpoint replays. Each agent also has a hard
+limit of 25 model turns (`MAF_MAX_AGENT_TURNS`), counting its initial request, tool rounds, continuations,
+and later activations together. These limits apply even to workflows created directly through the
+factory. The next request stops with `request_limit_reached` or `agent_turn_limit_reached` before
+calling the provider or replaying a checkpoint. Provider usage totals still exclude checkpoint hits.
+Agents retain tool evidence throughout their current turn and must read tool results before handing off.
+Mixed tool/handoff responses execute the ordinary tools first and ask the model to reconsider the handoff
+with those results. Reviewer returns are counted from assistant messages only, so tool-result authors cannot
+hide remediation cycles. Reviews should group all concrete blockers and verify prior fixes without expanding scope.
+A shared activation guard also enforces `MAF_MAX_REVIEWER_REMEDIATION_CYCLES` (default five) before
+another developer provider call, including handoff-only turns that bypass transcript termination checks.
+Exhausting this budget stops the run with `reviewer_remediation_limit_reached`, without approving the patch.
+Only a completed, tool-free Release Manager response can approve the run. Limit stops and rejection
+take precedence over conflicting approval markers; user and tool messages cannot terminate a run.
 When Planner is enabled, it receives at most three ordinary repository-tool rounds; its next request is
 restricted to the Developer handoff so repeated inspection cannot consume the global request budget.
 
@@ -198,6 +210,9 @@ A real request must also supply developer and release-manager entries.
 - `Maf.Handoff.Tests`: configuration, topology, and repository-boundary tests
 
 See [the architecture](docs/architecture.md).
+
+See [agent conversation verification](docs/agent-conversation-verification.md) for the tested
+handoff, remediation, failure, and termination scenarios.
 
 ## Provider definition API
 

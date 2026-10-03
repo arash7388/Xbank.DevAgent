@@ -99,15 +99,7 @@ public static class HandoffWorkflowFactory
             .EmitAgentResponseEvents(true)
             .EmitAgentResponseUpdateEvents(true)
             .WithTerminationCondition(conversation =>
-                conversation.Count >= settings.MaxTotalMessages ||
-                HandoffTopology.HasExceededReviewerRemediationCycles(
-                    conversation.Select(message => message.AuthorName),
-                    settings.MaxReviewerRemediationCycles) ||
-                conversation.Any(message => HandoffTopology.IsRequestLimitMessage(message.Text)) ||
-                conversation.Any(message =>
-                    HandoffTopology.IsReleaseRejectionMessage(message.AuthorName, message.Text)) ||
-                conversation.Any(message =>
-                    HandoffTopology.IsCompletionMessage(message.AuthorName, message.Text)))
+                HandoffTopology.GetTerminationStatus(conversation, settings) is not null)
             .Build();
 
         return new(workflow, team);

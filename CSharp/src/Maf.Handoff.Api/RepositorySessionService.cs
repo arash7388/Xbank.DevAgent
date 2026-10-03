@@ -232,9 +232,11 @@ public sealed class RepositorySessionService(
                     "message_limit_reached" =>
                         "The workflow reached its conversation safety limit before release approval.",
                     "reviewer_remediation_limit_reached" =>
-                        "The reviewer requested more than five developer remediation cycles. The run stopped to prevent a review loop; inspect the logged findings and start a new run with a clarified request or prompt.",
+                        "The reviewer exceeded the configured developer remediation limit. Inspect the logged findings and start a new run with a clarified request or prompt.",
                     "request_limit_reached" =>
-                        "The workflow reached its AI request limit before release approval. Review the per-agent request totals and final activity; no exception was thrown.",
+                        "The workflow reached its model request limit before release approval, including checkpoint replays. Review the final agent activity.",
+                    "agent_turn_limit_reached" =>
+                        "An agent reached its model turn limit before release approval, including tool rounds and repeated activations. Review the final agent activity.",
                     "rejected_by_release" =>
                         "The release manager rejected the patch. Review its concrete blocking finding before starting a corrected run.",
                     "input_required" =>

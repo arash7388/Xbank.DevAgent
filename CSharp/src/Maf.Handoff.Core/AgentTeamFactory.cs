@@ -35,6 +35,8 @@ public static class AgentTeamFactory
         string? workflowId = null,
         IJiraIssueSearch? jira = null)
     {
+        WorkflowSettings workflowSettings = Get(settingsByAgent, AgentNames.Developer);
+        workflowSettings.Validate();
         bool codeGraphAvailable = workspace?.ContainsCSharpSource() is true && codeGraphTools is not null;
         if (codeGraphAvailable)
         {
@@ -61,6 +63,16 @@ public static class AgentTeamFactory
                 Get(effectiveClients, AgentNames.Developer),
                 () => !string.IsNullOrWhiteSpace(workspace.GetDiff()));
         }
+
+        ReviewerRemediationBudget remediationBudget = new(
+            workflowSettings.MaxReviewerRemediationCycles);
+        WorkflowExecutionBudget executionBudget = new(workflowSettings);
+        effectiveClients = effectiveClients.ToDictionary(
+            pair => pair.Key,
+            pair => (IChatClient)new ReviewerRemediationGuardChatClient(
+                new WorkflowExecutionGuardChatClient(pair.Value, pair.Key, executionBudget),
+                pair.Key, remediationBudget),
+            StringComparer.Ordinal);
 
         return new(
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Read-only Jira issue context retrieval.", AgentPrompts.Jira,

@@ -4,6 +4,19 @@ namespace Maf.Handoff.Tests;
 
 public sealed class WorkflowSettingsTests
 {
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    [InlineData(-1, 1)]
+    [InlineData(1, -1)]
+    public void RejectsInvalidProgrammaticLimits(int messages, int turns)
+    {
+        WorkflowSettings settings = new("https://example.test", "model", "key",
+            MaxTotalMessages: messages, MaxAgentTurns: turns);
+
+        Assert.Throws<ConfigurationException>(settings.Validate);
+    }
+
     [Fact]
     public void DefaultsToFiveReviewerRemediationCycles()
     {

@@ -5,9 +5,9 @@ using Microsoft.Extensions.AI;
 namespace Maf.Handoff.Core;
 
 /// <summary>
-/// Removes ordinary tool call/result pairs after a later assistant response has already consumed
-/// their results. The workflow keeps its complete transcript; only the history sent to the model
-/// is projected. The newest tool results remain available until the model responds to them.
+/// Removes ordinary tool call/result pairs from completed handoff turns. Keep all evidence in
+/// the current turn: requesting another tool does not mean earlier results can be forgotten.
+/// The workflow keeps its complete transcript; only the history sent to the model is projected.
 /// </summary>
 internal sealed class CompletedToolCycleFilteringChatClient(IChatClient innerClient) : IChatClient
 {
@@ -51,11 +51,11 @@ internal sealed class CompletedToolCycleFilteringChatClient(IChatClient innerCli
         }
 
         HashSet<string> consumedCallIds = new(StringComparer.Ordinal);
-        bool hasLaterAssistantResponse = false;
+        bool hasLaterHandoff = false;
         for (int index = history.Length - 1; index >= 0; index--)
         {
             ChatMessage message = history[index];
-            if (hasLaterAssistantResponse)
+            if (hasLaterHandoff)
             {
                 foreach (FunctionResultContent result in message.Contents.OfType<FunctionResultContent>())
                 {
@@ -66,9 +66,10 @@ internal sealed class CompletedToolCycleFilteringChatClient(IChatClient innerCli
                 }
             }
 
-            if (message.Role == ChatRole.Assistant)
+            if (message.Role == ChatRole.Assistant &&
+                message.Contents.OfType<FunctionCallContent>().Any(IsHandoff))
             {
-                hasLaterAssistantResponse = true;
+                hasLaterHandoff = true;
             }
         }
 

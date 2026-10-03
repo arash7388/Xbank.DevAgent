@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Text;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -132,7 +131,6 @@ public sealed class HandoffWorkflowRunner
         }
         string status = "stopped_without_release_approval";
         string? activeAgent = null;
-        StringBuilder releaseManagerOutput = new();
         HashSet<string> observedToolCalls = new(StringComparer.Ordinal);
 
         yield return RunEvent.Trace(null, $"Workflow started. Waiting for the {bundle.Team.StartAgent.Name} agent.");
@@ -141,118 +139,106 @@ public sealed class HandoffWorkflowRunner
             .RunStreamingAsync(bundle.Workflow, task, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
-        // Handoff agents cache incoming messages and do not execute until the workflow receives
-        // an explicit turn token. Without it, only HandoffStart runs and the workflow exits with
-        // no agent response or handoff.
-        await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
+        // Cancelling WatchStreamAsync only stops event observation, not workflow execution.
+        TaskCompletionSource<bool> cancellationRequest = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationTokenRegistration cancellationRegistration = cancellationToken.Register(
+            () => cancellationRequest.TrySetResult(true));
+        Task cancellationTask = CancelRunOnRequestAsync(run, cancellationRequest.Task);
 
-        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            switch (workflowEvent)
+
+            // Handoff agents cache incoming messages and do not execute until the workflow receives
+            // an explicit turn token. Without it, only HandoffStart runs and the workflow exits with
+            // no agent response or handoff.
+            await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
+
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(cancellationToken).ConfigureAwait(false))
             {
-                case AgentResponseUpdateEvent update:
-                    string? nextAgent = update.Update.AuthorName;
-                    if (activeAgent is not null && nextAgent is not null &&
-                        !string.Equals(activeAgent, nextAgent, StringComparison.Ordinal))
-                    {
-                        yield return RunEvent.Handoff(activeAgent, nextAgent);
-                    }
-
-                    activeAgent = nextAgent ?? activeAgent;
-                    foreach (FunctionCallContent call in update.Update.Contents.OfType<FunctionCallContent>())
-                    {
-                        string identity = call.CallId ?? call.Name;
-                        if (observedToolCalls.Add(identity))
+                switch (workflowEvent)
+                {
+                    case AgentResponseUpdateEvent update:
+                        string? nextAgent = update.Update.AuthorName;
+                        if (activeAgent is not null && nextAgent is not null &&
+                            !string.Equals(activeAgent, nextAgent, StringComparison.Ordinal))
                         {
-                            yield return RunEvent.Tool(activeAgent, $"Requested tool: {call.Name} (call {identity}).");
+                            yield return RunEvent.Handoff(activeAgent, nextAgent);
                         }
-                    }
 
-                    if (!string.IsNullOrEmpty(update.Update.Text))
-                    {
-                        if (HandoffTopology.IsReleaseManager(activeAgent))
+                        activeAgent = nextAgent ?? activeAgent;
+                        foreach (FunctionCallContent call in update.Update.Contents.OfType<FunctionCallContent>())
                         {
-                            releaseManagerOutput.Append(update.Update.Text);
-                            if (releaseManagerOutput.ToString().Contains(
-                                HandoffTopology.CompletionMarker,
-                                StringComparison.Ordinal))
+                            string identity = call.CallId ?? call.Name;
+                            if (observedToolCalls.Add(identity))
                             {
-                                status = "completed";
+                                yield return RunEvent.Tool(activeAgent, $"Requested tool: {call.Name} (call {identity}).");
                             }
                         }
 
-                        yield return RunEvent.Delta(nextAgent, update.Update.Text);
-                    }
+                        if (!string.IsNullOrEmpty(update.Update.Text))
+                        {
+                            yield return RunEvent.Delta(nextAgent, update.Update.Text);
+                        }
 
-                    break;
+                        break;
 
-                case AgentResponseEvent response:
-                    string? responseAgent = response.Response.Messages.LastOrDefault()?.AuthorName
-                        ?? response.Response.AgentId
-                        ?? activeAgent;
-                    activeAgent = responseAgent ?? activeAgent;
-                    string finishReason = response.Response.FinishReason?.ToString() ?? "not reported";
-                    int messageCount = response.Response.Messages.Count;
-                    string contentKinds = string.Join(", ", response.Response.Messages
-                        .SelectMany(message => message.Contents)
-                        .Select(content => content.GetType().Name)
-                        .Distinct(StringComparer.Ordinal));
-                    yield return RunEvent.Trace(
-                        responseAgent,
-                        $"Response completed. Finish reason: {finishReason}; messages: {messageCount}; content: {(contentKinds.Length == 0 ? "none" : contentKinds)}.",
-                        "response");
-                    break;
-
-                case RequestInfoEvent:
-                    status = "input_required";
-                    yield return RunEvent.Trace(activeAgent, "Workflow requested external input and paused autonomous execution.", "input");
-                    break;
-
-                case WorkflowOutputEvent output:
-                    IEnumerable<ChatMessage>? messages = output.As<IEnumerable<ChatMessage>>();
-                    if (messages is not null)
-                    {
-                        ChatMessage[] transcript = [.. messages];
-                        bool completed = transcript.Any(message =>
-                            HandoffTopology.IsCompletionMessage(message.AuthorName, message.Text));
-                        bool requestLimitReached = transcript.Any(message =>
-                            HandoffTopology.IsRequestLimitMessage(message.Text));
-                        bool releaseRejected = transcript.Any(message =>
-                            HandoffTopology.IsReleaseRejectionMessage(message.AuthorName, message.Text));
-                        status = completed
-                            ? "completed"
-                            : requestLimitReached
-                                ? "request_limit_reached"
-                                : releaseRejected
-                                    ? "rejected_by_release"
-                                    : HandoffTopology.HasExceededReviewerRemediationCycles(
-                                        transcript.Select(message => message.AuthorName),
-                                        workflowSettings.MaxReviewerRemediationCycles)
-                                        ? "reviewer_remediation_limit_reached"
-                                        : transcript.Length >= workflowSettings.MaxTotalMessages
-                                            ? "message_limit_reached"
-                                            : status;
+                    case AgentResponseEvent response:
+                        string? responseAgent = response.Response.Messages.LastOrDefault()?.AuthorName
+                            ?? response.Response.AgentId
+                            ?? activeAgent;
+                        activeAgent = responseAgent ?? activeAgent;
+                        string finishReason = response.Response.FinishReason?.ToString() ?? "not reported";
+                        int messageCount = response.Response.Messages.Count;
+                        string contentKinds = string.Join(", ", response.Response.Messages
+                            .SelectMany(message => message.Contents)
+                            .Select(content => content.GetType().Name)
+                            .Distinct(StringComparer.Ordinal));
                         yield return RunEvent.Trace(
-                            activeAgent,
-                            $"Workflow output received with {transcript.Length} transcript messages.",
-                            "workflow");
-                    }
+                            responseAgent,
+                            $"Response completed. Finish reason: {finishReason}; messages: {messageCount}; content: {(contentKinds.Length == 0 ? "none" : contentKinds)}.",
+                            "response");
+                        break;
 
-                    break;
+                    case RequestInfoEvent:
+                        status = "input_required";
+                        yield return RunEvent.Trace(activeAgent, "Workflow requested external input and paused autonomous execution.", "input");
+                        break;
 
-                case WorkflowErrorEvent error:
-                    yield return RunEvent.TokenUsage(usageCollector.Snapshot());
-                    yield return RunEvent.Error(error.Exception?.Message ?? "The workflow failed.");
-                    yield break;
+                    case WorkflowOutputEvent output:
+                        IEnumerable<ChatMessage>? messages = output.As<IEnumerable<ChatMessage>>();
+                        if (messages is not null)
+                        {
+                            ChatMessage[] transcript = [.. messages];
+                            status = HandoffTopology.GetTerminationStatus(transcript, workflowSettings) ?? status;
+                            yield return RunEvent.Trace(
+                                activeAgent,
+                                $"Workflow output received with {transcript.Length} transcript messages.",
+                                "workflow");
+                        }
 
-                case ExecutorFailedEvent failed:
-                    string failure = failed.Data?.GetBaseException().Message ?? "No error details were provided.";
-                    yield return RunEvent.TokenUsage(usageCollector.Snapshot());
-                    yield return RunEvent.Error($"Executor '{failed.ExecutorId}' failed: {failure}");
-                    yield break;
+                        break;
+
+                    case WorkflowErrorEvent error:
+                        yield return RunEvent.TokenUsage(usageCollector.Snapshot());
+                        yield return RunEvent.Error(error.Exception?.Message ?? "The workflow failed.");
+                        yield break;
+
+                    case ExecutorFailedEvent failed:
+                        string failure = failed.Data?.GetBaseException().Message ?? "No error details were provided.";
+                        yield return RunEvent.TokenUsage(usageCollector.Snapshot());
+                        yield return RunEvent.Error($"Executor '{failed.ExecutorId}' failed: {failure}");
+                        yield break;
+                }
             }
         }
+        finally
+        {
+            await cancellationRegistration.DisposeAsync().ConfigureAwait(false);
+            cancellationRequest.TrySetResult(false);
+            await cancellationTask.ConfigureAwait(false);
+        }
 
+        cancellationToken.ThrowIfCancellationRequested();
         yield return RunEvent.TokenUsage(usageCollector.Snapshot());
         if (_checkpointStore is not null)
         {
@@ -277,6 +263,14 @@ public sealed class HandoffWorkflowRunner
                     : $"Workflow stopped with status: {status}.",
             status);
         yield return RunEvent.Finished(status);
+    }
+
+    private static async Task CancelRunOnRequestAsync(StreamingRun run, Task<bool> cancellationRequest)
+    {
+        if (await cancellationRequest.ConfigureAwait(false))
+        {
+            await run.CancelRunAsync().ConfigureAwait(false);
+        }
     }
 
     private IChatClient WithTelemetryAndCheckpoints(

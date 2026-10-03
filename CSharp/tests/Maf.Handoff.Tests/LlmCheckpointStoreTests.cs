@@ -12,6 +12,50 @@ public sealed class LlmCheckpointStoreTests
         "checkpoint-test-model",
         "not-stored");
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecutionBudgetCountsReplaysWithoutChargingProviderUsage(bool streaming)
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            WorkflowSettings settings = Settings with { MaxLlmRequests = 2 };
+            SqliteLlmCheckpointStore store = new(Path.Combine(directory, "checkpoints.db"));
+            RecordingClient provider = new();
+            TokenUsageCollector usage = new(new Dictionary<string, WorkflowSettings> { [AgentNames.Developer] = settings });
+            LlmCheckpointMetrics metrics = new();
+            CheckpointingChatClient checkpointed = new(new UsageTrackingChatClient(provider, AgentNames.Developer, usage),
+                store, AgentNames.Developer, settings, metrics, "budget-test");
+            WorkflowExecutionGuardChatClient client = new(checkpointed, AgentNames.Developer, new(settings));
+            ChatMessage[] input = [new(ChatRole.User, "Implement the requested change.")];
+
+            async Task<ChatResponse> Request() => streaming
+                ? (await CollectAsync(client.GetStreamingResponseAsync(input))).ToChatResponse()
+                : await client.GetResponseAsync(input);
+
+            await Request();
+            await Request();
+            ChatResponse stopped = await Request();
+
+            Assert.Equal(1, provider.CallCount);
+            Assert.Equal(1, usage.Snapshot().LlmRequestCount);
+            Assert.Equal(1, metrics.Hits);
+            Assert.True(HandoffTopology.IsRequestLimitMessage(stopped.Text));
+            Assert.Equal(1, CountCheckpoints(Path.Combine(directory, "checkpoints.db")));
+
+            // A new workflow gets a fresh budget and may reuse the same successful checkpoint.
+            WorkflowExecutionGuardChatClient restarted = new(checkpointed, AgentNames.Developer, new(settings));
+            ChatResponse replay = await restarted.GetResponseAsync(input);
+            Assert.False(HandoffTopology.IsRequestLimitMessage(replay.Text));
+            Assert.Equal(1, provider.CallCount);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task ReplaysCompletedStreamingResponseWithoutAnotherProviderCall()
     {

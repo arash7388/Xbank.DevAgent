@@ -69,6 +69,11 @@ public sealed record WorkflowSettings(
             throw new ConfigurationException("Additional agent guidance must be 50,000 characters or fewer.");
         }
 
+        if (MaxTotalMessages < 1 || MaxAgentTurns < 1)
+        {
+            throw new ConfigurationException("Maximum total messages and agent turns must be greater than zero.");
+        }
+
         if (MaxReviewerRemediationCycles < 1)
         {
             throw new ConfigurationException("Maximum reviewer remediation cycles must be greater than zero.");

@@ -10,6 +10,50 @@ namespace Maf.Handoff.Tests;
 public sealed class SimpleChangeWorkflowSimulationTests
 {
     [Fact]
+    public async Task RepeatedReviewerReturnsStopAtRemediationLimitAsync()
+    {
+        ScriptedClient planner = new(options => Handoff(options, "plan"));
+        ScriptedClient developer = new(options => Handoff(options, Guid.NewGuid().ToString()));
+        ScriptedClient reviewer = new(options => Tool(Guid.NewGuid().ToString(),
+            options!.Tools!.First(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal)).Name,
+            new()));
+        ScriptedClient release = new(_ => throw new InvalidOperationException("Unresolved work must not be approved."));
+        WorkflowSettings settings = new("https://example.test", "test-model", "test-key",
+            MaxTotalMessages: 100, MaxAgentTurns: 30)
+        {
+            MaxReviewerRemediationCycles = 1,
+        };
+        Dictionary<string, IChatClient> clients = new()
+        {
+            [AgentNames.Planner] = planner,
+            [AgentNames.Developer] = developer,
+            [AgentNames.Reviewer] = reviewer,
+            [AgentNames.ReleaseManager] = release,
+        };
+        WorkflowBundle bundle = HandoffWorkflowFactory.Create(clients,
+            clients.Keys.ToDictionary(name => name, _ => settings));
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(
+            bundle.Workflow, "Implement the change.", cancellationToken: timeout.Token);
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+        ChatMessage[] transcript = [];
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(timeout.Token))
+        {
+            Assert.IsNotType<WorkflowErrorEvent>(workflowEvent);
+            Assert.IsNotType<ExecutorFailedEvent>(workflowEvent);
+            if (workflowEvent is WorkflowOutputEvent output)
+            {
+                transcript = [.. output.As<IEnumerable<ChatMessage>>() ?? []];
+            }
+        }
+
+        Assert.Contains(transcript, message => HandoffTopology.IsReviewerRemediationLimitMessage(message.Text));
+        Assert.Equal(2, reviewer.CallCount);
+        Assert.Equal(2, developer.CallCount);
+        Assert.Equal(0, release.CallCount);
+    }
+
+    [Fact]
     public async Task OneLineChangeUsesSevenCallsAcrossThreeRequiredAgentsAsync()
     {
         string root = Path.Combine(Path.GetTempPath(), "maf-simple-change-simulation", Guid.NewGuid().ToString("N"));

@@ -6,10 +6,43 @@ namespace Maf.Handoff.Tests;
 
 public sealed class ExclusiveHandoffChatClientTests
 {
-    [Fact]
-    public async Task KeepsOrdinaryToolAndDefersHandoffAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CanAbandonStaleHandoffAfterToolFailure(bool streaming)
     {
-        SequenceChatClient inner = new(MixedResponse());
+        SequenceChatClient inner = new(MixedResponse(), new ChatResponse(new ChatMessage(
+            ChatRole.Assistant, "The edit failed; I must fix it before review.")));
+        using ExclusiveHandoffChatClient guard = new(inner);
+        await guard.GetResponseAsync([new ChatMessage(ChatRole.User, "Implement the change.")]);
+        ChatMessage result = new(ChatRole.Tool, [new FunctionResultContent("tool-1", "Tool failed")]);
+
+        ChatResponse response;
+        if (streaming)
+        {
+            List<ChatResponseUpdate> updates = [];
+            await foreach (ChatResponseUpdate update in guard.GetStreamingResponseAsync([result]))
+            {
+                updates.Add(update);
+            }
+            response = updates.ToChatResponse();
+        }
+        else
+        {
+            response = await guard.GetResponseAsync([result]);
+        }
+
+        Assert.Empty(response.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
+        Assert.Contains("edit failed", response.Text);
+        Assert.Equal(2, inner.CallCount);
+        Assert.Contains(inner.LastMessages.SelectMany(message => message.Contents),
+            content => content is FunctionResultContent { CallId: "tool-1" });
+    }
+
+    [Fact]
+    public async Task KeepsOrdinaryToolAndReconsidersHandoffAfterResultsAsync()
+    {
+        SequenceChatClient inner = new(MixedResponse(), HandoffResponse());
         using ExclusiveHandoffChatClient guard = new(inner);
 
         ChatResponse response = await guard.GetResponseAsync(
@@ -25,8 +58,8 @@ public sealed class ExclusiveHandoffChatClientTests
         FunctionCallContent handoff = Assert.Single(
             deferred.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
         Assert.Equal("handoff_to_1", handoff.Name);
-        AssertDeferredReasoning(deferred.Messages);
-        Assert.Equal(1, inner.CallCount);
+        Assert.Equal("handoff-2", handoff.CallId);
+        Assert.Equal(2, inner.CallCount);
     }
 
     [Fact]
@@ -45,9 +78,9 @@ public sealed class ExclusiveHandoffChatClientTests
     }
 
     [Fact]
-    public async Task StreamingKeepsOrdinaryToolAndDefersHandoffAsync()
+    public async Task StreamingKeepsOrdinaryToolAndReconsidersHandoffAfterResultsAsync()
     {
-        SequenceChatClient inner = new(MixedResponse());
+        SequenceChatClient inner = new(MixedResponse(), HandoffResponse());
         using ExclusiveHandoffChatClient guard = new(inner);
 
         List<ChatResponseUpdate> updates = [];
@@ -75,15 +108,36 @@ public sealed class ExclusiveHandoffChatClientTests
                 .SelectMany(message => message.Contents)
                 .OfType<FunctionCallContent>());
         Assert.Equal("handoff_to_1", handoff.Name);
-        AssertDeferredReasoning(deferred.ToChatResponse().Messages);
-        Assert.Equal(1, inner.CallCount);
+        Assert.Equal("handoff-2", handoff.CallId);
+        Assert.Equal(2, inner.CallCount);
     }
 
-    private static void AssertDeferredReasoning(IEnumerable<ChatMessage> messages)
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BlocksAmbiguousMultipleHandoffsAndPreservesReasoning(bool streaming)
     {
-        TextReasoningContent reasoning = Assert.Single(
-            messages.SelectMany(message => message.Contents).OfType<TextReasoningContent>());
-        Assert.Equal("reasoning required by DeepSeek", reasoning.Text);
+        SequenceChatClient inner = new(new ChatResponse(new ChatMessage(ChatRole.Assistant,
+        [
+            new TextReasoningContent("provider reasoning"),
+            new FunctionCallContent("return", "handoff_to_developer", new Dictionary<string, object?>()),
+            new FunctionCallContent("approve", "handoff_to_security", new Dictionary<string, object?>()),
+        ])));
+        using ExclusiveHandoffChatClient guard = new(inner);
+        ChatResponse response;
+        if (streaming)
+        {
+            List<ChatResponseUpdate> updates = [];
+            await foreach (ChatResponseUpdate update in guard.GetStreamingResponseAsync(
+                [new ChatMessage(ChatRole.User, "Review the patch.")])) updates.Add(update);
+            response = updates.ToChatResponse();
+        }
+        else response = await guard.GetResponseAsync([new ChatMessage(ChatRole.User, "Review the patch.")]);
+
+        Assert.Empty(response.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
+        Assert.Contains("exactly one", response.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(response.Messages.SelectMany(message => message.Contents).OfType<TextReasoningContent>());
+        Assert.Equal(1, inner.CallCount);
     }
 
     private static ChatResponse MixedResponse() => new(new ChatMessage(
@@ -96,13 +150,14 @@ public sealed class ExclusiveHandoffChatClientTests
 
     private static ChatResponse HandoffResponse() => new(new ChatMessage(
         ChatRole.Assistant,
-        [new FunctionCallContent("handoff-1", "handoff_to_1", new Dictionary<string, object?>())]));
+        [new FunctionCallContent("handoff-2", "handoff_to_1", new Dictionary<string, object?>())]));
 
     private sealed class SequenceChatClient(params ChatResponse[] responses) : IChatClient
     {
         private readonly Queue<ChatResponse> _responses = new(responses);
 
         public int CallCount { get; private set; }
+        public ChatMessage[] LastMessages { get; private set; } = [];
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
@@ -110,6 +165,7 @@ public sealed class ExclusiveHandoffChatClientTests
             CancellationToken cancellationToken = default)
         {
             CallCount++;
+            LastMessages = [.. messages];
             return Task.FromResult(_responses.Dequeue());
         }
 
@@ -119,6 +175,7 @@ public sealed class ExclusiveHandoffChatClientTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             CallCount++;
+            LastMessages = [.. messages];
             await Task.Yield();
             foreach (ChatResponseUpdate update in _responses.Dequeue().ToChatResponseUpdates())
             {

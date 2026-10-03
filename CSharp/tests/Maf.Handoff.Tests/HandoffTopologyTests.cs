@@ -1,9 +1,51 @@
 using Maf.Handoff.Core;
+using Microsoft.Extensions.AI;
 
 namespace Maf.Handoff.Tests;
 
 public sealed class HandoffTopologyTests
 {
+    [Theory]
+    [InlineData(HandoffTopology.RequestLimitMarker, "request_limit_reached")]
+    [InlineData(HandoffTopology.AgentTurnLimitMarker, "agent_turn_limit_reached")]
+    [InlineData(HandoffTopology.ReviewerRemediationLimitMarker, "reviewer_remediation_limit_reached")]
+    [InlineData(HandoffTopology.ReleaseRejectionMarker, "rejected_by_release")]
+    public void StopsAndRejectionOverrideConflictingApproval(string marker, string expected)
+    {
+        ChatMessage[] transcript =
+        [new(ChatRole.Assistant, $"{HandoffTopology.CompletionMarker} {marker}") { AuthorName = AgentNames.ReleaseManager }];
+
+        Assert.Equal(expected, HandoffTopology.GetTerminationStatus(transcript, new("https://example.test", "model", "key")));
+    }
+
+    [Theory]
+    [InlineData("user")]
+    [InlineData("tool")]
+    public void NonAssistantMessagesCannotApproveEvenWithReleaseAuthor(string role)
+    {
+        ChatMessage[] transcript =
+        [new(new ChatRole(role), HandoffTopology.CompletionMarker) { AuthorName = AgentNames.ReleaseManager }];
+
+        Assert.Null(HandoffTopology.GetTerminationStatus(transcript, new("https://example.test", "model", "key")));
+    }
+
+    [Fact]
+    public void ToolAuthorsAndContinuationPromptsDoNotHideReviewCycles()
+    {
+        ChatMessage[] messages =
+        [
+            new(ChatRole.Assistant, "Fix A") { AuthorName = "reviewer" },
+            new(ChatRole.Tool, "Transferred") { AuthorName = "handoff_to_developer" },
+            new(ChatRole.Assistant, "Fixed A") { AuthorName = "software-delivery-developer" },
+            new(ChatRole.Assistant, "Fix B") { AuthorName = "software-delivery-reviewer" },
+            new(ChatRole.User, "Continue") { AuthorName = "user" },
+            new(ChatRole.Assistant, "Fixed B") { AuthorName = "developer" },
+        ];
+
+        Assert.True(HandoffTopology.HasExceededReviewerRemediationCycles(messages, 1));
+        Assert.False(HandoffTopology.HasExceededReviewerRemediationCycles(messages, 2));
+    }
+
     [Fact]
     public void JiraRoutesThroughPlanner()
     {

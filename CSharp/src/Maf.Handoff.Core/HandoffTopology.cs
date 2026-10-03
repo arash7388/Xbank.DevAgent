@@ -1,3 +1,5 @@
+using Microsoft.Extensions.AI;
+
 namespace Maf.Handoff.Core;
 
 public static class HandoffTopology
@@ -5,6 +7,10 @@ public static class HandoffTopology
     public const string CompletionMarker = "WORKFLOW_COMPLETE";
 
     public const string RequestLimitMarker = "WORKFLOW_REQUEST_LIMIT_REACHED";
+
+    public const string AgentTurnLimitMarker = "WORKFLOW_AGENT_TURN_LIMIT_REACHED";
+
+    public const string ReviewerRemediationLimitMarker = "WORKFLOW_REVIEWER_REMEDIATION_LIMIT_REACHED";
 
     public const string ReleaseRejectionMarker = "WORKFLOW_REJECTED";
 
@@ -19,9 +25,42 @@ public static class HandoffTopology
     public static bool IsRequestLimitMessage(string? text) =>
         text?.Contains(RequestLimitMarker, StringComparison.Ordinal) is true;
 
+    public static bool IsReviewerRemediationLimitMessage(string? text) =>
+        text?.Contains(ReviewerRemediationLimitMarker, StringComparison.Ordinal) is true;
+
     public static bool IsReleaseRejectionMessage(string? authorName, string? text) =>
         IsReleaseManager(authorName) &&
         text?.Contains(ReleaseRejectionMarker, StringComparison.Ordinal) is true;
+
+    public static string? GetTerminationStatus(IReadOnlyCollection<ChatMessage> conversation, WorkflowSettings settings)
+    {
+        ChatMessage[] assistantMessages = [.. conversation.Where(message => message.Role == ChatRole.Assistant)];
+        // Limits and rejection take precedence over approval. Tool results and user-supplied
+        // marker literals are evidence, not control messages.
+        if (assistantMessages.Any(message => IsRequestLimitMessage(message.Text))) return "request_limit_reached";
+        if (assistantMessages.Any(message => message.Text.Contains(AgentTurnLimitMarker, StringComparison.Ordinal)))
+            return "agent_turn_limit_reached";
+        if (assistantMessages.Any(message => IsReviewerRemediationLimitMessage(message.Text)) ||
+            HasExceededReviewerRemediationCycles(assistantMessages, settings.MaxReviewerRemediationCycles))
+            return "reviewer_remediation_limit_reached";
+
+        ChatMessage? release = assistantMessages.LastOrDefault(message => IsReleaseManager(message.AuthorName));
+        if (release is not null && !release.Contents.OfType<FunctionCallContent>().Any())
+        {
+            if (IsReleaseRejectionMessage(release.AuthorName, release.Text)) return "rejected_by_release";
+            if (IsCompletionMessage(release.AuthorName, release.Text)) return "completed";
+        }
+
+        return conversation.Count >= settings.MaxTotalMessages ? "message_limit_reached" : null;
+    }
+
+    public static bool HasExceededReviewerRemediationCycles(
+        IEnumerable<ChatMessage> messages,
+        int maximumCycles) =>
+        HasExceededReviewerRemediationCycles(
+            messages.Where(message => message.Role == ChatRole.Assistant)
+                .Select(message => message.AuthorName),
+            maximumCycles);
 
     public static bool HasExceededReviewerRemediationCycles(
         IEnumerable<string?> authorNames,
