@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Maf.Handoff.Core;
 
 public sealed record JiraIssueInfo(
@@ -13,6 +15,8 @@ public sealed record JiraAttachmentText(string IssueKey, string AttachmentId, st
 
 public interface IJiraIssueSearch
 {
+    Task<JsonElement> GetIssueDetailsAsync(string issueKey, CancellationToken cancellationToken = default);
+    Task<JsonElement> GetIssueCommentsAsync(string issueKey, int startAt = 0, int maxResults = 50, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<JiraAttachmentInfo>> GetAttachmentsAsync(string issueKey, CancellationToken cancellationToken = default);
     Task<JiraAttachmentText> ReadAttachmentAsync(string issueKey, string attachmentId, int offset = 0, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<JiraIssueInfo>> SearchIssuesAsync(

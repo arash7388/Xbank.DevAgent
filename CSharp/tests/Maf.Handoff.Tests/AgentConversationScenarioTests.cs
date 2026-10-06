@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Maf.Handoff.Core;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
@@ -224,13 +225,13 @@ public sealed class AgentConversationScenarioTests
                 AITool handoff = Handoffs(options)[^1];
                 if (name == AgentNames.Jira)
                 {
-                    Assert.Equal(5, options!.Tools!.Count);
+                    Assert.Equal(7, options!.Tools!.Count);
                     Assert.DoesNotContain(options.Tools, tool => tool.Name.Contains("repository", StringComparison.Ordinal));
                     if (++jiraCalls == 1)
                     {
                         return new ChatResponse(new ChatMessage(ChatRole.Assistant,
                         [
-                            new FunctionCallContent("jira-read", AgentToolCatalog.GetJiraIssueTitle.Name,
+                            new FunctionCallContent("jira-read", AgentToolCatalog.GetJiraIssueDetails.Name,
                                 new Dictionary<string, object?> { ["issueKey"] = "TEST-42" }),
                             new FunctionCallContent("jira-premature-handoff", handoff.Name,
                                 new Dictionary<string, object?> { ["reasonForHandoff"] = "premature" }),
@@ -244,19 +245,34 @@ public sealed class AgentConversationScenarioTests
                             result.Result?.ToString()?.Contains("Error", StringComparison.OrdinalIgnoreCase) is true);
                     }
                     else Assert.Contains(expectedEvidence, result.Result?.ToString(), StringComparison.Ordinal);
-                    return Handoff(handoff, expectedEvidence);
+                    if (!unavailable && jiraCalls == 2)
+                    {
+                        return new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                        [new FunctionCallContent("jira-comments", AgentToolCatalog.GetJiraIssueComments.Name,
+                            new Dictionary<string, object?> { ["issueKey"] = "TEST-42", ["startAt"] = 1, ["maxResults"] = 50 })]));
+                    }
+                    if (!unavailable)
+                    {
+                        FunctionResultContent comments = Assert.Single(messages.SelectMany(message => message.Contents)
+                            .OfType<FunctionResultContent>(), content => content.CallId == "jira-comments");
+                        Assert.Contains("preserve-existing-consumers", comments.Result?.ToString(), StringComparison.Ordinal);
+                    }
+                    return Handoff(handoff, expectedEvidence + (unavailable ? "" : "; comment 71: preserve-existing-consumers"));
                 }
                 if (name == AgentNames.Planner)
                 {
                     Assert.Contains(messages, message => message.Text.Contains(expectedEvidence, StringComparison.Ordinal));
+                    if (!unavailable)
+                        Assert.Contains(messages, message => message.Text.Contains("preserve-existing-consumers", StringComparison.Ordinal));
                 }
                 return Handoff(handoff, name == AgentNames.Reviewer ? "REVIEW_APPROVED" : "implementation-contract-42");
             }));
 
         ChatMessage[] transcript = await Run(clients, jira: jira);
 
-        Assert.Equal(1, jira.TitleCalls);
-        Assert.Equal(2, jiraCalls);
+        Assert.Equal(1, jira.DetailsCalls);
+        Assert.Equal(unavailable ? 2 : 3, jiraCalls);
+        Assert.Equal(unavailable ? 0 : 1, jira.CommentCalls);
         Assert.Contains(transcript, message => HandoffTopology.IsCompletionMessage(message.AuthorName, message.Text));
     }
 
@@ -439,14 +455,38 @@ public sealed class AgentConversationScenarioTests
 
     private sealed class RecordingJira(bool unavailable) : IJiraIssueSearch
     {
-        public int TitleCalls { get; private set; }
-        public Task<string?> GetIssueTitleByKeyAsync(string issueKey, CancellationToken cancellationToken = default)
+        public int DetailsCalls { get; private set; }
+        public int CommentCalls { get; private set; }
+        public Task<JsonElement> GetIssueDetailsAsync(string issueKey, CancellationToken cancellationToken = default)
         {
             Assert.Equal("TEST-42", issueKey);
-            TitleCalls++;
+            DetailsCalls++;
             return unavailable ? throw new InvalidOperationException("Jira is unavailable")
-                : Task.FromResult<string?>("issue-requirement-42");
+                : Task.FromResult(JsonSerializer.SerializeToElement(new
+                {
+                    key = issueKey,
+                    fields = new
+                    {
+                        description = "issue-requirement-42",
+                        comment = new { startAt = 0, total = 2, comments = new[] { new { id = "70", body = "Initial requirements" } } },
+                    },
+                }));
         }
+        public Task<JsonElement> GetIssueCommentsAsync(string issueKey, int startAt = 0, int maxResults = 50,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.Equal("TEST-42", issueKey);
+            Assert.Equal(1, startAt);
+            Assert.Equal(50, maxResults);
+            CommentCalls++;
+            return Task.FromResult(JsonSerializer.SerializeToElement(new
+            {
+                startAt, total = 2,
+                comments = new[] { new { id = "71", body = "preserve-existing-consumers" } },
+            }));
+        }
+        public Task<string?> GetIssueTitleByKeyAsync(string issueKey, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Unexpected title lookup.");
         public Task<IReadOnlyList<JiraAttachmentInfo>> GetAttachmentsAsync(string issueKey,
             CancellationToken cancellationToken = default) => throw new InvalidOperationException("Unexpected attachment lookup.");
         public Task<JiraAttachmentText> ReadAttachmentAsync(string issueKey, string attachmentId, int offset = 0,

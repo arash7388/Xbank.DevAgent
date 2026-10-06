@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Maf.Handoff.Core;
 
 namespace Maf.Handoff.Api;
@@ -63,4 +64,10 @@ public sealed class SelectedJiraAttachments(
 
     public Task<string?> GetIssueTitleByKeyAsync(string key, CancellationToken cancellationToken = default) =>
         jira.GetIssueTitleByKeyAsync(key, cancellationToken);
+
+    public Task<JsonElement> GetIssueDetailsAsync(string key, CancellationToken cancellationToken = default) =>
+        jira.GetIssueDetailsAsync(key, cancellationToken);
+
+    public Task<JsonElement> GetIssueCommentsAsync(string key, int startAt = 0, int maxResults = 50, CancellationToken cancellationToken = default) =>
+        jira.GetIssueCommentsAsync(key, startAt, maxResults, cancellationToken);
 }

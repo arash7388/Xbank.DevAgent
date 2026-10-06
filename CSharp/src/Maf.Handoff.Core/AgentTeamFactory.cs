@@ -75,8 +75,8 @@ public static class AgentTeamFactory
             StringComparer.Ordinal);
 
         return new(
-            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Read-only Jira issue context retrieval.", AgentPrompts.Jira,
-                jira is null ? null : AuditTools(JiraToolFactory.Create(jira), AgentNames.Jira), codeGraphAvailable),
+            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Task readiness, requirements validation, and integration reconnaissance.", AgentPrompts.Jira,
+                CreateTools(AgentNames.Jira, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Planner), Get(settingsByAgent, AgentNames.Planner), AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, CreateTools(AgentNames.Planner, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Developer), Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, CreateTools(AgentNames.Developer, true), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Reviewer), Get(settingsByAgent, AgentNames.Reviewer), AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, false), codeGraphAvailable),
@@ -112,8 +112,13 @@ public static class AgentTeamFactory
                     : RepositoryToolFactory.CreateReadTools(
                         workspace,
                         referenceDocuments,
-                        compactFileReads: agentName == AgentNames.Planner);
+                        compactFileReads: agentName is AgentNames.Planner or AgentNames.Jira);
                 tools = [.. repositoryTools];
+            }
+
+            if (agentName == AgentNames.Jira && jira is not null)
+            {
+                tools.AddRange(JiraToolFactory.Create(jira));
             }
 
             if (codeGraphAvailable && CodeGraphPolicy.IsUsefulFor(agentName))

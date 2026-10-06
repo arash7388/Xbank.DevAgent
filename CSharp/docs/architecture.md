@@ -27,6 +27,7 @@ flowchart TB
 
     FLOW -->|when enabled| J
     FLOW -->|when Jira is disabled| P
+    J --> READ
     P --> READ[Read-only repository tools]
     R --> READ
     S --> READ
@@ -49,8 +50,11 @@ flowchart TB
    identifier.
 2. Git validates the repository and branch and clones into a random directory under the configured
    temporary workspace.
-3. The Jira agent retrieves read-only delivery context, while the planner, developer, reviewer, security agent,
-   and release manager use their scoped repository tools.
+3. When enabled, Jira assesses task readiness with full issue details, paginated comments, selected attachments,
+   scoped read-only repository inspection, and reference-document search. It checks requirement clarity and
+   consistency, code feasibility, dependencies, and integration risks before handing evidence to Planner.
+   Blocking clarification ends the run with `input_required`; the user can clarify and start a new run.
+   Planner, developer, reviewer, security, and release manager then use their scoped repository tools.
 4. Agent events and the current state are exposed through session polling without returning secrets.
 5. The UI renders the exact diff and pauses at `awaiting_approval`.
 6. Reject leaves the clone uncommitted. Approve creates a new branch and commit; push requires a

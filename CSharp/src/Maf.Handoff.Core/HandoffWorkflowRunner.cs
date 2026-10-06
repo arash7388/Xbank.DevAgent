@@ -81,7 +81,7 @@ public sealed class HandoffWorkflowRunner
 
             workflowSettings = _settingsByAgent[AgentNames.Developer];
             settingsByAgent = _settingsByAgent;
-            usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests);
+            usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests, workflowSettings.MaxBudgetUsd);
             clients = clients.ToDictionary(
                 pair => pair.Key,
                 pair => WithTelemetryAndCheckpoints(
@@ -108,7 +108,7 @@ public sealed class HandoffWorkflowRunner
             workflowSettings = _settings ?? throw new ConfigurationException("Workflow model settings are required.");
             IChatClient effectiveChatClient = _chatClient ?? ModelChatClientFactory.Create(workflowSettings);
             settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => workflowSettings);
-            usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests);
+            usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests, workflowSettings.MaxBudgetUsd);
             Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(
                 name => name,
                 name => WithTelemetryAndCheckpoints(

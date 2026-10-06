@@ -9,7 +9,8 @@ public sealed record AgentModelConfiguration(
         int maxTotalMessages,
         int maxAgentTurns,
         int maxReviewerRemediationCycles = 5,
-        int maxLlmRequests = 25)
+        int maxLlmRequests = 25,
+        decimal? maxBudgetUsd = null)
     {
         if (Provider is null)
         {
@@ -28,6 +29,7 @@ public sealed record AgentModelConfiguration(
         {
             MaxReviewerRemediationCycles = maxReviewerRemediationCycles,
             MaxLlmRequests = maxLlmRequests,
+            MaxBudgetUsd = maxBudgetUsd,
         };
         settings.Validate();
         return settings;

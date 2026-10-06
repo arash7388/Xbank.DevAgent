@@ -227,13 +227,15 @@ public sealed class RepositorySessionService(
                     maxTotalMessages: 60,
                     maxAgentTurns: 25,
                     maxReviewerRemediationCycles: 5,
-                    maxLlmRequests: 25),
+                    maxLlmRequests: request.MaxAiCalls,
+                    maxBudgetUsd: request.MaxBudgetUsd),
                 StringComparer.Ordinal);
             IReferenceDocumentSearch? documents = CreateDocumentSearch(request);
             IJiraIssueSearch workflowJira = jira;
             string workflowTask = request.Task;
             if (request.JiraIssueKey is not null)
             {
+                workflowTask = $"Selected Jira issue: {request.JiraIssueKey}\n\n{workflowTask}";
                 SelectedJiraAttachments selectedAttachments = new(jira, request.JiraIssueKey, request.JiraAttachmentIds ?? []);
                 workflowJira = selectedAttachments;
                 workflowTask += await selectedAttachments.LoadContextAsync(state.Cancellation.Token);
@@ -274,6 +276,8 @@ public sealed class RepositorySessionService(
                         "The workflow reached its conversation safety limit before release approval.",
                     "reviewer_remediation_limit_reached" =>
                         "The reviewer exceeded the configured developer remediation limit. Inspect the logged findings and start a new run with a clarified request or prompt.",
+                    "budget_limit_reached" =>
+                        "The workflow reached its configured AI budget before release approval.",
                     "request_limit_reached" =>
                         "The workflow reached its model request limit before release approval, including checkpoint replays. Review the final agent activity.",
                     "agent_turn_limit_reached" =>
@@ -358,7 +362,8 @@ public sealed class RepositorySessionService(
             maxTotalMessages = 60,
             maxAgentTurns = 25,
             maxReviewerRemediationCycles = 5,
-            maxLlmRequests = 25,
+            maxLlmRequests = request.MaxAiCalls,
+            maxBudgetUsd = request.MaxBudgetUsd,
         },
     });
 
@@ -398,6 +403,11 @@ public sealed class RepositorySessionService(
             throw new ArgumentException("Repository, branch, task, and agent model configurations are required.");
         }
 
+        if (request.MaxAiCalls < 1 || request.MaxBudgetUsd < 0.01m || request.MaxBudgetUsd > 1_000_000m)
+        {
+            throw new ArgumentException("Maximum AI calls must be positive and the USD budget must be between 0.01 and 1,000,000.");
+        }
+
         if (request.Task.Length > 20_000)
         {
             throw new ArgumentException("Change request must be 20,000 characters or fewer.");
@@ -422,7 +432,8 @@ public sealed class RepositorySessionService(
                     maxTotalMessages: 60,
                     maxAgentTurns: 25,
                     maxReviewerRemediationCycles: 5,
-                    maxLlmRequests: 25);
+                    maxLlmRequests: request.MaxAiCalls,
+                    maxBudgetUsd: request.MaxBudgetUsd);
             }
             catch (ConfigurationException exception)
             {
@@ -732,7 +743,9 @@ public sealed record CreateSessionRequest(
     string SourceControl = "gitlab",
     CogniaSearchConfiguration? Cognia = null,
     string? JiraIssueKey = null,
-    IReadOnlyList<string>? JiraAttachmentIds = null);
+    IReadOnlyList<string>? JiraAttachmentIds = null,
+    int MaxAiCalls = 30,
+    decimal MaxBudgetUsd = 0.10m);
 
 public sealed record ProjectRepositoryInfo(string Key, string? GitLabProjectPath);
 

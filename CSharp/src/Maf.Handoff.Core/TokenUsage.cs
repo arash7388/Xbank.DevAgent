@@ -39,11 +39,13 @@ public sealed record TokenUsageSummary(
 /// </summary>
 public sealed class TokenUsageCollector(
     IReadOnlyDictionary<string, WorkflowSettings> settingsByAgent,
-    int maxLlmRequests = int.MaxValue)
+    int maxLlmRequests = int.MaxValue,
+    decimal? maxBudgetUsd = null)
 {
     private readonly ConcurrentDictionary<string, MutableAgentUsage> _usage = new(StringComparer.Ordinal);
     private readonly Lock _requestLock = new();
     private int _requestCount;
+    private bool _budgetExceeded;
 
     /// <summary>Reserves one outbound provider request, returning false when the run budget is exhausted.</summary>
     public bool RecordRequest(string agent)
@@ -55,6 +57,13 @@ public sealed class TokenUsageCollector(
 
         lock (_requestLock)
         {
+            if (maxBudgetUsd is decimal budget &&
+                Snapshot().ByAgent.Sum(item => item.EstimatedCostUsd ?? 0m) >= budget)
+            {
+                _budgetExceeded = true;
+                return false;
+            }
+
             if (_requestCount >= maxLlmRequests)
             {
                 return false;
@@ -67,7 +76,10 @@ public sealed class TokenUsageCollector(
         }
     }
 
-    public string RequestLimitMessage(string agent) =>
+    public string RequestLimitMessage(string agent) => _budgetExceeded
+        ? $"{HandoffTopology.BudgetLimitMarker} The workflow reached its estimated budget of ${maxBudgetUsd:0.00} USD. " +
+          $"The next request would have been made by '{agent}'."
+        :
         $"{HandoffTopology.RequestLimitMarker} The workflow reached its limit of {maxLlmRequests:N0} " +
         $"AI requests before release approval. The next request would have been made by '{agent}'.";
 

@@ -6,6 +6,49 @@ namespace Maf.Handoff.Tests;
 
 public sealed class TokenUsageTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BudgetStopsFurtherCallsAcrossAgents(bool streaming)
+    {
+        ModelProviderDefinition provider = new(
+            "test-model", "Test provider", "https://example.test",
+            ToolCalling: true, Vision: false, MaxInputTokens: 1_000, MaxOutputTokens: 1_000,
+            Thinking: false, ReasoningEffort: null, SupportsReasoningEffort: [],
+            InputCostPerMillionTokens: 2m, OutputCostPerMillionTokens: 8m);
+        WorkflowSettings settings = new("https://example.test", "test-model", "key", Provider: provider);
+        TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
+        {
+            [AgentNames.Planner] = settings,
+            [AgentNames.Developer] = settings,
+        }, maxLlmRequests: 30, maxBudgetUsd: 0.10m);
+        Assert.True(collector.RecordRequest(AgentNames.Planner));
+        collector.Record(AgentNames.Planner, new UsageDetails
+        {
+            InputTokenCount = 50_000,
+            OutputTokenCount = 0,
+        });
+        UsageResponseChatClient inner = new();
+        IChatClient client = new UsageTrackingChatClient(inner, AgentNames.Developer, collector);
+        ChatMessage[] messages = [new(ChatRole.User, "Next call")];
+        string text;
+        if (streaming)
+        {
+            List<ChatResponseUpdate> updates = [];
+            await foreach (ChatResponseUpdate update in client.GetStreamingResponseAsync(messages))
+                updates.Add(update);
+            text = updates.ToChatResponse().Text;
+        }
+        else text = (await client.GetResponseAsync(messages)).Text;
+
+        Assert.Equal(0, inner.CallCount);
+        Assert.Equal(1, collector.Snapshot().LlmRequestCount);
+        Assert.Contains(HandoffTopology.BudgetLimitMarker, text);
+        Assert.False(CheckpointSerialization.SerializeResponse(new(new ChatMessage(ChatRole.Assistant, text))).Reusable);
+        Assert.Equal("budget_limit_reached", HandoffTopology.GetTerminationStatus(
+            [new ChatMessage(ChatRole.Assistant, text)], settings));
+    }
+
     [Fact]
     public void AggregatesProviderReportedUsagePerAgentAndCalculatesCost()
     {

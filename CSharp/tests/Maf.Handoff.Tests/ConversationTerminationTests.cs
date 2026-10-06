@@ -1,11 +1,41 @@
 using System.Runtime.CompilerServices;
 using Maf.Handoff.Core;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
 namespace Maf.Handoff.Tests;
 
 public sealed class ConversationTerminationTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JiraClarificationStopsBeforePlanningOrImplementation(bool fragment)
+    {
+        ScriptedClient provider = new((_, _) => Text("NEEDS_CLARIFICATION: Which API consumers must be supported? " + HandoffTopology.JiraClarificationMarker), fragment);
+        string[] names = [.. AgentNames.Required, AgentNames.Jira];
+        WorkflowBundle bundle = HandoffWorkflowFactory.Create(
+            names.ToDictionary(name => name, _ => (IChatClient)provider),
+            names.ToDictionary(name => name, _ => Settings()));
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(
+            bundle.Workflow, "Assess WEPOD-42", cancellationToken: timeout.Token);
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+        ChatMessage[]? transcript = null;
+        await foreach (WorkflowEvent item in run.WatchStreamAsync(timeout.Token))
+        {
+            Assert.IsNotType<WorkflowErrorEvent>(item);
+            Assert.IsNotType<ExecutorFailedEvent>(item);
+            if (item is WorkflowOutputEvent output)
+                transcript = [.. output.As<IEnumerable<ChatMessage>>() ?? []];
+        }
+
+        Assert.Equal(1, provider.CallCount);
+        Assert.NotNull(transcript);
+        Assert.Equal("input_required", HandoffTopology.GetTerminationStatus(transcript, Settings()));
+        Assert.DoesNotContain(transcript, message => message.Role == ChatRole.Assistant && message.AuthorName != AgentNames.Jira);
+    }
+
     [Fact]
     public async Task ReleaseCompletionWithoutReviewerConfirmationFails()
     {

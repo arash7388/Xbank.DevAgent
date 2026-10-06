@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Maf.Handoff.Api;
 using Microsoft.Extensions.Configuration;
 
@@ -91,6 +92,63 @@ public sealed class JiraServiceTests
     }
 
     [Fact]
+    public async Task IntakeDetailsIncludeIntegrationFieldsAndConfiguredAcceptanceCriteria()
+    {
+        RecordingHandler handler = new("""
+            {"key":"WEPOD-42","names":{"customfield_12345":"Acceptance Criteria"},"fields":{"description":"Expected behavior","issuelinks":[{"type":{"inward":"is blocked by"},"inwardIssue":{"key":"WEPOD-41"}}],"customfield_12345":"Existing clients still work"}}
+            """);
+        var details = await CreateService(handler, "customfield_12345").GetIssueDetailsAsync("WEPOD-42");
+
+        Assert.Equal("Existing clients still work", details.GetProperty("fields").GetProperty("customfield_12345").GetString());
+        Assert.Equal("WEPOD-41", details.GetProperty("fields").GetProperty("issuelinks")[0].GetProperty("inwardIssue").GetProperty("key").GetString());
+        Assert.Contains("parent,subtasks,issuelinks,customfield_12345", handler.RequestUri!.Query);
+        Assert.Contains("components,labels,fixVersions,versions", handler.RequestUri.Query);
+        Assert.Contains("expand=names", handler.RequestUri.Query);
+        Assert.Equal(HttpMethod.Get, handler.Method);
+    }
+
+    [Fact]
+    public async Task CommentPagesPreserveDiscussionEvidenceAndPagination()
+    {
+        RecordingHandler handler = new("""
+            {"startAt":50,"maxResults":100,"total":151,"comments":[{"id":"71","author":{"displayName":"Product Owner"},"created":"2026-01-01","body":"Keep the existing API compatible"}]}
+            """);
+        var comments = await CreateService(handler).GetIssueCommentsAsync("WEPOD-42", 50, 500);
+
+        Assert.Equal(151, comments.GetProperty("total").GetInt32());
+        Assert.Equal("71", comments.GetProperty("comments")[0].GetProperty("id").GetString());
+        Assert.Equal("Keep the existing API compatible", comments.GetProperty("comments")[0].GetProperty("body").GetString());
+        Assert.Contains("/rest/api/2/issue/WEPOD-42/comment?startAt=50&maxResults=100&orderBy=created", handler.RequestUri!.ToString());
+        Assert.Equal(HttpMethod.Get, handler.Method);
+    }
+
+    [Fact]
+    public async Task AttachmentSelectionKeepsDetailsAndCommentReadsAvailable()
+    {
+        RecordingHandler handler = new("""{"key":"WEPOD-42","fields":{"description":"Task context"},"total":0,"comments":[]}""");
+        var selected = new SelectedJiraAttachments(CreateService(handler), "WEPOD-42", []);
+
+        Assert.Equal("Task context", (await selected.GetIssueDetailsAsync("WEPOD-42")).GetProperty("fields").GetProperty("description").GetString());
+        Assert.Equal(0, (await selected.GetIssueCommentsAsync("WEPOD-42", 3, 20)).GetProperty("total").GetInt32());
+        Assert.Contains("startAt=3&maxResults=20", handler.RequestUri!.Query);
+        Assert.Empty(await selected.GetAttachmentsAsync("WEPOD-42"));
+        await Assert.ThrowsAsync<ArgumentException>(() => selected.ReadAttachmentAsync("WEPOD-42", "123"));
+    }
+
+    [Fact]
+    public async Task IntakeReadsRejectInvalidKeysOffsetsAndCustomFieldConfigurationBeforeSending()
+    {
+        RecordingHandler handler = new("{}");
+        JiraService service = CreateService(handler);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.GetIssueDetailsAsync("../issue"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.GetIssueCommentsAsync("../issue"));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.GetIssueCommentsAsync("WEPOD-42", -1));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CreateService(handler, "description&expand=changelog").GetIssueDetailsAsync("WEPOD-42"));
+        Assert.Null(handler.RequestUri);
+    }
+
+    [Fact]
     public async Task CreateIssueUsesConfiguredRequesterAndAdditionalFields()
     {
         RecordingHandler handler = new("""{"key":"OPIM-123"}""");
@@ -123,7 +181,7 @@ public sealed class JiraServiceTests
         Assert.Contains("Ready for release", handler.RequestBody);
     }
 
-    private static JiraService CreateService(RecordingHandler handler)
+    private static JiraService CreateService(RecordingHandler handler, string? acceptanceCriteriaField = null)
     {
         IConfiguration configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?>
@@ -133,6 +191,7 @@ public sealed class JiraServiceTests
                 ["Jira:Password"] = "test-password",
                 ["Jira:AuthMode"] = "Basic",
                 ["Jira:Requester"] = "test-requester",
+                ["Jira:AcceptanceCriteriaField"] = acceptanceCriteriaField,
             }).Build();
         return new JiraService(new HttpClient(handler), configuration);
     }

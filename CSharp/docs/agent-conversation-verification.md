@@ -19,6 +19,8 @@ They cannot prove every possible model response or the availability of external 
 | Ordinary tools combined with handoffs | Planner, Developer, Reviewer, Security, and Jira consume tool results before choosing a handoff |
 | Conflicting handoff destinations | Streaming and regular responses block all destinations and ask for exactly one; Reviewer and Security reconsider before ownership changes |
 | Jira retrieval failure | Error evidence remains available to Jira, which reports unavailable context to Planner |
+| Jira intake clarification | A completed Jira response requesting clarification stops before Planner or Developer; user/tool marker text and pending tool calls cannot trigger the stop |
+| Jira intake tool access | Jira can read repository files and reference documents without edit tools; detail/comment tools preserve source evidence and comment paging works with attachment exclusions |
 | Planner inspection loop | Three ordinary tool rounds, then the final plan is passed to Developer |
 | Repeated review returns | Remediation budget stops further Developer provider calls (existing simulation and budget tests) |
 | Repeated security returns | Global request budget stops the loop with and without Reviewer |

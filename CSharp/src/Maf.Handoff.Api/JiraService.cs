@@ -108,8 +108,28 @@ public sealed partial class JiraService(HttpClient httpClient, IConfiguration co
         CancellationToken cancellationToken = default)
     {
         ValidateIssueKey(issueKey);
+        string fields = "summary,description,status,assignee,created,updated,comment,attachment,issuetype,priority,resolution,components,labels,fixVersions,versions,parent,subtasks,issuelinks";
+        string? acceptanceField = _configuration["Jira:AcceptanceCriteriaField"];
+        if (!string.IsNullOrWhiteSpace(acceptanceField))
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(acceptanceField, @"^customfield_\d+$"))
+                throw new InvalidOperationException("Jira:AcceptanceCriteriaField must be a customfield_ followed by its numeric ID.");
+            fields += $",{acceptanceField}";
+        }
         using JsonDocument document = await GetJsonAsync(
-            $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}?fields=summary,description,status,assignee,created,updated,comment,attachment",
+            $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}?fields={fields}&expand=names",
+            cancellationToken);
+        return document.RootElement.Clone();
+    }
+
+    public async Task<JsonElement> GetIssueCommentsAsync(
+        string issueKey, int startAt = 0, int maxResults = 50, CancellationToken cancellationToken = default)
+    {
+        ValidateIssueKey(issueKey);
+        ArgumentOutOfRangeException.ThrowIfNegative(startAt);
+        maxResults = Math.Clamp(maxResults, 1, 100);
+        using JsonDocument document = await GetJsonAsync(
+            $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}/comment?startAt={startAt}&maxResults={maxResults}&orderBy=created",
             cancellationToken);
         return document.RootElement.Clone();
     }

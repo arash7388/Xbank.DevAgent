@@ -11,6 +11,61 @@ namespace Maf.Handoff.Tests;
 
 public sealed class DeepSeekUsagePreservingChatClientTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeAdapterReplaysReasoningForTextAndToolTurns(bool streaming)
+    {
+        ReasoningHttpHandler handler = new();
+        DeepSeekUsageCapture capture = new() { InnerHandler = handler };
+        using HttpClient http = new(capture);
+        IChatClient native = new DeepSeekClient("test-key", new DeepSeekClientOptions
+        {
+            Transport = new HttpClientPipelineTransport(http),
+        }).GetChatClient("deepseek-flash").AsIChatClient();
+        using DeepSeekUsagePreservingChatClient client = new(native, capture);
+        async Task<ChatResponse> Respond(IEnumerable<ChatMessage> messages)
+        {
+            if (!streaming) return await client.GetResponseAsync(messages);
+            List<ChatResponseUpdate> updates = [];
+            await foreach (ChatResponseUpdate update in client.GetStreamingResponseAsync(messages))
+                updates.Add(update);
+            return updates.ToChatResponse();
+        }
+        ChatMessage user = new(ChatRole.User, "Inspect the file");
+        ChatResponse first = await Respond([user]);
+        // Framework history can retain text without retaining its reasoning content.
+        ChatMessage stripped = new(ChatRole.Assistant, first.Text) { MessageId = first.Messages[0].MessageId };
+        ChatResponse second = await Respond([user, stripped, new(ChatRole.User, "Read it")]);
+        await Respond([user, stripped, .. second.Messages,
+            new(ChatRole.Tool, [new FunctionResultContent("call-1", "contents")])]);
+
+        using JsonDocument request = JsonDocument.Parse(handler.LastRequest!);
+        JsonElement[] assistants = request.RootElement.GetProperty("messages").EnumerateArray()
+            .Where(message => message.GetProperty("role").GetString() == "assistant").ToArray();
+        Assert.Equal(2, assistants.Length);
+        Assert.Equal("text reasoning", assistants[0].GetProperty("reasoning_content").GetString());
+        Assert.Equal("tool reasoning", assistants[1].GetProperty("reasoning_content").GetString());
+    }
+
+    private sealed class ReasoningHttpHandler : HttpMessageHandler
+    {
+        private int _calls;
+        public string? LastRequest { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequest = await request.Content!.ReadAsStringAsync(cancellationToken);
+            string message = _calls++ == 1
+                ? """{"role":"assistant","content":null,"reasoning_content":"tool reasoning","tool_calls":[{"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{}"}}]}"""
+                : """{"role":"assistant","content":"Plan","reasoning_content":"text reasoning"}""";
+            return new(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"response-" + _calls + "\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"message\":" + message + ",\"finish_reason\":\"stop\"}]}",
+                    System.Text.Encoding.UTF8, "application/json"),
+            };
+        }
+    }
+
     [Fact]
     public async Task NativeAdapterPreservesCacheBreakdownForCostCalculation()
     {

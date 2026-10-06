@@ -13,6 +13,8 @@ public sealed record WorkflowSettings(
 
     public int MaxLlmRequests { get; init; } = 25;
 
+    public decimal? MaxBudgetUsd { get; init; }
+
     public static WorkflowSettings FromEnvironment(bool requireModel = true)
     {
         string endpoint = Environment.GetEnvironmentVariable("OPENAI_ENDPOINT")?.Trim() ??
@@ -77,6 +79,11 @@ public sealed record WorkflowSettings(
         if (MaxReviewerRemediationCycles < 1)
         {
             throw new ConfigurationException("Maximum reviewer remediation cycles must be greater than zero.");
+        }
+
+        if (MaxBudgetUsd is <= 0)
+        {
+            throw new ConfigurationException("Maximum budget in USD must be greater than zero.");
         }
 
         if (MaxLlmRequests < 1)

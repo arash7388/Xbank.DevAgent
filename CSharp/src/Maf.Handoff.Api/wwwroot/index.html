@@ -280,7 +280,7 @@
             <g class="handoff-edge normal" data-edge="security-release_manager"><path d="M 850 230 H 915" /></g>
             <g class="handoff-edge remediation" data-edge="reviewer-developer"><path d="M 535 195 C 425 170, 425 135, 535 110" /></g>
             <g class="handoff-edge remediation" data-edge="security-developer"><path d="M 700 255 C 670 318, 490 318, 540 110" /></g>
-            <g class="map-node jira" data-agent="jira"><rect x="55" y="40" width="150" height="70" rx="14" /><text x="130" y="70">Jira</text><text class="node-role" x="130" y="91">Issue context</text></g>
+            <g class="map-node jira" data-agent="jira"><rect x="55" y="40" width="150" height="70" rx="14" /><text x="130" y="70">Jira</text><text class="node-role" x="130" y="91">Task readiness</text></g>
             <g class="map-node planner" data-agent="planner"><rect x="270" y="40" width="150" height="70" rx="14" /><text x="345" y="70">Planner</text><text class="node-role" x="345" y="91">Plan &amp; criteria</text></g>
             <g class="map-node developer" data-agent="developer"><rect x="485" y="40" width="150" height="70" rx="14" /><text x="560" y="70">Developer</text><text class="node-role" x="560" y="91">Build &amp; verify</text></g>
             <g class="map-node reviewer" data-agent="reviewer"><rect x="485" y="195" width="150" height="70" rx="14" /><text x="560" y="225">Reviewer</text><text class="node-role" x="560" y="246">Quality gate</text></g>
@@ -348,6 +348,15 @@
           <p class="field-guide">Planner, Developer, Reviewer, and the final Release Manager are required. Planner creates the implementation contract, Developer executes it, and Reviewer independently confirms the changes. Jira and security are optional and start disabled.</p>
           <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Each agent's current model pricing appears below its prompt and remains editable.</p>
           <div id="agent-models" class="agent-model-grid"></div>
+        </fieldset>
+
+        <fieldset id="agent-turn-limits">
+          <legend>Agentic turn limits</legend>
+          <p class="field-guide">Limits apply across all agents for this run. Further AI calls stop when either limit is reached. Budget uses reported tokens and configured model prices; a call in progress can exceed the budget, and unpriced usage cannot be counted.</p>
+          <label for="max-ai-calls">Maximum AI calls allowed</label>
+          <input id="max-ai-calls" name="maxAiCalls" type="number" min="1" max="2147483647" step="1" value="30" required>
+          <label for="max-budget-usd">Maximum budget allowed (USD)</label>
+          <input id="max-budget-usd" name="maxBudgetUsd" type="number" min="0.01" max="1000000" step="0.01" value="0.10" required>
         </fieldset>
 
         <fieldset>

@@ -69,7 +69,7 @@ public static class HandoffWorkflowFactory
         if (team.Jira is not null)
         {
             builder.WithHandoff(team.Jira, team.Planner,
-                "Route to the planner after the requested Jira context has been retrieved and summarized.");
+                "Route to the planner after task readiness, discussion, repository, and document evidence have been assessed and no blocking clarification remains.");
         }
 
         builder.WithHandoff(team.Developer, team.Reviewer,

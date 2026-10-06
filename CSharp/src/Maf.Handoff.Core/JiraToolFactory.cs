@@ -7,6 +7,12 @@ internal static class JiraToolFactory
     internal static IList<AITool> Create(IJiraIssueSearch jira) =>
     [
         AIFunctionFactory.Create(
+            (string issueKey, CancellationToken cancellationToken) => jira.GetIssueDetailsAsync(issueKey, cancellationToken),
+            name: AgentToolCatalog.GetJiraIssueDetails.Name, description: AgentToolCatalog.GetJiraIssueDetails.Description),
+        AIFunctionFactory.Create(
+            (string issueKey, int startAt, int maxResults, CancellationToken cancellationToken) => jira.GetIssueCommentsAsync(issueKey, startAt, maxResults, cancellationToken),
+            name: AgentToolCatalog.GetJiraIssueComments.Name, description: AgentToolCatalog.GetJiraIssueComments.Description),
+        AIFunctionFactory.Create(
             (string issueKey, CancellationToken cancellationToken) => jira.GetAttachmentsAsync(issueKey, cancellationToken),
             name: AgentToolCatalog.ListJiraAttachments.Name, description: AgentToolCatalog.ListJiraAttachments.Description),
         AIFunctionFactory.Create(

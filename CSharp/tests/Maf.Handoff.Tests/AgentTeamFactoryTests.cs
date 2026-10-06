@@ -1,5 +1,6 @@
 using Maf.Handoff.Core;
 using Microsoft.Extensions.AI;
+using System.Reflection;
 
 namespace Maf.Handoff.Tests;
 
@@ -77,7 +78,7 @@ public sealed class AgentTeamFactoryTests
     }
 
     [Fact]
-    public void AddsOptionalJiraAgentWithoutGrantingRepositoryTools()
+    public void AddsOptionalJiraAgentAsTheStartingStage()
     {
         WorkflowSettings settings = new("https://example.test", "test-model", "test-key");
         RecordingChatClient client = new();
@@ -93,6 +94,40 @@ public sealed class AgentTeamFactoryTests
         Assert.NotNull(team.Jira);
         Assert.Equal(AgentNames.Jira, team.Jira.Name);
         Assert.Equal(AgentNames.Jira, team.StartAgent.Name);
+    }
+
+    [Fact]
+    public async Task JiraCanReadRepositoryAndReferenceDocumentsWithoutWriteAccess()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-jira-intake", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "settings.json"), "{ \"client\": \"ExistingConsumer\" }");
+            RepositoryWorkspace workspace = (RepositoryWorkspace)Activator.CreateInstance(
+                typeof(RepositoryWorkspace), BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null, args: [root, "https://github.com/example/repository", "main", null], culture: null)!;
+            WorkflowSettings settings = new("https://example.test", "test-model", "test-key");
+            RecordingChatClient client = new();
+            string[] names = [.. AgentNames.Required, AgentNames.Jira];
+            AgentTeam team = AgentTeamFactory.Create(
+                names.ToDictionary(name => name, _ => (IChatClient)client),
+                names.ToDictionary(name => name, _ => settings), workspace, new IntakeDocuments());
+
+            await team.Jira!.RunAsync("Assess integration requirements.");
+            IList<AITool> tools = client.Options!.Tools!;
+            AIFunction read = Assert.IsAssignableFrom<AIFunction>(Assert.Single(tools, tool => tool.Name == AgentToolCatalog.ReadRepositoryFile.Name));
+            AIFunction search = Assert.IsAssignableFrom<AIFunction>(Assert.Single(tools, tool => tool.Name == AgentToolCatalog.SearchDocuments.Name));
+            Assert.Contains("ExistingConsumer", (await read.InvokeAsync(new AIFunctionArguments { ["path"] = "settings.json" }))?.ToString());
+            Assert.Contains("API compatibility", (await search.InvokeAsync(new AIFunctionArguments { ["query"] = "client integration", ["maxResults"] = 3 }))?.ToString());
+            Assert.Contains(tools, tool => tool.Name == AgentToolCatalog.SearchRepository.Name);
+            Assert.DoesNotContain(tools, tool => tool.Name is "write_repository_file" or "replace_repository_text");
+            Assert.DoesNotContain(tools, tool => tool.Name.StartsWith("get_jira_", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -223,9 +258,9 @@ public sealed class AgentTeamFactoryTests
     public void PublishesAvailableToolsForEveryAgent()
     {
         Assert.Equal(AgentNames.All, AgentToolCatalog.ByAgent.Keys);
-        Assert.Equal(
-            [AgentToolCatalog.SearchJiraIssues, AgentToolCatalog.GetJiraIssueTitle, AgentToolCatalog.ListJiraAttachments, AgentToolCatalog.ReadJiraAttachment],
-            AgentToolCatalog.ByAgent[AgentNames.Jira]);
+        Assert.Contains(AgentToolCatalog.GetJiraIssueDetails, AgentToolCatalog.ByAgent[AgentNames.Jira]);
+        Assert.Contains(AgentToolCatalog.GetJiraIssueComments, AgentToolCatalog.ByAgent[AgentNames.Jira]);
+        Assert.Contains(AgentToolCatalog.ReadRepositoryFile, AgentToolCatalog.ByAgent[AgentNames.Jira]);
         Assert.Contains(
             AgentToolCatalog.WriteRepositoryFile,
             AgentToolCatalog.ByAgent[AgentNames.Developer]);
@@ -241,7 +276,7 @@ public sealed class AgentTeamFactoryTests
             AgentToolCatalog.ByAgent.Where(entry => entry.Key != AgentNames.Developer),
             entry => Assert.DoesNotContain(AgentToolCatalog.WriteRepositoryFile, entry.Value));
         Assert.All(
-            AgentToolCatalog.ByAgent.Where(entry => entry.Key != AgentNames.Jira),
+            AgentToolCatalog.ByAgent,
             entry => Assert.Contains(
                 entry.Value,
                 tool => tool.Name == AgentToolCatalog.SearchDocuments.Name
@@ -250,17 +285,22 @@ public sealed class AgentTeamFactoryTests
 
     private sealed class RecordingChatClient : IChatClient
     {
+        public ChatOptions? Options { get; private set; }
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages,
             ChatOptions? options = null,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Test response")));
+            CancellationToken cancellationToken = default)
+        {
+            Options = options;
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Test response")));
+        }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages,
             ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            Options = options;
             await Task.Yield();
             yield return new ChatResponseUpdate(ChatRole.Assistant, "Test response");
         }
@@ -271,5 +311,11 @@ public sealed class AgentTeamFactoryTests
         public void Dispose()
         {
         }
+    }
+
+    private sealed class IntakeDocuments : IReferenceDocumentSearch
+    {
+        public Task<string> SearchAsync(string query, int maxResults, CancellationToken cancellationToken = default) =>
+            Task.FromResult("architecture.md chunk 1: API compatibility requires support for ExistingConsumer.");
     }
 }

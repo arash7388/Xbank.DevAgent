@@ -141,7 +141,7 @@ function initializeSetupSteps() {
   additionalGrid.append(jiraSetup.querySelector('.jira-create-card'), jiraSetup.querySelector('.jira-comment-card'));
   additionalJiraActions.append(additionalSummary, additionalGrid);
   jiraSetup.querySelector('.jira-content').append(additionalJiraActions);
-  agentsSettings.append(teamMapSection, agentSettings);
+  agentsSettings.append(teamMapSection, document.querySelector('#agent-turn-limits'), agentSettings);
   runSettings.append(instructionSettings, referenceSettings);
   const confirmationSettings = document.createElement('section');
   confirmationSettings.id = 'confirmation-settings';
@@ -282,6 +282,7 @@ function renderRunReview() {
     }
   });
 
+  controls(section('Agentic turn limits', 'agents'), document.querySelector('#agent-turn-limits'));
   const agents = section('Agents and model settings', 'agents');
   agentModels.querySelectorAll('.agent-model-card').forEach(agent => {
     const card = document.createElement('section');
@@ -394,7 +395,7 @@ const providerCatalog = {
 };
 
 const agentCatalog = [
-  { id: 'jira', name: 'Jira', description: 'Read-only Jira issue and project context', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: false },
+  { id: 'jira', name: 'Jira', description: 'Task clarity, comments, code, documents, and integration readiness', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', enabled: false },
   { id: 'planner', name: 'Planner', description: 'Architecture and acceptance criteria', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
   { id: 'developer', name: 'Developer', description: 'Implementation and remediation', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
   { id: 'reviewer', name: 'Reviewer', description: 'Correctness and quality gate', provider: 'deepseek', model: 'deepseek-flash', effort: 'low', required: true },
@@ -924,6 +925,8 @@ form.addEventListener('submit', async (event) => {
     baseBranch: values.get('branch').trim(),
     task: values.get('task').trim(),
     agents,
+    maxAiCalls: Number(values.get('maxAiCalls')),
+    maxBudgetUsd: Number(values.get('maxBudgetUsd')),
     githubToken: values.get('githubToken')?.trim() || null,
     gitLabToken: values.get('gitlabToken')?.trim() || null,
     referenceCollectionId,

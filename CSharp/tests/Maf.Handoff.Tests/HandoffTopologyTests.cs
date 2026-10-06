@@ -6,6 +6,24 @@ namespace Maf.Handoff.Tests;
 public sealed class HandoffTopologyTests
 {
     [Theory]
+    [InlineData("jira", "assistant", false, "input_required")]
+    [InlineData("software-delivery-jira", "assistant", false, "input_required")]
+    [InlineData("jira", "user", false, null)]
+    [InlineData("jira", "tool", false, null)]
+    [InlineData("planner", "assistant", false, null)]
+    [InlineData("jira", "assistant", true, null)]
+    public void OnlyACompletedJiraAssistantResponseCanRequestClarification(
+        string author, string role, bool pendingTools, string? expected)
+    {
+        ChatMessage message = new(new ChatRole(role), HandoffTopology.JiraClarificationMarker) { AuthorName = author };
+        if (pendingTools)
+            message.Contents.Add(new FunctionCallContent("comments", AgentToolCatalog.GetJiraIssueComments.Name,
+                new Dictionary<string, object?> { ["issueKey"] = "WEPOD-42", ["startAt"] = 0, ["maxResults"] = 50 }));
+
+        Assert.Equal(expected, HandoffTopology.GetTerminationStatus([message], new("https://example.test", "model", "key")));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void MissingOrWithdrawnReviewerApprovalCannotComplete(bool previouslyApproved)

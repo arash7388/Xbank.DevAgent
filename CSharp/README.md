@@ -34,7 +34,12 @@ values. Documents are indexed and the session starts only after **Confirm and st
 
 Jira and security are optional and start disabled. Every run uses Planner to produce a
 repository-backed implementation contract before Developer changes the repository. When Jira is enabled,
-it supplies issue context to Planner first. Planner, Developer, Reviewer, and Release Manager are required.
+it assesses task readiness before handing evidence to Planner: full issue details, discussion and decisions,
+acceptance criteria, selected attachments, a targeted code/test/documentation inspection, dependencies, and
+integration risks. Its read-only repository and document tools support that assessment. It reports READY,
+READY_WITH_ASSUMPTIONS, or NEEDS_CLARIFICATION with source citations. Blocking ambiguities produce focused
+questions and stop the run with `input_required` before planning or implementation; clarify the request and
+start a new run. Non-blocking gaps are explicitly recorded as assumptions. Planner, Developer, Reviewer, and Release Manager are required.
 Reviewer independently inspects and confirms every change before release. Completion requires a
 reviewer-issued `REVIEW_APPROVED` after the latest Developer work; missing approval stops the run with
 `review_approval_missing`. Enable Security when the work's
@@ -145,6 +150,12 @@ retention policy. If a future tool has non-idempotent external side effects, exc
 reuse before exposing that tool to checkpointed agents.
 
 ### Reference-document RAG
+
+The Jira agent can read full task details and page through comments using the server's Jira configuration.
+For acceptance criteria stored in a custom field, configure `Jira__AcceptanceCriteriaField` with its ID
+(for example `customfield_12345`); the details response includes that field and its display name. Otherwise
+the agent checks criteria in the description, discussion, and selected documents and reports missing criteria.
+Comment paging follows [Atlassian's read-only issue comments API](https://developer.atlassian.com/server/jira/platform/rest/v10005/api-group-issue/).
 
 Start Qdrant locally before attaching reference files:
 

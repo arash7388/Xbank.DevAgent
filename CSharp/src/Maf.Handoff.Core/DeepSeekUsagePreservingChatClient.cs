@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.AI;
 
 namespace Maf.Handoff.Core;
@@ -13,6 +15,7 @@ internal sealed class DeepSeekUsagePreservingChatClient(
     IChatClient innerClient, DeepSeekUsageCapture? usageCapture = null, IDisposable? ownedTransport = null) : IChatClient
 {
     private readonly ConcurrentDictionary<string, string> _reasoningByCallId = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _reasoningByMessage = new(StringComparer.Ordinal);
 
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
@@ -51,22 +54,27 @@ internal sealed class DeepSeekUsagePreservingChatClient(
         for (int index = 0; index < history.Length; index++)
         {
             ChatMessage message = history[index];
-            if (message.Role != ChatRole.Assistant || HasReasoning(message))
+            if (message.Role != ChatRole.Assistant)
             {
                 continue;
             }
 
-            string? reasoning = message.Contents
+            string? reasoning = GetReasoning(message) ?? message.Contents
                 .OfType<FunctionCallContent>()
                 .Select(call => _reasoningByCallId.GetValueOrDefault(call.CallId))
                 .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-            if (reasoning is null)
+            if (reasoning is null && message.MessageId is { } messageId)
+                reasoning = _reasoningByMessage.GetValueOrDefault("id:" + messageId);
+            if (reasoning is null && TextKey(message) is { } textKey)
+                reasoning = _reasoningByMessage.GetValueOrDefault(textKey);
+            if (string.IsNullOrWhiteSpace(reasoning))
             {
                 continue;
             }
 
             ChatMessage restored = message.Clone();
-            restored.Contents = [new TextReasoningContent(reasoning), .. message.Contents];
+            restored.Contents = [new TextReasoningContent(reasoning),
+                .. message.Contents.Where(content => content is not TextReasoningContent)];
             restored.AdditionalProperties ??= [];
             restored.AdditionalProperties["reasoning_content"] = reasoning;
             history[index] = restored;
@@ -85,6 +93,15 @@ internal sealed class DeepSeekUsagePreservingChatClient(
                 continue;
             }
 
+            message.MessageId ??= Guid.NewGuid().ToString("N");
+            _reasoningByMessage["id:" + message.MessageId] = reasoning;
+            if (TextKey(message) is { } textKey)
+            {
+                // When IDs are stripped, restore only unambiguous text matches.
+                _reasoningByMessage.AddOrUpdate(textKey, reasoning,
+                    (_, previous) => previous == reasoning ? previous : string.Empty);
+            }
+
             foreach (FunctionCallContent call in message.Contents.OfType<FunctionCallContent>())
             {
                 if (!string.IsNullOrWhiteSpace(call.CallId))
@@ -95,8 +112,10 @@ internal sealed class DeepSeekUsagePreservingChatClient(
         }
     }
 
-    private static bool HasReasoning(ChatMessage message) =>
-        !string.IsNullOrWhiteSpace(GetReasoning(message));
+    private static string? TextKey(ChatMessage message) =>
+        !string.IsNullOrWhiteSpace(message.Text) && !message.Contents.OfType<FunctionCallContent>().Any()
+            ? "text:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(message.Text)))
+            : null;
 
     private static string? GetReasoning(ChatMessage message)
     {
@@ -107,10 +126,8 @@ internal sealed class DeepSeekUsagePreservingChatClient(
             return metadataReasoning;
         }
 
-        return message.Contents
-            .OfType<TextReasoningContent>()
-            .FirstOrDefault(content => !string.IsNullOrWhiteSpace(content.Text))
-            ?.Text;
+        string reasoning = string.Concat(message.Contents.OfType<TextReasoningContent>().Select(content => content.Text));
+        return string.IsNullOrWhiteSpace(reasoning) ? null : reasoning;
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) =>
