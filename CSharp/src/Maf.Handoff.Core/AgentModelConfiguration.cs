@@ -5,6 +5,9 @@ public sealed record AgentModelConfiguration(
     string ApiKey,
     string? Prompt = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public AifaRequestContext? AifaContext { get; init; }
+
     public WorkflowSettings ToSettings(
         int maxTotalMessages,
         int maxAgentTurns,
@@ -30,6 +33,7 @@ public sealed record AgentModelConfiguration(
             MaxReviewerRemediationCycles = maxReviewerRemediationCycles,
             MaxLlmRequests = maxLlmRequests,
             MaxBudgetUsd = maxBudgetUsd,
+            AifaContext = AifaContext,
         };
         settings.Validate();
         return settings;

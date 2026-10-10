@@ -80,6 +80,7 @@ public sealed class HandoffTopologyTests
     [InlineData(HandoffTopology.RequestLimitMarker, "request_limit_reached")]
     [InlineData(HandoffTopology.AgentTurnLimitMarker, "agent_turn_limit_reached")]
     [InlineData(HandoffTopology.ReviewerRemediationLimitMarker, "reviewer_remediation_limit_reached")]
+    [InlineData(HandoffTopology.LoopDetectedMarker, "loop_detected")]
     [InlineData(HandoffTopology.ReleaseRejectionMarker, "rejected_by_release")]
     public void StopsAndRejectionOverrideConflictingApproval(string marker, string expected)
     {

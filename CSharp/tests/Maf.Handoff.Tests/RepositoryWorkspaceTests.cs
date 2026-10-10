@@ -6,6 +6,79 @@ namespace Maf.Handoff.Tests;
 public sealed class RepositoryWorkspaceTests
 {
     [Fact]
+    public void LoopFingerprintDetectsEditsBeyondTheDisplayedDiffLimit()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-loop-fingerprint", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using System.Diagnostics.Process git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git")
+            {
+                WorkingDirectory = root, ArgumentList = { "init", "--quiet" },
+                UseShellExecute = false, CreateNoWindow = true,
+            })!;
+            git.WaitForExit();
+            Assert.Equal(0, git.ExitCode);
+            File.WriteAllText(Path.Combine(root, "a.txt"), new string('a', 160000));
+            File.WriteAllText(Path.Combine(root, "b.txt"), new string('b', 160000));
+            File.WriteAllText(Path.Combine(root, "z.txt"), "first version");
+            RepositoryWorkspace workspace = CreateWorkspace(root);
+            string displayed = workspace.GetDiff();
+            string fingerprint = workspace.GetProgressFingerprint();
+            Assert.Contains("[output truncated]", displayed);
+            workspace.WriteFile("z.txt", "second version");
+            Assert.Equal(displayed, workspace.GetDiff());
+            Assert.NotEqual(fingerprint, workspace.GetProgressFingerprint());
+            workspace.WriteFile("z.txt", "first version");
+            Assert.Equal(fingerprint, workspace.GetProgressFingerprint());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+    [Fact]
+    public void RemoteBranchListPreservesCaseAndExcludesTags()
+    {
+        string output = "abc\trefs/heads/develop\r\nabc\trefs/heads/Develop\nabc\trefs/tags/v1\nabc\tHEAD\nabc\trefs/heads/feature/orders\n";
+
+        Assert.Equal(["Develop", "develop", "feature/orders"], RepositoryWorkspace.ParseRemoteBranches(output));
+    }
+
+    [Theory]
+    [InlineData("develop", "Develop")]
+    [InlineData("Develop", "develop")]
+    [InlineData("DEVELOP", "Develop")]
+    [InlineData("feature/orders", "Feature/Orders")]
+    public void BaseBranchResolvesToRemoteSpelling(string requested, string actual)
+    {
+        Assert.Equal(actual, RepositoryWorkspace.ResolveBaseBranch(requested, ["main", actual]));
+    }
+
+    [Theory]
+    [InlineData("Develop")]
+    [InlineData("develop")]
+    public void BaseBranchPrefersExactMatch(string requested)
+    {
+        Assert.Equal(requested, RepositoryWorkspace.ResolveBaseBranch(requested, ["Develop", "develop"]));
+    }
+
+    [Fact]
+    public void BaseBranchRejectsAmbiguousCasing()
+    {
+        RepositoryException exception = Assert.Throws<RepositoryException>(() =>
+            RepositoryWorkspace.ResolveBaseBranch("DEVELOP", ["Develop", "develop"]));
+
+        Assert.Contains("Enter the exact branch name", exception.Message);
+    }
+
+    [Fact]
+    public void BaseBranchRejectsMissingBranch()
+    {
+        RepositoryException exception = Assert.Throws<RepositoryException>(() =>
+            RepositoryWorkspace.ResolveBaseBranch("develop", ["main", "feature/develop"]));
+
+        Assert.Contains("was not found", exception.Message);
+    }
+
+    [Fact]
     public void CompactReadMinifiesJsonWithoutChangingItsStructure()
     {
         string root = Path.Combine(Path.GetTempPath(), "maf-workspace-test", Guid.NewGuid().ToString("N"));

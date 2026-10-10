@@ -9,8 +9,8 @@ using Microsoft.Extensions.Options;
 namespace Maf.Handoff.Api;
 
 /// <summary>
-/// Indexes one set of user-supplied references in a temporary Qdrant collection. Source files are
-/// processed in memory only; the collection is deleted after use or after its short safety lifetime.
+/// Keeps references in memory, optionally indexing them in Qdrant for semantic search.
+/// References are deleted after use or after their short safety lifetime.
 /// </summary>
 public sealed class ReferenceDocumentService(
     IHttpClientFactory httpClientFactory,
@@ -36,15 +36,22 @@ public sealed class ReferenceDocumentService(
         string embeddingApiKey,
         string qdrantUrl,
         string qdrantApiKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string searchMode = "exact")
     {
         if (files.Count is 0 or > MaxFiles)
         {
             throw new ArgumentException($"Attach between 1 and {MaxFiles} supported files.");
         }
 
-        EmbeddingConfiguration embedding = CreateEmbeddingConfiguration(embeddingProvider, embeddingApiKey);
-        QdrantConfiguration qdrant = CreateQdrantConfiguration(qdrantUrl, qdrantApiKey);
+        bool semantic = searchMode.Trim().ToLowerInvariant() switch
+        {
+            "" or "exact" => false,
+            "semantic" => true,
+            _ => throw new ArgumentException("Search mode must be either 'exact' or 'semantic'."),
+        };
+        EmbeddingConfiguration? embedding = semantic ? CreateEmbeddingConfiguration(embeddingProvider, embeddingApiKey) : null;
+        QdrantConfiguration? qdrant = semantic ? CreateQdrantConfiguration(qdrantUrl, qdrantApiKey) : null;
 
         long totalBytes = 0;
         List<ReferenceChunk> chunks = [];
@@ -71,34 +78,38 @@ public sealed class ReferenceDocumentService(
             throw new ArgumentException("The attached files did not contain indexable text.");
         }
 
-        List<float[]> vectors = [];
-        foreach (ReferenceChunk[] batch in chunks.Chunk(32))
-        {
-            vectors.AddRange(await EmbedAsync(batch.Select(chunk => chunk.Text).ToArray(), embedding, cancellationToken));
-        }
-
-        if (vectors.Count != chunks.Count || vectors.Count == 0)
-        {
-            throw new InvalidOperationException("The embedding service returned an incomplete embedding response.");
-        }
-
         Guid id = Guid.NewGuid();
         string collectionName = $"maf_refs_{id:N}";
-        try
+        if (embedding is not null && qdrant is not null)
         {
-            await CreateQdrantCollectionAsync(qdrant, collectionName, vectors[0].Length, cancellationToken);
-            await UpsertAsync(qdrant, collectionName, chunks, vectors, cancellationToken);
-        }
-        catch
-        {
-            await DeleteQdrantCollectionAsync(qdrant, collectionName, CancellationToken.None);
-            throw;
+            List<float[]> vectors = [];
+            foreach (ReferenceChunk[] batch in chunks.Chunk(32))
+            {
+                vectors.AddRange(await EmbedAsync(batch.Select(chunk => chunk.Text).ToArray(), embedding, cancellationToken));
+            }
+
+            if (vectors.Count != chunks.Count || vectors.Count == 0)
+            {
+                throw new InvalidOperationException("The embedding service returned an incomplete embedding response.");
+            }
+
+            try
+            {
+                await CreateQdrantCollectionAsync(qdrant, collectionName, vectors[0].Length, cancellationToken);
+                await UpsertAsync(qdrant, collectionName, chunks, vectors, cancellationToken);
+            }
+            catch
+            {
+                await DeleteQdrantCollectionAsync(qdrant, collectionName, CancellationToken.None);
+                throw;
+            }
         }
 
         ReferenceCollection collection = new(id, collectionName, embedding, qdrant, chunks, files.Count, chunks.Count);
         if (!_collections.TryAdd(id, collection))
         {
-            await DeleteQdrantCollectionAsync(qdrant, collectionName, CancellationToken.None);
+            if (qdrant is not null)
+                await DeleteQdrantCollectionAsync(qdrant, collectionName, CancellationToken.None);
             throw new InvalidOperationException("Unable to allocate the reference-document collection.");
         }
 
@@ -109,12 +120,12 @@ public sealed class ReferenceDocumentService(
     public bool Exists(Guid id) => _collections.ContainsKey(id);
 
     public IReferenceDocumentSearch GetSearch(Guid id) => _collections.TryGetValue(id, out ReferenceCollection? collection)
-        ? new QdrantReferenceDocumentSearch(this, collection)
+        ? new AttachedReferenceDocumentSearch(this, collection)
         : throw new ArgumentException("The attached document collection was not found or has expired.");
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        if (_collections.TryRemove(id, out ReferenceCollection? collection))
+        if (_collections.TryRemove(id, out ReferenceCollection? collection) && collection.Qdrant is not null)
         {
             await DeleteQdrantCollectionAsync(collection.Qdrant, collection.QdrantCollectionName, cancellationToken);
         }
@@ -132,7 +143,7 @@ public sealed class ReferenceDocumentService(
         }
 
         DocumentSearchRoute route = DocumentSearchRouter.Route(query);
-        return route.Method == DocumentSearchMethod.Exact
+        return collection.Embedding is null || route.Method == DocumentSearchMethod.Exact
             ? ExactSearch(collection, query, maxResults)
             : await SemanticSearchAsync(collection, query, maxResults, cancellationToken);
     }
@@ -168,13 +179,13 @@ public sealed class ReferenceDocumentService(
         int maxResults,
         CancellationToken cancellationToken)
     {
-        float[] vector = (await EmbedAsync([query.Trim()], collection.Embedding, cancellationToken))[0];
+        float[] vector = (await EmbedAsync([query.Trim()], collection.Embedding!, cancellationToken))[0];
         using JsonDocument response = await QdrantJsonAsync(
             HttpMethod.Post,
             $"collections/{collection.QdrantCollectionName}/points/query",
             new { query = vector, limit = Math.Clamp(maxResults, 1, 8), with_payload = true, with_vector = false },
             cancellationToken,
-            collection.Qdrant);
+            collection.Qdrant!);
         JsonElement result = response.RootElement.GetProperty("result");
         JsonElement points = result.ValueKind == JsonValueKind.Array
             ? result
@@ -395,8 +406,9 @@ public sealed class ReferenceDocumentService(
         }
 
         await using Stream input = file.OpenReadStream();
-        using StreamReader reader = new(input, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
-        return LimitText(await reader.ReadToEndAsync(cancellationToken));
+        using MemoryStream textStream = new();
+        await input.CopyToAsync(textStream, cancellationToken);
+        return LimitText(UnicodeDocumentText.Decode(textStream.ToArray()));
     }
 
     private static IEnumerable<string> Chunk(string text)
@@ -540,8 +552,8 @@ public sealed class ReferenceDocumentService(
     private sealed record ReferenceCollection(
         Guid Id,
         string QdrantCollectionName,
-        EmbeddingConfiguration Embedding,
-        QdrantConfiguration Qdrant,
+        EmbeddingConfiguration? Embedding,
+        QdrantConfiguration? Qdrant,
         IReadOnlyList<ReferenceChunk> Chunks,
         int FileCount,
         int ChunkCount);
@@ -550,7 +562,7 @@ public sealed class ReferenceDocumentService(
 
     private sealed record ReferenceChunk(Guid Id, string FileName, int Index, string Text);
 
-    private sealed class QdrantReferenceDocumentSearch(
+    private sealed class AttachedReferenceDocumentSearch(
         ReferenceDocumentService owner,
         ReferenceCollection collection) : IReferenceDocumentSearch
     {

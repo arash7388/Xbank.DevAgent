@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20261003-2">
+  <link rel="stylesheet" href="/styles.css?v=20261007-4">
 </head>
 <body>
   <header class="app-header">
@@ -328,15 +328,22 @@
               </div>
               <div>
                 <label for="gitlab-token">GitLab access token</label>
-                <input id="gitlab-token" name="gitlabToken" type="password"
+              <input id="gitlab-token" name="gitlabToken" type="password"
                        autocomplete="off" placeholder="Uses the server-local default when blank">
+              <label id="saved-gitlab-token-option" class="check-row" hidden>
+                <input id="use-saved-gitlab-token" type="checkbox">
+                Use saved GitLab token
+              </label>
               </div>
             </div>
             <p class="field-guide">For self-managed GitLab, configure the server's <code>GitLab:Host</code> setting.</p>
           </section>
           <div>
             <label for="branch">Base branch</label>
-            <input id="branch" name="branch" value="Develop" required>
+            <input id="branch" name="branch" list="repository-branches" value="Develop" required aria-describedby="branch-status">
+            <datalist id="repository-branches"></datalist>
+            <button id="refresh-branches" class="text-button" type="button">Refresh branches</button>
+            <p id="branch-status" class="field-guide" role="status">Select a repository to load its branches, or enter a branch name.</p>
           </div>
         </fieldset>
 
@@ -372,6 +379,10 @@
               <input id="deepseek-key" data-provider-key="deepseek" type="password" autocomplete="off" placeholder="DeepSeek API key">
             </div>
             <div>
+              <label for="aifa-key">AIFA API key</label>
+              <input id="aifa-key" data-provider-key="aifa" type="password" autocomplete="off" placeholder="AIFA bearer token">
+            </div>
+            <div>
               <label for="claude-key">Claude API key</label>
               <input id="claude-key" data-provider-key="claude" type="password" autocomplete="off" placeholder="Anthropic API key">
             </div>
@@ -393,7 +404,7 @@
 
         <fieldset>
           <legend>Reference documents (optional)</legend>
-          <p class="field-guide">Attach supporting material for this run. Files are embedded into a temporary Qdrant collection, available to agents through search, and removed after the run. Supported: text, Markdown, CSV, JSON, XML, YAML, HTML, source files, PDF with text, and DOCX.</p>
+          <p class="field-guide">Attach supporting material for this run. Plain text search works without external services. Optionally enable semantic search with Qdrant and embeddings. Documents are available to agents through search and removed after the run. Supported: text, Markdown, CSV, JSON, XML, YAML, HTML, source files, PDF with text, and DOCX.</p>
           <div class="two-columns">
             <div>
               <label for="reference-files">Files</label>
@@ -404,6 +415,11 @@
               <input id="reference-folder" type="file" multiple webkitdirectory directory>
             </div>
           </div>
+          <label for="reference-search-mode">Document search</label>
+          <select id="reference-search-mode" name="searchMode">
+            <option value="exact" selected>Plain text search (no external services)</option>
+            <option value="semantic">Semantic and plain text search (Qdrant + embeddings)</option>
+          </select>
           <label for="qdrant-url">Qdrant endpoint</label>
           <input id="qdrant-url" name="qdrantUrl" type="url" autocomplete="off"
                  placeholder="https://your-cluster.cloud.qdrant.io">
@@ -425,7 +441,7 @@
 
         <fieldset id="cognia-settings">
           <legend>Cognia knowledge base</legend>
-          <p class="field-guide">Optionally search organization documents through Cognia's search service. Cognia remains a separate source from uploaded Qdrant documents.</p>
+          <p class="field-guide">Optionally search organization documents through Cognia's search service. Cognia remains a separate source from uploaded documents.</p>
           <label class="check-row" for="cognia-enabled">
             <input id="cognia-enabled" type="checkbox">
             <span>Use Cognia organization knowledge</span>
@@ -454,26 +470,39 @@
         <div id="form-error" class="form-error" role="alert" hidden></div>
         <div class="form-actions">
           <button id="run-button" class="primary" type="submit">Confirm and start agent run</button>
-          <button id="cancel-button" class="secondary" type="button" hidden>Cancel</button>
         </div>
       </form>
     </section>
 
-    <section class="activity-panel" data-workflow-panel="running" aria-labelledby="activity-title" hidden>
+    <section class="activity-panel" data-workflow-panel="running" aria-labelledby="activity-title" tabindex="0" hidden>
       <div class="section-heading">
         <div>
           <h2 id="activity-title">Agent activity</h2>
           <p id="session-label">No active session</p>
         </div>
         <div class="run-meta">
+          <button id="cancel-button" class="secondary" type="button" hidden>Cancel</button>
           <button id="back-button" class="secondary" type="button" hidden>Back</button>
           <button class="secondary report-button" type="button" hidden>Report</button>
           <span id="elapsed-timer" class="elapsed-timer" hidden aria-live="off"><span aria-hidden="true"></span><b>Elapsed</b> <time>00:00</time></span>
           <span id="status-badge" class="status idle">Idle</span>
         </div>
       </div>
-      <div id="run-error" class="run-error" role="alert" hidden></div>
+      <section id="run-error" class="run-error" role="alert" aria-label="Workflow stop details" hidden></section>
+      <section id="jira-problem-notice" class="jira-problem-notice" role="status" aria-live="polite" lang="fa" dir="rtl" hidden></section>
+      <section id="jira-clarification" class="jira-problem-notice" aria-live="polite" hidden>
+        <h3>Jira needs your clarification</h3>
+        <p id="jira-clarification-questions" lang="fa" dir="auto"></p>
+        <form id="jira-clarification-form">
+          <label for="jira-clarification-answer">Your answer</label>
+          <textarea id="jira-clarification-answer" rows="4" maxlength="12000" required dir="auto"></textarea>
+          <p class="field-guide">Answer the questions to continue this agent run.</p>
+          <p id="jira-clarification-error" role="alert" hidden></p>
+          <button id="jira-clarification-submit" class="primary" type="submit">Answer and continue</button>
+        </form>
+      </section>
       <section id="usage-summary" class="usage-summary" aria-live="polite" hidden></section>
+      <section id="agent-summaries" class="agent-summaries" aria-label="Agent summaries" hidden></section>
       <div id="empty-activity" class="empty-state">
         <strong>Ready for a repository</strong>
         <p>Submit a change request to start cloning and handoff orchestration.</p>
@@ -508,7 +537,7 @@
       </div>
       <p>The approved patch will be committed to a new branch. The base branch is never updated directly.</p>
       <label for="target-branch">New branch</label>
-      <input id="target-branch" required readonly placeholder="user/WEPOD-12345">
+      <input id="target-branch" required placeholder="user/WEPOD-12345">
       <label for="commit-message">Commit message</label>
       <input id="commit-message" value="Apply agent-proposed change" maxlength="200" required>
       <label class="check-row" for="push-branch">
@@ -539,6 +568,7 @@
     </div>
   </dialog>
 
-  <script src="/app.js?v=20261003-2" defer></script>
+  <script src="/run-diagnostics.js?v=20261007-1" defer></script>
+  <script src="/app.js?v=20261007-3" defer></script>
 </body>
 </html>

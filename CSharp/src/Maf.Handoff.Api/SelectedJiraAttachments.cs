@@ -30,6 +30,11 @@ public sealed class SelectedJiraAttachments(
                 JiraAttachmentText content = await ReadAttachmentAsync(issueKey, id, cancellationToken: cancellationToken);
                 int length = Math.Min(remaining, content.Text.Length);
                 context.AppendLine($"Filename: {content.FileName}");
+                if (content.ContentFormat != "text")
+                {
+                    context.AppendLine($"[Format: {content.ContentFormat}; size: {content.SourceBytes} bytes. {content.ExtractionNotice}]");
+                    continue;
+                }
                 context.AppendLine(content.Text[..length]);
                 remaining -= length;
                 if (content.HasMore || length < content.Text.Length)

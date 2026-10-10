@@ -360,6 +360,7 @@ public sealed class AgentConversationScenarioTests
         {
             MaxLlmRequests = limit,
             MaxReviewerRemediationCycles = 100,
+            MaxRepeatedWorkflowStates = 100, // Exercise the request cap independently of loop detection.
         };
 
         ChatMessage[] transcript = await Run(clients, workflowSettings: settings);

@@ -172,6 +172,7 @@ public sealed partial class SqliteLlmCheckpointStore : IAiCallStore
         List<AiCallLogEntry> calls = ReadAuditRows<AiCallLogEntry>(connection, transaction, "ai_calls", runId);
         List<CheckpointHitLogEntry> hits = ReadAuditRows<CheckpointHitLogEntry>(connection, transaction, "checkpoint_hits", runId);
         RunUsageMetrics summary = SummarizeCalls(calls, hits.Count);
+        summary = summary with { TokenUsage = summary.TokenUsage.WithCheckpoints(hits) };
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "INSERT INTO run_usage VALUES($run,$now,$json) ON CONFLICT(run_id) DO UPDATE SET updated_at=$now,summary_json=$json";

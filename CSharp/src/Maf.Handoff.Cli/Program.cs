@@ -12,10 +12,15 @@ try
     WorkflowSettings settings = WorkflowSettings.FromEnvironment();
     HandoffWorkflowRunner runner = new(settings);
     string task = string.Join(' ', args);
+    Dictionary<string, RunEvent> summaries = new(StringComparer.Ordinal);
 
     await foreach (RunEvent runEvent in runner.RunAsync(task))
     {
-        if (runEvent.Type is "handoff" or "usage" or "run_finished" or "error")
+        if (runEvent.Type == "agent_summary" && runEvent.Agent is string agent)
+        {
+            summaries[agent] = runEvent;
+        }
+        else if (runEvent.Type is "handoff" or "usage" or "run_finished" or "error")
         {
             Console.Error.WriteLine(JsonSerializer.Serialize(runEvent));
         }
@@ -24,6 +29,11 @@ try
             Console.Write(runEvent.Text);
         }
     }
+
+    Console.WriteLine();
+    Console.WriteLine("Agent summaries:");
+    foreach (RunEvent summary in summaries.Values)
+        Console.WriteLine($"{summary.Agent}: {summary.Text}");
 
     return 0;
 }

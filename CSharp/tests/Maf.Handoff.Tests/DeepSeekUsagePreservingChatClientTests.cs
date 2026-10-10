@@ -12,6 +12,204 @@ namespace Maf.Handoff.Tests;
 public sealed class DeepSeekUsagePreservingChatClientTests
 {
     [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    public async Task IncompleteHistoryDisablesThinkingWithoutLosingToolEvidence(
+        bool streaming, bool toolTurn, bool explicitThinking)
+    {
+        ValidatingReasoningHttpHandler handler = new();
+        using HttpClient http = new(handler);
+        using DeepSeekUsagePreservingChatClient client = new(CreateNativeClient(http));
+        ChatOptions options = ToolOptions();
+        if (!explicitThinking) options.Reasoning = null; // DeepSeek defaults to thinking even without this option.
+        options.AdditionalProperties = new() { ["user"] = "test-user" };
+        if (explicitThinking) options.AdditionalProperties["thinking"] = true;
+        ChatMessage assistant = toolTurn
+            ? new(ChatRole.Assistant, [new FunctionCallContent("legacy-call", "read_file", new Dictionary<string, object?>())])
+            : new(ChatRole.Assistant, "Earlier agent or workflow supervisor context");
+        List<ChatMessage> history = [new(ChatRole.User, "Continue"), assistant];
+        if (toolTurn) history.Add(new(ChatRole.Tool, [new FunctionResultContent("legacy-call", "file evidence") ]));
+
+        await RespondAsync(client, history, options, streaming);
+
+        using JsonDocument request = JsonDocument.Parse(Assert.Single(handler.Requests));
+        Assert.Equal("disabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        JsonElement[] sent = request.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        Assert.Equal(history.Count, sent.Length);
+        Assert.Equal("assistant", sent[1].GetProperty("role").GetString());
+        if (toolTurn)
+        {
+            Assert.Equal("legacy-call", sent[1].GetProperty("tool_calls")[0].GetProperty("id").GetString());
+            Assert.Contains("file evidence", sent[2].GetProperty("content").GetString());
+        }
+        if (explicitThinking) Assert.True((bool)options.AdditionalProperties["thinking"]!);
+        else Assert.False(options.AdditionalProperties.ContainsKey("thinking"));
+        Assert.Equal(explicitThinking, options.Reasoning is not null);
+        Assert.Null(assistant.AdditionalProperties);
+        Assert.DoesNotContain(assistant.Contents, content => content is TextReasoningContent);
+
+        // The fallback applies to this request only, not to the client's subsequent clean conversations.
+        await RespondAsync(client, [new(ChatRole.User, "New task")], ToolOptions(), streaming);
+        using JsonDocument cleanRequest = JsonDocument.Parse(handler.Requests[1]);
+        Assert.Equal("enabled", cleanRequest.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ToolCallCarriesReasoningAcrossClientsWhenMessageMetadataIsStripped(bool streaming)
+    {
+        ValidatingReasoningHttpHandler handler = new();
+        using HttpClient http = new(handler);
+        using DeepSeekUsagePreservingChatClient origin = new(CreateNativeClient(http));
+        using DeepSeekUsagePreservingChatClient destination = new(CreateNativeClient(http));
+        ChatMessage user = new(ChatRole.User, "Inspect the file");
+        ChatResponse response = await RespondAsync(origin, [user], ToolOptions(), streaming);
+        // Handoff history may keep function content while dropping message-level reasoning and IDs.
+        ChatMessage handoff = new(ChatRole.Assistant, response.Messages[0].Contents.OfType<FunctionCallContent>().Cast<AIContent>().ToList());
+
+        await RespondAsync(destination, [user, handoff,
+            new(ChatRole.Tool, [new FunctionResultContent("call-1", "file evidence")])], ToolOptions(), streaming);
+
+        using JsonDocument request = JsonDocument.Parse(handler.Requests[1]);
+        Assert.Equal("enabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.Equal("original reasoning", request.RootElement.GetProperty("messages")[1].GetProperty("reasoning_content").GetString());
+        Assert.DoesNotContain(handoff.Contents, content => content is TextReasoningContent);
+    }
+
+    [Fact]
+    public async Task RestoresJsonReasoningMetadataAndLearnsIncomingHandoffHistory()
+    {
+        ValidatingReasoningHttpHandler handler = new();
+        using HttpClient http = new(handler);
+        using DeepSeekUsagePreservingChatClient client = new(CreateNativeClient(http));
+        using JsonDocument metadata = JsonDocument.Parse("\"persisted reasoning\"");
+        ChatMessage assistant = new(ChatRole.Assistant,
+            [new FunctionCallContent("persisted-call", "read_file", new Dictionary<string, object?>())])
+        {
+            AdditionalProperties = new() { ["reasoning_content"] = metadata.RootElement.Clone() },
+        };
+        ChatMessage result = new(ChatRole.Tool, [new FunctionResultContent("persisted-call", "file evidence")]);
+        await client.GetResponseAsync([assistant, result], ToolOptions());
+        ChatMessage stripped = new(ChatRole.Assistant,
+            [new FunctionCallContent("persisted-call", "read_file", new Dictionary<string, object?>())]);
+        await client.GetResponseAsync([stripped, result], ToolOptions());
+
+        foreach (string body in handler.Requests)
+        {
+            using JsonDocument request = JsonDocument.Parse(body);
+            Assert.Equal("enabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+            Assert.Equal("persisted reasoning", request.RootElement.GetProperty("messages")[0].GetProperty("reasoning_content").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplaysCompleteReasoningFromContentOrNativeRepresentation(bool rawRepresentation)
+    {
+        ValidatingReasoningHttpHandler handler = new();
+        using HttpClient http = new(handler);
+        using DeepSeekUsagePreservingChatClient client = new(CreateNativeClient(http));
+        ChatMessage assistant = new(ChatRole.Assistant, "Plan");
+        if (rawRepresentation)
+        {
+            assistant.RawRepresentation = new DeepSeek.Chat.ChatMessage { ReasoningContent = "complete reasoning" };
+        }
+        else
+        {
+            assistant.Contents.Add(new TextReasoningContent("complete "));
+            assistant.Contents.Add(new TextReasoningContent("reasoning"));
+            assistant.AdditionalProperties = new() { ["reasoning_content"] = "reasoning" };
+        }
+
+        await client.GetResponseAsync([assistant], ToolOptions());
+
+        using JsonDocument request = JsonDocument.Parse(Assert.Single(handler.Requests));
+        Assert.Equal("enabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.Equal("complete reasoning", request.RootElement.GetProperty("messages")[0].GetProperty("reasoning_content").GetString());
+        if (!rawRepresentation) Assert.Equal("reasoning", assistant.AdditionalProperties!["reasoning_content"]);
+    }
+
+    [Fact]
+    public async Task HistoryWithoutToolsKeepsConfiguredThinkingEvenWhenReasoningIsMissing()
+    {
+        ValidatingReasoningHttpHandler handler = new();
+        using HttpClient http = new(handler);
+        using DeepSeekUsagePreservingChatClient client = new(CreateNativeClient(http));
+        ChatOptions options = ToolOptions();
+        options.Tools = null;
+
+        await client.GetResponseAsync([new(ChatRole.Assistant, "Previous response")], options);
+
+        using JsonDocument request = JsonDocument.Parse(Assert.Single(handler.Requests));
+        Assert.Equal("enabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+    }
+
+    private static IChatClient CreateNativeClient(HttpClient http) =>
+        new DeepSeekClient("test-key", new DeepSeekClientOptions
+        {
+            Transport = new HttpClientPipelineTransport(http),
+            RetryPolicy = new ClientRetryPolicy(0),
+        }).GetChatClient("deepseek-flash").AsIChatClient();
+
+    private static ChatOptions ToolOptions() => new()
+    {
+        Tools = [AIFunctionFactory.Create(() => "contents", "read_file")],
+        Reasoning = new() { Effort = ReasoningEffort.High, Output = ReasoningOutput.Full },
+    };
+
+    private static async Task<ChatResponse> RespondAsync(IChatClient client, IEnumerable<ChatMessage> messages,
+        ChatOptions options, bool streaming)
+    {
+        if (!streaming) return await client.GetResponseAsync(messages, options);
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in client.GetStreamingResponseAsync(messages, options)) updates.Add(update);
+        return updates.ToChatResponse();
+    }
+
+    private sealed class ValidatingReasoningHttpHandler : HttpMessageHandler
+    {
+        public List<string> Requests { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            string body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            Requests.Add(body);
+            using JsonDocument json = JsonDocument.Parse(body);
+            bool thinkingDisabled = json.RootElement.TryGetProperty("thinking", out JsonElement thinking) &&
+                thinking.GetProperty("type").GetString() == "disabled";
+            if (!thinkingDisabled && json.RootElement.TryGetProperty("tools", out _))
+            {
+                foreach (JsonElement message in json.RootElement.GetProperty("messages").EnumerateArray())
+                {
+                    if (message.GetProperty("role").GetString() == "assistant" &&
+                        (!message.TryGetProperty("reasoning_content", out JsonElement reasoning) ||
+                         string.IsNullOrWhiteSpace(reasoning.GetString())))
+                    {
+                        return new(HttpStatusCode.BadRequest)
+                        {
+                            Content = new StringContent("""
+                                {"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error"}}
+                                """, System.Text.Encoding.UTF8, "application/json"),
+                        };
+                    }
+                }
+            }
+            return new(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {"id":"response","object":"chat.completion","created":1,"model":"deepseek-flash",
+                     "choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":"original reasoning",
+                     "tool_calls":[{"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}
+                    """, System.Text.Encoding.UTF8, "application/json"),
+            };
+        }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task NativeAdapterReplaysReasoningForTextAndToolTurns(bool streaming)

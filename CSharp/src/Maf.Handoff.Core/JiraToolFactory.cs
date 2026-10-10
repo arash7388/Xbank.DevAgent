@@ -4,8 +4,10 @@ namespace Maf.Handoff.Core;
 
 internal static class JiraToolFactory
 {
-    internal static IList<AITool> Create(IJiraIssueSearch jira) =>
-    [
+    internal static IList<AITool> Create(IJiraIssueSearch jira)
+    {
+        List<AITool> tools =
+        [
         AIFunctionFactory.Create(
             (string issueKey, CancellationToken cancellationToken) => jira.GetIssueDetailsAsync(issueKey, cancellationToken),
             name: AgentToolCatalog.GetJiraIssueDetails.Name, description: AgentToolCatalog.GetJiraIssueDetails.Description),
@@ -28,5 +30,15 @@ internal static class JiraToolFactory
                 jira.GetIssueTitleByKeyAsync(issueKey, cancellationToken),
             name: AgentToolCatalog.GetJiraIssueTitle.Name,
             description: AgentToolCatalog.GetJiraIssueTitle.Description),
-    ];
+        ];
+        if (jira is IJiraProblemReporter reporter)
+            tools.Add(AIFunctionFactory.Create(
+                (string problemInPersian, CancellationToken cancellationToken) => reporter.ReportProblemAsync(problemInPersian, cancellationToken),
+                name: AgentToolCatalog.ReportJiraProblem.Name, description: AgentToolCatalog.ReportJiraProblem.Description));
+        if (jira is IWorkflowUserInput { IsAvailable: true } input)
+            tools.Add(AIFunctionFactory.Create(
+                (string questionsInPersian, CancellationToken cancellationToken) => input.AskAsync(questionsInPersian, cancellationToken),
+                name: AgentToolCatalog.AskJiraClarification.Name, description: AgentToolCatalog.AskJiraClarification.Description));
+        return tools;
+    }
 }

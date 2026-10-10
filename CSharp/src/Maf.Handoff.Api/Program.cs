@@ -132,6 +132,8 @@ app.MapPost("/api/jira/issues/{key}/comments", async (string key, JiraCommentReq
 app.MapGet("/api/providers/configured", (IConfiguration configuration) => Results.Ok(new
 {
     deepseek = !string.IsNullOrWhiteSpace(configuration["Providers:DeepSeek:ApiKey"]),
+    aifa = !string.IsNullOrWhiteSpace(configuration["Providers:AIFA:ApiKey"]),
+    gitlabToken = !string.IsNullOrWhiteSpace(configuration["GitLab:Token"]),
 }));
 
 app.MapGet("/api/projects", (IConfiguration configuration) =>
@@ -149,6 +151,22 @@ app.MapGet("/api/projects", (IConfiguration configuration) =>
 });
 
 app.MapGet("/api/codegraph/config", (CodeGraphService codeGraph) => Results.Ok(codeGraph.GetConfiguration()));
+
+app.MapPost("/api/repositories/branches", async (
+    RepositoryBranchesRequest request, IConfiguration configuration, CancellationToken cancellationToken) =>
+{
+    RepositoryProvider provider = request.SourceControl?.Trim().ToLowerInvariant() switch
+    {
+        "github" => RepositoryProvider.GitHub,
+        "gitlab" => RepositoryProvider.GitLab,
+        _ => throw new ArgumentException("Source control must be either 'github' or 'gitlab'."),
+    };
+    string? token = string.IsNullOrWhiteSpace(request.AccessToken)
+        ? configuration[provider == RepositoryProvider.GitHub ? "GitHub:Token" : "GitLab:Token"]
+        : request.AccessToken.Trim();
+    return Results.Ok(await RepositoryWorkspace.ListBranchesAsync(
+        request.RepositoryUrl.Trim(), token, cancellationToken, provider, configuration["GitLab:Host"]));
+});
 
 app.MapPost("/api/codegraph/index", (CodeGraphIndexRequest request, CodeGraphService codeGraph) =>
     Results.Accepted("/api/codegraph/index/status", codeGraph.StartIndex(request)));
@@ -197,7 +215,8 @@ app.MapPost("/api/reference-collections", async (
         form["embeddingApiKey"].ToString(),
         form["qdrantUrl"].ToString(),
         form["qdrantApiKey"].ToString(),
-        cancellationToken);
+        cancellationToken,
+        form["searchMode"].ToString());
     return Results.Created($"/api/reference-collections/{collection.Id}", collection);
 });
 
@@ -230,6 +249,9 @@ app.MapPost("/api/sessions/{id:guid}/cancel", (Guid id, RepositorySessionService
     sessions.Cancel(id);
     return Results.Ok(sessions.Get(id));
 });
+
+app.MapPost("/api/sessions/{id:guid}/clarify", (Guid id, ClarifySessionRequest request, RepositorySessionService sessions) =>
+    Results.Ok(sessions.Clarify(id, request)));
 
 app.MapPost("/api/sessions/{id:guid}/reject", (Guid id, RepositorySessionService sessions) =>
 {
@@ -275,3 +297,4 @@ static async Task WriteErrorAsync(HttpContext context, int statusCode, string me
 public partial class Program;
 
 public sealed record JiraCommentRequest(string Comment);
+public sealed record RepositoryBranchesRequest(string RepositoryUrl, string SourceControl, string? AccessToken);

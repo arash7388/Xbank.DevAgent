@@ -10,6 +10,13 @@ These tests execute real Microsoft Agent Framework workflows with scripted chat 
 tool stubs. They verify orchestration and conversation transport without paid provider requests.
 They cannot prove every possible model response or the availability of external providers.
 
+The diagnostic panel's dependency-free rendering checks cover archived streaming output, full-message
+copying, edit actions, and safe handling of HTML and link content. Run them with Node.js 18 or newer:
+
+```powershell
+node CSharp/tests/ui/run-diagnostics.test.cjs
+```
+
 | Situation | Verification |
 | --- | --- |
 | Jira, Reviewer, and Security enabled or disabled | All eight configurations, with the expected active-agent sequence |

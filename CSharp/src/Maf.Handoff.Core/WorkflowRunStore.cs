@@ -236,6 +236,8 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
                 usage = System.Text.Json.JsonSerializer.Deserialize<RunUsageMetrics>(json, AuditJson);
         }
         List<RunStatusLogEntry> history = [];
+        if (usage is not null)
+            usage = usage with { TokenUsage = usage.TokenUsage.WithCheckpoints(hits) };
         using (SqliteCommand command = connection.CreateCommand())
         {
             command.Transaction = transaction;

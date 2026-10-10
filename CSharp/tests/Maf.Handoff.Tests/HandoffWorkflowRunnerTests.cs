@@ -7,6 +7,46 @@ namespace Maf.Handoff.Tests;
 public sealed class HandoffWorkflowRunnerTests
 {
     [Fact]
+    public async Task EmitsAnIndependentSummaryForEveryAgentWithoutExtraModelCalls()
+    {
+        SummaryHandoffChatClient chatClient = new();
+        WorkflowSettings settings = new("https://example.test", "test-model", "test-key",
+            MaxTotalMessages: 30, MaxAgentTurns: 5);
+        HandoffWorkflowRunner runner = new(settings, chatClient: chatClient);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        List<RunEvent> events = [];
+
+        await foreach (RunEvent item in runner.RunAsync("Make a small change.", timeout.Token)) events.Add(item);
+
+        Assert.DoesNotContain(events, item => item.Type == "error");
+        Assert.Contains(events, item => item.Type == "run_finished" && item.Status == "completed");
+        Assert.Equal(4, chatClient.CallCount);
+        foreach (string name in AgentNames.Required)
+        {
+            RunEvent summary = events.Last(item => item.Type == "agent_summary" && item.Agent == name);
+            Assert.Equal("provided", summary.Status);
+            Assert.Equal($"{name} completed its own work.", summary.Text);
+        }
+        Assert.DoesNotContain(events, item => item.Type == "agent_summary" && item.Agent is "jira" or "security");
+    }
+
+    [Fact]
+    public async Task RetainsSeparateSummaryStatesWhenProviderFailsBeforeResponding()
+    {
+        RecordingChatClient chatClient = new(fail: true);
+        WorkflowSettings settings = new("https://example.test", "test-model", "test-key");
+        HandoffWorkflowRunner runner = new(settings, chatClient: chatClient);
+        List<RunEvent> events = [];
+
+        await foreach (RunEvent item in runner.RunAsync("Make a small change.")) events.Add(item);
+
+        Assert.Contains(events, item => item.Type == "error");
+        Assert.Equal(1, chatClient.CallCount);
+        Assert.Equal("unavailable", events.Last(item => item.Type == "agent_summary" && item.Agent == "planner").Status);
+        Assert.Equal("not_run", events.Last(item => item.Type == "agent_summary" && item.Agent == "developer").Status);
+    }
+
+    [Fact]
     public async Task TriggersTheStartingAgentTurn()
     {
         RecordingChatClient chatClient = new();
@@ -27,6 +67,8 @@ public sealed class HandoffWorkflowRunnerTests
         Assert.True(chatClient.CallCount > 0);
         Assert.Contains(events, runEvent =>
             runEvent.Type == "message" && runEvent.Text?.Contains("Test response") is true);
+        Assert.Equal("unavailable", events.Last(item => item.Type == "agent_summary" && item.Agent == "planner").Status);
+        Assert.Equal("not_run", events.Last(item => item.Type == "agent_summary" && item.Agent == "developer").Status);
     }
 
     [Fact]
@@ -59,7 +101,39 @@ public sealed class HandoffWorkflowRunnerTests
         Assert.Contains(events, runEvent => runEvent.Type == "handoff");
     }
 
-    private sealed class RecordingChatClient : IChatClient
+    private sealed class SummaryHandoffChatClient : IChatClient
+    {
+        public int CallCount { get; private set; }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            CancellationToken cancellationToken = default) => Task.FromResult(Next(options));
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            foreach (ChatResponseUpdate update in Next(options).ToChatResponseUpdates()) yield return update;
+        }
+
+        private ChatResponse Next(ChatOptions? options)
+        {
+            int index = CallCount++;
+            string agent = AgentNames.Required[index];
+            string text = $"<agent_summary>{agent} completed its own work.</agent_summary>";
+            if (agent == AgentNames.ReleaseManager)
+                return new(new ChatMessage(ChatRole.Assistant, text + "\nWORKFLOW_COMPLETE"));
+            if (agent == AgentNames.Reviewer) text += "\nREVIEW_APPROVED";
+            string handoff = options!.Tools!.Last(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal)).Name;
+            return new(new ChatMessage(ChatRole.Assistant,
+                [new TextContent(text), new FunctionCallContent($"handoff-{index}", handoff,
+                    new Dictionary<string, object?> { ["reasonForHandoff"] = text })]));
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => serviceType.IsInstanceOfType(this) ? this : null;
+        public void Dispose() { }
+    }
+
+    private sealed class RecordingChatClient(bool fail = false) : IChatClient
     {
         public int CallCount { get; private set; }
 
@@ -69,6 +143,7 @@ public sealed class HandoffWorkflowRunnerTests
             CancellationToken cancellationToken = default)
         {
             CallCount++;
+            if (fail) throw new InvalidOperationException("Test provider failure.");
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Test response")));
         }
 
@@ -78,6 +153,7 @@ public sealed class HandoffWorkflowRunnerTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             CallCount++;
+            if (fail) throw new InvalidOperationException("Test provider failure.");
             await Task.Yield();
             yield return new ChatResponseUpdate(ChatRole.Assistant, "Test response");
         }

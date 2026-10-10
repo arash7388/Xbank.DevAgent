@@ -19,6 +19,15 @@ public sealed record RunEvent(
 
     public static RunEvent Finished(string status) => new("run_finished", Status: status);
 
+    public static RunEvent AgentSummary(string agent, string text, string status = "provided") =>
+        new("agent_summary", agent, text, Status: status, Category: "summary");
+
+    public static RunEvent JiraProblem(string? issueKey, string text, string status, string? url = null) =>
+        new("jira_problem", AgentNames.Jira, text, Source: issueKey, Target: url, Status: status, Category: "jira");
+
+    public static RunEvent JiraScopeChange(string? issueKey, string text, string status, string? url = null) =>
+        new("jira_scope_change", AgentNames.Developer, text, Source: issueKey, Target: url, Status: status, Category: "jira");
+
     public static RunEvent Trace(string? agent, string text, string category = "lifecycle") =>
         new("trace", agent, text, Category: category);
 

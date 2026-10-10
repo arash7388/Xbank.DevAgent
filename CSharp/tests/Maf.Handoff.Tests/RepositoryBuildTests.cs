@@ -1,0 +1,41 @@
+using System.Diagnostics;
+using System.Reflection;
+using Maf.Handoff.Core;
+
+namespace Maf.Handoff.Tests;
+
+public sealed class RepositoryBuildTests
+{
+    [Fact]
+    public async Task BuildsNewProjectReportsCompilerErrorsAndBuildsTheFix()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-build", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using Process git = Process.Start(new ProcessStartInfo("git")
+            {
+                WorkingDirectory = root, ArgumentList = { "init", "--quiet" },
+                UseShellExecute = false, CreateNoWindow = true,
+            })!;
+            await git.WaitForExitAsync();
+            Assert.Equal(0, git.ExitCode);
+            File.WriteAllText(Path.Combine(root, ".gitignore"), "bin/\nobj/\n");
+            File.WriteAllText(Path.Combine(root, "Example.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(root, "Example.cs"), "public class Example { invalid syntax }");
+            RepositoryWorkspace workspace = (RepositoryWorkspace)typeof(RepositoryWorkspace)
+                .GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single()
+                .Invoke([root, "https://github.com/example/repo", "main", null]);
+
+            RepositoryBuildResult failed = await workspace.BuildAsync(CancellationToken.None);
+            Assert.False(failed.Succeeded);
+            Assert.Contains("error CS", failed.Evidence);
+            File.WriteAllText(Path.Combine(root, "Example.cs"), "public class Example { }");
+            RepositoryBuildResult fixedResult = await workspace.BuildAsync(CancellationToken.None);
+            Assert.True(fixedResult.Succeeded, fixedResult.Evidence);
+            Assert.Contains("BUILD_PASSED", fixedResult.Evidence);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+}

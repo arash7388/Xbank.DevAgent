@@ -14,7 +14,7 @@ public sealed record JiraCreateIssueRequest(
     JsonElement? AdditionalFields = null);
 
 // Adapted from ReleaseManager/Services/JiraService.cs. The workflow agent receives
-// only read tools; create and comment are available through explicit workbench actions.
+// read tools plus a task-scoped problem-comment capability; other writes use workbench actions.
 public sealed partial class JiraService(HttpClient httpClient, IConfiguration configuration) : IJiraIssueSearch
 {
     private readonly HttpClient _httpClient = httpClient;
@@ -205,6 +205,14 @@ public sealed partial class JiraService(HttpClient httpClient, IConfiguration co
         {
             throw new ArgumentException("A full Jira issue key is required.", nameof(issueKey));
         }
+    }
+
+    public string GetIssueUrl(string issueKey, string? commentId = null)
+    {
+        ValidateIssueKey(issueKey);
+        string path = $"browse/{Uri.EscapeDataString(issueKey)}";
+        if (!string.IsNullOrWhiteSpace(commentId)) path += $"?focusedCommentId={Uri.EscapeDataString(commentId)}";
+        return new Uri(GetBaseUrl(), path).AbsoluteUri;
     }
 
     private async Task<JsonDocument> GetJsonAsync(string path, CancellationToken cancellationToken)

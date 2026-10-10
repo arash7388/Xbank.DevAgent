@@ -16,6 +16,9 @@ public static class HandoffTopology
 
     public const string ReviewerRemediationLimitMarker = "WORKFLOW_REVIEWER_REMEDIATION_LIMIT_REACHED";
 
+    public const string LoopDetectedMarker = "WORKFLOW_LOOP_DETECTED";
+    public const string LoopRecoveryMarker = "WORKFLOW_LOOP_RECOVERY";
+
     public const string ReleaseRejectionMarker = "WORKFLOW_REJECTED";
 
     public const string JiraClarificationMarker = "JIRA_INPUT_REQUIRED";
@@ -44,6 +47,8 @@ public static class HandoffTopology
         ChatMessage[] assistantMessages = [.. conversation.Where(message => message.Role == ChatRole.Assistant)];
         // Limits and rejection take precedence over approval. Tool results and user-supplied
         // marker literals are evidence, not control messages.
+        if (assistantMessages.Any(message => message.Text.Contains(LoopDetectedMarker, StringComparison.Ordinal)))
+            return "loop_detected";
         if (assistantMessages.Any(message => message.Text.Contains(BudgetLimitMarker, StringComparison.Ordinal))) return "budget_limit_reached";
         if (assistantMessages.Any(message => IsRequestLimitMessage(message.Text))) return "request_limit_reached";
         if (assistantMessages.Any(message => message.Text.Contains(AgentTurnLimitMarker, StringComparison.Ordinal)))

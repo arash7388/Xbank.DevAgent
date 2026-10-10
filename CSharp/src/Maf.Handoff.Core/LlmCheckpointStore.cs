@@ -342,7 +342,8 @@ internal sealed class CheckpointingChatClient(
     string agent,
     WorkflowSettings settings,
     LlmCheckpointMetrics metrics,
-    string workflowId) : IChatClient
+    string workflowId,
+    TokenUsageCollector? usageCollector = null) : IChatClient
 {
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
@@ -358,6 +359,7 @@ internal sealed class CheckpointingChatClient(
         if (checkpoint is not null)
         {
             metrics.RecordHit();
+            usageCollector?.RecordCheckpointHit(agent);
             (store as IAiCallStore)?.RecordCheckpointHit(workflowId, agent, settings.Model, request.CacheKey);
             return CheckpointSerialization.DeserializeResponse(checkpoint.ResponseJson);
         }
@@ -414,6 +416,7 @@ internal sealed class CheckpointingChatClient(
         if (checkpoint is not null)
         {
             metrics.RecordHit();
+            usageCollector?.RecordCheckpointHit(agent);
             (store as IAiCallStore)?.RecordCheckpointHit(workflowId, agent, settings.Model, request.CacheKey);
             foreach (ChatResponseUpdate update in CheckpointSerialization
                 .DeserializeResponse(checkpoint.ResponseJson)
@@ -569,7 +572,9 @@ internal static class CheckpointSerialization
 
     internal static CheckpointResponse SerializeResponse(ChatResponse response)
     {
-        bool reusable = !HandoffTopology.IsRequestLimitMessage(response.Text) && response.Messages
+        bool reusable = !HandoffTopology.IsRequestLimitMessage(response.Text) &&
+            JiraScopeChangeReportingChatClient.FindChanges(response) is null &&
+            JiraProblemReportingChatClient.FindProblemAssessment(response) is null && response.Messages
             .SelectMany(message => message.Contents)
             .All(IsReusableContent);
         ResponseDto dto = new(
@@ -708,7 +713,8 @@ internal static class CheckpointSerialization
     };
 
     private static bool IsReusableContent(AIContent content) =>
-        content is TextContent or TextReasoningContent or FunctionCallContent or UsageContent;
+        content is TextContent or TextReasoningContent or FunctionCallContent or UsageContent &&
+        (content is not FunctionCallContent call || call.Name is not ("report_jira_problem" or "report_jira_scope_change" or "ask_jira_clarification"));
 
     private static object? SafeValue(object? value)
     {

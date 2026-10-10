@@ -59,6 +59,8 @@ public static class AgentTeamFactory
             StringComparer.Ordinal);
         if (workspace is not null)
         {
+            effectiveClients[AgentNames.Reviewer] = new ReviewerBuildGuardChatClient(
+                Get(effectiveClients, AgentNames.Reviewer), workspace.BuildAsync);
             effectiveClients[AgentNames.Developer] = new DeveloperHandoffGuardChatClient(
                 Get(effectiveClients, AgentNames.Developer),
                 () => !string.IsNullOrWhiteSpace(workspace.GetDiff()));
@@ -67,12 +69,18 @@ public static class AgentTeamFactory
         ReviewerRemediationBudget remediationBudget = new(
             workflowSettings.MaxReviewerRemediationCycles);
         WorkflowExecutionBudget executionBudget = new(workflowSettings);
+        WorkflowLoopBudget loopBudget = new(workflowSettings.MaxRepeatedWorkflowStates);
         effectiveClients = effectiveClients.ToDictionary(
             pair => pair.Key,
-            pair => (IChatClient)new ReviewerRemediationGuardChatClient(
+            pair => (IChatClient)new WorkflowLoopGuardChatClient(new ReviewerRemediationGuardChatClient(
                 new WorkflowExecutionGuardChatClient(pair.Value, pair.Key, executionBudget),
-                pair.Key, remediationBudget),
+                pair.Key, remediationBudget), pair.Key, loopBudget, () => workspace?.GetProgressFingerprint() ?? ""),
             StringComparer.Ordinal);
+
+        // Clarification retries must pass through the same execution and request budgets.
+        if (effectiveClients.TryGetValue(AgentNames.Jira, out IChatClient? intake) &&
+            jira is IWorkflowUserInput { IsAvailable: true } input)
+            effectiveClients[AgentNames.Jira] = new JiraClarificationChatClient(intake, input);
 
         return new(
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Task readiness, requirements validation, and integration reconnaissance.", AgentPrompts.Jira,
@@ -85,6 +93,10 @@ public static class AgentTeamFactory
 
         IChatClient CreateEffectiveClient(string agentName, IChatClient client)
         {
+            if (agentName == AgentNames.Jira && jira is IJiraProblemReporter reporter)
+                client = new JiraProblemReportingChatClient(client, reporter);
+            if (agentName == AgentNames.Developer && jira is IJiraScopeChangeReporter changes)
+                client = new JiraScopeChangeReportingChatClient(client, changes);
             IChatClient effective = codeGraphAvailable && CodeGraphPolicy.IsUsefulFor(agentName)
                 ? new CodeGraphPrefetchChatClient(client)
                 : client;
@@ -120,6 +132,10 @@ public static class AgentTeamFactory
             {
                 tools.AddRange(JiraToolFactory.Create(jira));
             }
+            if (agentName == AgentNames.Developer && jira is IJiraScopeChangeReporter changes)
+                tools.Add(AIFunctionFactory.Create(
+                    (string changesInPersian, CancellationToken cancellationToken) => changes.ReportScopeChangeAsync(changesInPersian, cancellationToken),
+                    name: AgentToolCatalog.ReportJiraScopeChange.Name, description: AgentToolCatalog.ReportJiraScopeChange.Description));
 
             if (codeGraphAvailable && CodeGraphPolicy.IsUsefulFor(agentName))
             {

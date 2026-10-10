@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -24,6 +25,8 @@ public sealed partial class RepositoryWorkspace
 
     private readonly string? _accessToken;
     private RepositoryProvider _provider;
+    private readonly Lock _progressGate = new();
+    private string? _progressFingerprint;
 
     private RepositoryWorkspace(string rootPath, string repositoryUrl, string baseBranch, string? accessToken)
     {
@@ -41,7 +44,7 @@ public sealed partial class RepositoryWorkspace
 
     public string RepositoryUrl { get; }
 
-    public string BaseBranch { get; }
+    public string BaseBranch { get; private set; }
 
     /// <summary>Returns whether the cloned repository tracks at least one C# source file.</summary>
     public bool ContainsCSharpSource() => ListFiles().Split(
@@ -75,9 +78,11 @@ public sealed partial class RepositoryWorkspace
         {
             _provider = provider,
         };
+        workspace.BaseBranch = ResolveBaseBranch(baseBranch, await ListBranchesAsync(
+            repositoryUrl, githubToken, cancellationToken, provider, gitLabHost));
         GitResult result = await workspace.RunGitAsync(
             workingDirectory: root,
-            ["clone", "--depth", "1", "--branch", baseBranch, "--", repositoryUrl, clonePath],
+            ["clone", "--depth", "1", "--branch", workspace.BaseBranch, "--", repositoryUrl, clonePath],
             cancellationToken);
         if (result.ExitCode != 0)
         {
@@ -85,6 +90,61 @@ public sealed partial class RepositoryWorkspace
         }
 
         return workspace;
+    }
+
+    public static async Task<string[]> ListBranchesAsync(
+        string repositoryUrl,
+        string? accessToken,
+        CancellationToken cancellationToken,
+        RepositoryProvider provider = RepositoryProvider.GitHub,
+        string? gitLabHost = null)
+    {
+        ValidateRepositoryUrl(repositoryUrl, provider, gitLabHost);
+        RepositoryWorkspace workspace = new(Path.GetTempPath(), repositoryUrl, string.Empty, accessToken)
+        {
+            _provider = provider,
+        };
+        GitResult branches = await workspace.RunGitAsync(
+            workspace.RootPath, ["ls-remote", "--heads", "--", repositoryUrl], cancellationToken);
+        if (branches.ExitCode != 0)
+        {
+            throw new RepositoryException($"Unable to list repository branches: {SanitizeGitError(branches.StandardError)}");
+        }
+
+        return ParseRemoteBranches(branches.StandardOutput);
+    }
+
+    internal static string[] ParseRemoteBranches(string output)
+    {
+        const string headPrefix = "refs/heads/";
+        return output
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => line.Split('\t', 2))
+            .Where(parts => parts.Length == 2 && parts[1].StartsWith(headPrefix, StringComparison.Ordinal))
+            .Select(parts => parts[1][headPrefix.Length..])
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    internal static string ResolveBaseBranch(string requestedBranch, IEnumerable<string> remoteBranches)
+    {
+        string[] matches = remoteBranches
+            .Where(branch => branch.Equals(requestedBranch, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (matches.Contains(requestedBranch, StringComparer.Ordinal))
+        {
+            return requestedBranch;
+        }
+
+        return matches.Length switch
+        {
+            1 => matches[0],
+            0 => throw new RepositoryException($"Base branch '{requestedBranch}' was not found in the repository."),
+            _ => throw new RepositoryException(
+                $"Base branch '{requestedBranch}' matches multiple branches: {string.Join(", ", matches)}. Enter the exact branch name."),
+        };
     }
 
     [Description("Lists tracked source files in the cloned repository. The optional pattern is a case-insensitive substring.")]
@@ -220,14 +280,18 @@ public sealed partial class RepositoryWorkspace
 
         string fullPath = ResolveSourcePath(path, mustExist: false);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        File.WriteAllText(fullPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        lock (_progressGate)
+        {
+            File.WriteAllText(fullPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            _progressFingerprint = null;
+        }
         return $"Wrote {path} ({Encoding.UTF8.GetByteCount(content)} bytes).";
     }
 
-    [Description("Replaces one exact text occurrence in an existing source file while preserving all unrelated content.")]
+    [Description("Replaces one unique text occurrence in an existing source file. Matching tolerates line-ending differences only; replacement preserves local line endings and all unrelated content.")]
     public string ReplaceText(
         [Description("Repository-relative source file path.")] string path,
-        [Description("Exact existing text to replace. The edit is rejected unless it occurs exactly once.")] string oldText,
+        [Description("Existing text to replace, including exact indentation and whitespace. LF, CRLF and CR line endings are equivalent. The edit is rejected unless it occurs exactly once.")] string oldText,
         [Description("Replacement text.")] string newText)
     {
         if (string.IsNullOrEmpty(oldText))
@@ -249,25 +313,63 @@ public sealed partial class RepositoryWorkspace
 
         bool hasUtf8Bom = originalBytes.AsSpan().StartsWith(Encoding.UTF8.Preamble);
         string content = File.ReadAllText(fullPath);
-        int first = content.IndexOf(oldText, StringComparison.Ordinal);
+        // Models may use LF even when the source uses CRLF. Map normalized offsets back
+        // to the original text so matching never rewrites unrelated lines or whitespace.
+        (string matchContent, int[] offsets) = NormalizeEditContent(content);
+        string matchText = NormalizeEditLineEndings(oldText, "\n");
+        int first = matchContent.IndexOf(matchText, StringComparison.Ordinal);
         if (first < 0)
         {
             return "Exact existing text was not found; no change was made.";
         }
 
-        if (content.IndexOf(oldText, first + oldText.Length, StringComparison.Ordinal) >= 0)
+        if (matchContent.IndexOf(matchText, first + matchText.Length, StringComparison.Ordinal) >= 0)
         {
             return "Exact existing text occurs more than once; narrow the match before editing.";
         }
 
-        string updated = string.Concat(content.AsSpan(0, first), newText, content.AsSpan(first + oldText.Length));
+        int start = offsets[first];
+        int end = offsets[first + matchText.Length];
+        string lineEnding = FindLineEnding(content[start..end]) ?? FindLineEnding(content) ?? "\n";
+        string updated = string.Concat(content.AsSpan(0, start), NormalizeEditLineEndings(newText, lineEnding), content.AsSpan(end));
         if (Encoding.UTF8.GetByteCount(updated) > MaxFileBytes)
         {
             return $"Updated content exceeds the {MaxFileBytes}-byte write limit.";
         }
 
-        File.WriteAllText(fullPath, updated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: hasUtf8Bom));
+        lock (_progressGate)
+        {
+            File.WriteAllText(fullPath, updated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: hasUtf8Bom));
+            _progressFingerprint = null;
+        }
         return $"Replaced one exact occurrence in {path}.";
+    }
+
+    private static (string Text, int[] Offsets) NormalizeEditContent(string content)
+    {
+        StringBuilder normalized = new(content.Length);
+        int[] offsets = new int[content.Length + 1];
+        for (int index = 0; index < content.Length; index++)
+        {
+            offsets[normalized.Length] = index;
+            char character = content[index];
+            normalized.Append(character == '\r' ? '\n' : character);
+            if (character == '\r' && index + 1 < content.Length && content[index + 1] == '\n') index++;
+        }
+        offsets[normalized.Length] = content.Length;
+        return (normalized.ToString(), offsets);
+    }
+
+    private static string NormalizeEditLineEndings(string text, string lineEnding) =>
+        text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n')
+            .Replace("\n", lineEnding, StringComparison.Ordinal);
+
+    private static string? FindLineEnding(string content)
+    {
+        int index = content.IndexOfAny(['\r', '\n']);
+        if (index < 0) return null;
+        return content[index] == '\r' && index + 1 < content.Length && content[index + 1] == '\n'
+            ? "\r\n" : content[index].ToString();
     }
 
     [Description("Returns the current Git status for the isolated clone.")]
@@ -301,6 +403,40 @@ public sealed partial class RepositoryWorkspace
         }
 
         return Limit(diff.ToString());
+    }
+
+    internal string GetProgressFingerprint()
+    {
+        // Agents mutate this isolated clone only through WriteFile/ReplaceText, which invalidate
+        // the cached content hash. Ordinary reads and handoffs need no additional Git processes.
+        lock (_progressGate) return _progressFingerprint ??= ComputeProgressFingerprint();
+    }
+
+    private string ComputeProgressFingerprint()
+    {
+        // One Git query plus full hashes of changed files; display truncation must not hide progress.
+        GitResult status = RunGitAsync(RootPath,
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all"], CancellationToken.None,
+            truncateOutput: false).GetAwaiter().GetResult();
+        if (status.ExitCode != 0)
+            throw new RepositoryException($"Unable to inspect workflow progress: {SanitizeGitError(status.StandardError)}");
+        using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(Encoding.UTF8.GetBytes(status.StandardOutput));
+        string[] entries = status.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        for (int index = 0; index < entries.Length; index++)
+        {
+            string entry = entries[index];
+            if (entry.Length < 4) continue;
+            string path = entry[3..];
+            // With -z, a rename/copy has a second NUL-delimited original path.
+            if (entry[..2].Contains('R') || entry[..2].Contains('C')) index++;
+            if (!IsAllowedSourceFile(path)) continue;
+            string fullPath = ResolveSourcePath(path, mustExist: false);
+            if (!File.Exists(fullPath)) continue; // Deleted paths are already represented in status.
+            using FileStream file = File.OpenRead(fullPath);
+            hash.AppendData(SHA256.HashData(file));
+        }
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 
     public async Task<ApprovalResult> CommitAsync(
@@ -458,7 +594,23 @@ public sealed partial class RepositoryWorkspace
     private async Task<GitResult> RunGitAsync(
         string workingDirectory,
         IReadOnlyList<string> arguments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool truncateOutput = true)
+    {
+        ProcessStartInfo startInfo = CreateGitStartInfo(workingDirectory, arguments, _provider, _accessToken);
+        using Process process = Process.Start(startInfo) ?? throw new RepositoryException("Unable to start Git.");
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        string output = await outputTask;
+        return new(process.ExitCode, truncateOutput ? Limit(output) : output, Limit(await errorTask));
+    }
+
+    internal static ProcessStartInfo CreateGitStartInfo(
+        string workingDirectory,
+        IReadOnlyList<string> arguments,
+        RepositoryProvider provider,
+        string? accessToken)
     {
         ProcessStartInfo startInfo = new("git")
         {
@@ -480,25 +632,30 @@ public sealed partial class RepositoryWorkspace
         startInfo.Environment[$"GIT_CONFIG_VALUE_{configIndex}"] = emptyHooksPath;
         configIndex++;
 
-        if (!string.IsNullOrWhiteSpace(_accessToken))
+        // Background Git operations must never open a credential-manager login dialog.
+        startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        startInfo.Environment["GCM_INTERACTIVE"] = "Never";
+        if (!string.IsNullOrWhiteSpace(accessToken))
         {
-            string userName = _provider == RepositoryProvider.GitHub ? "x-access-token" : "oauth2";
-            string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{userName}:{_accessToken}"));
+            // Reset inherited helpers and authorization headers so only the supplied token is used.
+            startInfo.Environment[$"GIT_CONFIG_KEY_{configIndex}"] = "credential.helper";
+            startInfo.Environment[$"GIT_CONFIG_VALUE_{configIndex}"] = string.Empty;
+            configIndex++;
+            startInfo.Environment[$"GIT_CONFIG_KEY_{configIndex}"] = "http.extraHeader";
+            startInfo.Environment[$"GIT_CONFIG_VALUE_{configIndex}"] = string.Empty;
+            configIndex++;
+            string userName = provider == RepositoryProvider.GitHub ? "x-access-token" : "oauth2";
+            string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{userName}:{accessToken.Trim()}"));
             startInfo.Environment[$"GIT_CONFIG_KEY_{configIndex}"] = "http.extraHeader";
             startInfo.Environment[$"GIT_CONFIG_VALUE_{configIndex}"] = $"Authorization: Basic {credentials}";
             configIndex++;
-            startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         }
 
         startInfo.Environment["GIT_CONFIG_COUNT"] = configIndex.ToString(
             System.Globalization.CultureInfo.InvariantCulture);
         startInfo.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
 
-        using Process process = Process.Start(startInfo) ?? throw new RepositoryException("Unable to start Git.");
-        Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        return new(process.ExitCode, Limit(await outputTask), Limit(await errorTask));
+        return startInfo;
     }
 
     private static string SanitizeGitError(string error) =>

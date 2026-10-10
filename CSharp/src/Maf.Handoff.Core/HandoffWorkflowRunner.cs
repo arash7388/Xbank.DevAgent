@@ -132,8 +132,11 @@ public sealed class HandoffWorkflowRunner
         string status = "stopped_without_release_approval";
         string? activeAgent = null;
         HashSet<string> observedToolCalls = new(StringComparer.Ordinal);
+        AgentRunSummaryCollector summaries = new(bundle.Team.All.Select(agent => agent.Name!));
 
         yield return RunEvent.Trace(null, $"Workflow started. Waiting for the {bundle.Team.StartAgent.Name} agent.");
+        foreach (RunEvent summary in summaries.InitialEvents()) yield return summary;
+        if (summaries.Activate(bundle.Team.StartAgent.Name) is RunEvent startingSummary) yield return startingSummary;
 
         await using StreamingRun run = await InProcessExecution
             .RunStreamingAsync(bundle.Workflow, task, cancellationToken: cancellationToken)
@@ -166,6 +169,7 @@ public sealed class HandoffWorkflowRunner
                         }
 
                         activeAgent = nextAgent ?? activeAgent;
+                        if (summaries.Activate(activeAgent) is RunEvent pendingSummary) yield return pendingSummary;
                         foreach (FunctionCallContent call in update.Update.Contents.OfType<FunctionCallContent>())
                         {
                             string identity = call.CallId ?? call.Name;
@@ -187,6 +191,9 @@ public sealed class HandoffWorkflowRunner
                             ?? response.Response.AgentId
                             ?? activeAgent;
                         activeAgent = responseAgent ?? activeAgent;
+                        if (summaries.Activate(responseAgent) is RunEvent responsePendingSummary) yield return responsePendingSummary;
+                        if (summaries.Observe(responseAgent, response.Response.Messages) is RunEvent agentSummary)
+                            yield return agentSummary;
                         string finishReason = response.Response.FinishReason?.ToString() ?? "not reported";
                         int messageCount = response.Response.Messages.Count;
                         string contentKinds = string.Join(", ", response.Response.Messages
@@ -287,6 +294,6 @@ public sealed class HandoffWorkflowRunner
         IChatClient effective = new UsageTrackingChatClient(provider, agent, usageCollector);
         return _checkpointStore is null
             ? effective
-            : new CheckpointingChatClient(effective, _checkpointStore, agent, settings, checkpointMetrics, workflowId);
+            : new CheckpointingChatClient(effective, _checkpointStore, agent, settings, checkpointMetrics, workflowId, usageCollector);
     }
 }

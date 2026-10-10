@@ -37,6 +37,7 @@ public sealed class TaskBranchNameTests
     [Theory]
     [InlineData("agent/change-42")]
     [InlineData("user/WEPOD-99")]
-    public void ApprovalRejectsBranchOverride(string branch)
-        => Assert.Throws<ArgumentException>(() => TaskBranchName.ForApproval("WEPOD-42", "Fix validation", branch));
+    [InlineData("  feature/custom-branch  ")]
+    public void ApprovalUsesEditedBranch(string branch)
+        => Assert.Equal(branch.Trim(), TaskBranchName.ForApproval("WEPOD-42", "Fix validation", branch));
 }

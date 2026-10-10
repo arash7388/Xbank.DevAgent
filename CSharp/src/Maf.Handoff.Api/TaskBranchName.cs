@@ -33,9 +33,8 @@ public static class TaskBranchName
 
     public static string ForApproval(string? jiraIssueKey, string task, string? requestedBranch)
     {
-        string branch = FromTask(jiraIssueKey, task);
-        if (!string.IsNullOrWhiteSpace(requestedBranch) && requestedBranch.Trim() != branch)
-            throw new ArgumentException($"The branch for this task must be {branch}.");
-        return branch;
+        return string.IsNullOrWhiteSpace(requestedBranch)
+            ? FromTask(jiraIssueKey, task)
+            : requestedBranch.Trim();
     }
 }

@@ -1,0 +1,64 @@
+const assert = require('assert').strict;
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/wwwroot/app.js'), 'utf8');
+const start = source.indexOf('function renderJiraClarification(');
+const end = source.indexOf('\nasync function refresh(', start);
+const panel = { hidden: true, dataset: {} };
+const answer = { value: '' };
+const questions = { textContent: '' };
+const error = { hidden: true };
+const nodes = { '#jira-clarification': panel, '#jira-clarification-answer': answer,
+  '#jira-clarification-questions': questions, '#jira-clarification-error': error };
+const context = { document: { querySelector: selector => nodes[selector] } };
+vm.createContext(context);
+vm.runInContext(source.slice(start, end), context);
+const snapshot = { status: 'awaiting_input', clarification: { id: 'first', questions: 'Which value? <img src=x>' } };
+context.renderJiraClarification(snapshot);
+assert.equal(panel.hidden, false);
+assert.equal(questions.textContent, snapshot.clarification.questions);
+answer.value = 'An answer in progress';
+context.renderJiraClarification(snapshot);
+assert.equal(answer.value, 'An answer in progress');
+context.renderJiraClarification({ status: 'running' });
+assert.equal(panel.hidden, true);
+context.renderJiraClarification({ ...snapshot, clarification: { id: 'second', questions: 'Which environment?' } });
+assert.equal(answer.value, '');
+assert.equal(panel.dataset.clarificationId, 'second');
+context.renderJiraClarification({ status: 'cancelled', clarification: snapshot.clarification });
+assert.equal(panel.hidden, true);
+async function testSubmission() {
+  let submitHandler;
+  const submit = { disabled: false };
+  nodes['#jira-clarification-submit'] = submit;
+  nodes['#jira-clarification-form'] = { addEventListener: (_, handler) => { submitHandler = handler; } };
+  let request;
+  let rendered;
+  context.sessionId = 'same-session';
+  context.api = async (url, options) => {
+    request = { url, payload: JSON.parse(options.body) };
+    return { status: 'running' };
+  };
+  context.render = snapshot => { rendered = snapshot; };
+  const handlerStart = source.indexOf("document.querySelector('#jira-clarification-form').addEventListener");
+  vm.runInContext(source.slice(handlerStart, start), context);
+  panel.dataset.clarificationId = 'second';
+  answer.value = '  Staging  ';
+  await submitHandler({ preventDefault() {} });
+  assert.equal(request.url, '/api/sessions/same-session/clarify');
+  assert.equal(request.payload.clarificationId, 'second');
+  assert.equal(request.payload.answer, 'Staging');
+  assert.equal(rendered.status, 'running');
+  assert.equal(submit.disabled, false);
+  context.api = async () => { throw new Error('Could not submit'); };
+  await submitHandler({ preventDefault() {} });
+  assert.equal(error.hidden, false);
+  assert.equal(error.textContent, 'Could not submit');
+  assert.equal(answer.value, '  Staging  ');
+  assert.equal(submit.disabled, false);
+}
+testSubmission().then(() => console.log('Jira clarification UI checks passed.')).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -30,11 +30,12 @@ public sealed class RepositorySessionService(
         {
             request = request with { GitLabToken = configuration["GitLab:Token"] };
         }
+        Guid id = Guid.NewGuid();
         request = request with
         {
             Agents = request.Agents.ToDictionary(
                 pair => pair.Key,
-                pair => ApplyConfiguredProviderKey(pair.Value),
+                pair => ApplyConfiguredProviderKey(pair.Value, id),
                 StringComparer.Ordinal),
         };
         Validate(request);
@@ -52,8 +53,8 @@ public sealed class RepositorySessionService(
              request.JiraAttachmentIds.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 100)))
             throw new ArgumentException("Select at most 5 Jira attachments and provide their issue key.");
         request = request with { JiraAttachmentIds = request.JiraAttachmentIds?.ToArray() };
-        Guid id = Guid.NewGuid();
         SessionState state = new(id, request, runEvent => workflowRunStore.AppendEvent(id, runEvent));
+        state.PersistChanges = () => Persist(state);
         if (!_sessions.TryAdd(id, state))
         {
             throw new InvalidOperationException("Unable to allocate a repository session.");
@@ -75,8 +76,23 @@ public sealed class RepositorySessionService(
         return state.Snapshot();
     }
 
-    private AgentModelConfiguration ApplyConfiguredProviderKey(AgentModelConfiguration agent)
+    private AgentModelConfiguration ApplyConfiguredProviderKey(AgentModelConfiguration agent, Guid sessionId)
     {
+        if (agent.Provider is null) throw new ConfigurationException("Provider definition is required.");
+        string normalizedUrl = ModelProviderDefinition.NormalizeEndpoint(agent.Provider.Url);
+        if (AifaRequestContext.IsAifa(new Uri(normalizedUrl)))
+        {
+            return agent with
+            {
+                ApiKey = string.IsNullOrWhiteSpace(agent.ApiKey)
+                    ? configuration["Providers:AIFA:ApiKey"] ?? string.Empty : agent.ApiKey,
+                AifaContext = new AifaRequestContext(
+                    configuration["Providers:AIFA:UserId"] ?? "123",
+                    configuration["Providers:AIFA:SessionId"] ?? sessionId.ToString("N"),
+                    configuration["Providers:AIFA:RequestId"]),
+            };
+        }
+
         if (!string.IsNullOrWhiteSpace(agent.ApiKey))
         {
             return agent;
@@ -120,6 +136,14 @@ public sealed class RepositorySessionService(
         SessionState state = GetState(id);
         state.Cancel();
         Persist(state);
+    }
+
+    public SessionSnapshot Clarify(Guid id, ClarifySessionRequest request)
+    {
+        SessionState state = GetState(id);
+        state.Answer(request);
+        Persist(state);
+        return state.Snapshot();
     }
 
     public void Reject(Guid id)
@@ -224,11 +248,14 @@ public sealed class RepositorySessionService(
             Dictionary<string, WorkflowSettings> settingsByAgent = request.Agents.ToDictionary(
                 pair => pair.Key,
                 pair => pair.Value.ToSettings(
-                    maxTotalMessages: 60,
-                    maxAgentTurns: 25,
+                    maxTotalMessages: 100,
+                    maxAgentTurns: 30,
                     maxReviewerRemediationCycles: 5,
                     maxLlmRequests: request.MaxAiCalls,
-                    maxBudgetUsd: request.MaxBudgetUsd),
+                    maxBudgetUsd: request.MaxBudgetUsd) with
+                {
+                    MaxRepeatedWorkflowStates = configuration.GetValue("Workflow:MaxRepeatedStates", 3),
+                },
                 StringComparer.Ordinal);
             IReferenceDocumentSearch? documents = CreateDocumentSearch(request);
             IJiraIssueSearch workflowJira = jira;
@@ -240,6 +267,12 @@ public sealed class RepositorySessionService(
                 workflowJira = selectedAttachments;
                 workflowTask += await selectedAttachments.LoadContextAsync(state.Cancellation.Token);
             }
+            workflowJira = new WorkflowJiraContext(workflowJira, jira,
+                WorkflowJiraContext.ResolveIssueKey(request.JiraIssueKey, request.Task), runEvent =>
+                {
+                    state.AddEvent(runEvent);
+                    Persist(state);
+                }, state);
             HandoffWorkflowRunner runner = new(
                 settingsByAgent,
                 workspace,
@@ -276,6 +309,8 @@ public sealed class RepositorySessionService(
                         "The workflow reached its conversation safety limit before release approval.",
                     "reviewer_remediation_limit_reached" =>
                         "The reviewer exceeded the configured developer remediation limit. Inspect the logged findings and start a new run with a clarified request or prompt.",
+                    "loop_detected" =>
+                        "The workflow repeated the same repository and tool evidence after a role recovery attempt. Further model calls were stopped. The patch is preserved; inspect the loop details before starting a new run.",
                     "budget_limit_reached" =>
                         "The workflow reached its configured AI budget before release approval.",
                     "request_limit_reached" =>
@@ -293,7 +328,7 @@ public sealed class RepositorySessionService(
                     null => "The workflow ended without reporting a terminal status.",
                     _ => $"The workflow ended before release approval ({terminalStatus}).",
                 };
-                state.MarkFailed(reason);
+                state.MarkFailed(reason, workspace.GetDiff());
                 return;
             }
 
@@ -329,7 +364,7 @@ public sealed class RepositorySessionService(
         workflowRunStore.SaveSnapshot(snapshot.Id, JsonSerializer.Serialize(snapshot));
     }
 
-    private static string SerializeWorkflowConfig(CreateSessionRequest request) => JsonSerializer.Serialize(new
+    private string SerializeWorkflowConfig(CreateSessionRequest request) => JsonSerializer.Serialize(new
     {
         request.RepositoryUrl,
         request.BaseBranch,
@@ -362,6 +397,7 @@ public sealed class RepositorySessionService(
             maxTotalMessages = 60,
             maxAgentTurns = 25,
             maxReviewerRemediationCycles = 5,
+            maxRepeatedWorkflowStates = configuration.GetValue("Workflow:MaxRepeatedStates", 3),
             maxLlmRequests = request.MaxAiCalls,
             maxBudgetUsd = request.MaxBudgetUsd,
         },
@@ -372,7 +408,7 @@ public sealed class RepositorySessionService(
         List<(string Name, IReferenceDocumentSearch Search)> sources = [];
         if (request.ReferenceCollectionId is Guid collectionId)
         {
-            sources.Add(("Attached documents (Qdrant)", referenceDocuments.GetSearch(collectionId)));
+            sources.Add(("Attached documents", referenceDocuments.GetSearch(collectionId)));
         }
 
         if (request.Cognia is not null)
@@ -459,7 +495,7 @@ public sealed class RepositorySessionService(
         return string.IsNullOrWhiteSpace(configured) ? null : configured;
     }
 
-    private sealed class SessionState
+    private sealed class SessionState : IWorkflowUserInput
     {
         private readonly Lock _lock = new();
         private readonly List<RunEvent> _events = [];
@@ -471,6 +507,9 @@ public sealed class RepositorySessionService(
         private TokenUsageSummary? _usage;
         private ApprovalResult? _approval;
         private PullRequestResult? _pullRequest;
+        private TaskCompletionSource<string>? _answer;
+        private SessionClarification? _clarification;
+        internal Action? PersistChanges { get; set; }
 
         internal SessionState(Guid id, CreateSessionRequest request, Action<RunEvent> persistEvent)
         {
@@ -482,17 +521,74 @@ public sealed class RepositorySessionService(
 
         internal Guid Id { get; }
 
-        internal CreateSessionRequest Request { get; }
+        internal CreateSessionRequest Request { get; private set; }
 
         internal DateTimeOffset StartedAt { get; }
 
         internal CancellationTokenSource Cancellation { get; } = new(TimeSpan.FromMinutes(20));
+
+        public async Task<string> AskAsync(string questions, CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(questions);
+            TaskCompletionSource<string> answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_lock)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_status != "running" || _answer is not null)
+                    throw new InvalidOperationException("The run cannot request clarification in its current state.");
+                _answer = answer;
+                _clarification = new(Guid.NewGuid(), questions);
+                _status = "awaiting_input";
+                // Human response time must not consume the autonomous execution timeout.
+                Cancellation.CancelAfter(Timeout.InfiniteTimeSpan);
+                AddEvent(new("clarification_requested", AgentNames.Jira, questions,
+                    Source: _clarification.Id.ToString("D"), Status: "awaiting_input", Category: "input"));
+            }
+            try
+            {
+                PersistChanges?.Invoke();
+                return await answer.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                lock (_lock)
+                {
+                    if (ReferenceEquals(_answer, answer))
+                    {
+                        _answer = null;
+                        _clarification = null;
+                    }
+                }
+            }
+        }
+
+        internal void Answer(ClarifySessionRequest request)
+        {
+            string answer = request.Answer?.Trim() ?? "";
+            if (answer.Length is 0 or > 12000)
+                throw new ArgumentException("Provide a clarification answer between 1 and 12000 characters.");
+            lock (_lock)
+            {
+                Cancellation.Token.ThrowIfCancellationRequested();
+                if (_status != "awaiting_input" || _clarification?.Id != request.ClarificationId || _answer is null)
+                    throw new InvalidOperationException("This clarification is no longer pending.");
+                AddEvent(new("clarification_answered", Text: answer,
+                    Source: request.ClarificationId.ToString("D"), Status: "running", Category: "input"));
+                TaskCompletionSource<string> pending = _answer;
+                _answer = null;
+                _clarification = null;
+                _status = "running";
+                Cancellation.CancelAfter(TimeSpan.FromMinutes(20));
+                pending.TrySetResult(answer);
+            }
+        }
 
         internal void BeginAgentRun(RepositoryWorkspace workspace)
         {
             lock (_lock)
             {
                 _workspace = workspace;
+                Request = Request with { BaseBranch = workspace.BaseBranch };
                 _status = "running";
             }
         }
@@ -502,6 +598,12 @@ public sealed class RepositorySessionService(
             lock (_lock)
             {
                 _persistEvent(runEvent);
+                if (runEvent.Type == "agent_summary")
+                {
+                    _events.RemoveAll(previous => previous.Type == "agent_summary" && previous.Agent == runEvent.Agent);
+                }
+                if (runEvent.Type == "jira_problem")
+                    _events.RemoveAll(previous => previous.Type == "jira_problem");
                 if (runEvent.Usage is not null)
                 {
                     _usage = runEvent.Usage;
@@ -683,12 +785,13 @@ public sealed class RepositorySessionService(
             }
         }
 
-        internal void MarkFailed(string error)
+        internal void MarkFailed(string error, string? diff = null)
         {
             lock (_lock)
             {
                 _status = "failed";
                 _error = error;
+                if (diff is not null) _diff = diff;
             }
         }
 
@@ -710,7 +813,8 @@ public sealed class RepositorySessionService(
                     _approval,
                     _pullRequest,
                     _usage,
-                    TaskBranchName.FromTask(Request.JiraIssueKey, Request.Task));
+                    TaskBranchName.FromTask(Request.JiraIssueKey, Request.Task),
+                    _clarification);
             }
         }
 
@@ -718,7 +822,8 @@ public sealed class RepositorySessionService(
         {
             if (_events.Count > 500)
             {
-                _events.RemoveRange(0, _events.Count - 500);
+                int excess = _events.Count - 500;
+                _events.RemoveAll(runEvent => runEvent.Type is not ("agent_summary" or "jira_problem") && excess-- > 0);
             }
         }
 
@@ -754,6 +859,9 @@ public sealed record ApproveSessionRequest(
     string CommitMessage,
     bool Push);
 
+public sealed record SessionClarification(Guid Id, string Questions);
+public sealed record ClarifySessionRequest(Guid ClarificationId, string Answer);
+
 internal sealed record PullRequestPreparation(
     RepositoryWorkspace Workspace,
     bool PushRequired,
@@ -779,4 +887,9 @@ public sealed record SessionSnapshot(
     ApprovalResult? Approval,
     PullRequestResult? PullRequest,
     TokenUsageSummary? Usage,
-    string? Branch = null);
+    string? Branch = null,
+    SessionClarification? Clarification = null)
+{
+    // Derived from the durable event history too, so existing archived runs gain full diagnostics.
+    public SessionFailureDetails? FailureDetails => SessionFailureDetails.FromEvents(Error, Events);
+}

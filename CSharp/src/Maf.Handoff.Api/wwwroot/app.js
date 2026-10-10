@@ -21,6 +21,8 @@ const emptyActivity = document.querySelector('#empty-activity');
 const activity = document.querySelector('#activity');
 const usageSummary = document.querySelector('#usage-summary');
 const finalUsageSummary = document.querySelector('#final-usage-summary');
+const agentSummaries = document.querySelector('#agent-summaries');
+const jiraProblemNotice = document.querySelector('#jira-problem-notice');
 const diff = document.querySelector('#diff code');
 const diffSummary = document.querySelector('#diff-summary');
 const dialog = document.querySelector('#approval-dialog');
@@ -37,6 +39,7 @@ const setupHeading = document.querySelector('.setup-panel > .section-heading');
 const activityHeading = document.querySelector('.activity-panel > .section-heading');
 const referenceFilesInput = document.querySelector('#reference-files');
 const referenceFolderInput = document.querySelector('#reference-folder');
+const referenceSearchModeInput = document.querySelector('#reference-search-mode');
 const qdrantUrlInput = document.querySelector('#qdrant-url');
 const qdrantApiKeyInput = document.querySelector('#qdrant-api-key');
 const embeddingProviderInput = document.querySelector('#embedding-provider');
@@ -64,6 +67,10 @@ const projectKeyInput = document.querySelector('#project-key');
 const gitLabRepositoryInput = document.querySelector('#gitlab-repository');
 const pushBranchLabel = document.querySelector('#push-branch-label');
 const pushBranchGuide = document.querySelector('#push-branch-guide');
+const baseBranchInput = document.querySelector('#branch');
+const repositoryBranches = document.querySelector('#repository-branches');
+const branchStatus = document.querySelector('#branch-status');
+let branchRequestVersion = 0;
 
 let sessionId = null;
 let pollTimer = null;
@@ -103,17 +110,21 @@ function initializeSetupSteps() {
   const qdrantSettings = document.createElement('fieldset');
   qdrantSettings.className = 'qdrant-settings';
   const qdrantLegend = document.createElement('legend');
-  qdrantLegend.textContent = 'Qdrant and embeddings';
+  qdrantLegend.textContent = 'Document search';
   const qdrantGuide = document.createElement('p');
   qdrantGuide.className = 'field-guide';
-  qdrantGuide.textContent = 'Used when reference documents are attached in step 4. Configure the endpoint and embedding provider here.';
+  qdrantGuide.textContent = 'Plain text search needs no external services. Enable semantic search to use Qdrant and embeddings for files attached in step 4.';
   qdrantSettings.append(qdrantLegend, qdrantGuide);
+  qdrantSettings.append(document.querySelector('label[for="reference-search-mode"]'), referenceSearchModeInput);
+  const semanticFields = document.createElement('div');
+  semanticFields.id = 'semantic-search-fields';
   [
     document.querySelector('label[for="qdrant-url"]'), qdrantUrlInput,
     document.querySelector('label[for="qdrant-api-key"]'), qdrantApiKeyInput,
     document.querySelector('label[for="embedding-provider"]'), embeddingProviderInput,
     embeddingApiKeyField, embeddingProviderGuide,
-  ].forEach(element => qdrantSettings.append(element));
+  ].forEach(element => semanticFields.append(element));
+  qdrantSettings.append(semanticFields);
   connectionSettings.append(qdrantSettings);
   connectionSettings.append(cogniaSettings);
   const analysisSettings = document.createElement('fieldset');
@@ -196,6 +207,13 @@ initializeSetupSteps();
 setRepositorySource(sourceControlInput.value);
 initializeProjectSelector();
 sourceControlInput.addEventListener('change', () => setRepositorySource(sourceControlInput.value));
+document.querySelector('#use-saved-gitlab-token').addEventListener('change', () => {
+  syncSavedGitLabToken();
+  loadRepositoryBranches();
+});
+document.querySelectorAll('#github-repository, #gitlab-repository, #github-token, #gitlab-token')
+  .forEach(input => input.addEventListener('change', loadRepositoryBranches));
+document.querySelector('#refresh-branches').addEventListener('click', loadRepositoryBranches);
 workflowSteps.forEach(button => {
   if (setupStepOrder.includes(button.dataset.step)) button.addEventListener('click', () => {
     if (currentWorkflowStep === 'setup') setSetupStep(button.dataset.step);
@@ -332,6 +350,53 @@ function setRepositorySource(sourceControl) {
       if (control.type === 'url') control.required = active;
     });
   });
+  syncSavedGitLabToken();
+  loadRepositoryBranches();
+}
+
+function syncSavedGitLabToken() {
+  const saved = document.querySelector('#use-saved-gitlab-token');
+  document.querySelector('#gitlab-token').disabled = sourceControlInput.value !== 'gitlab' || saved.checked;
+}
+
+function readRepositoryConnection() {
+  const sourceControl = sourceControlInput.value;
+  const useSaved = sourceControl === 'gitlab' && document.querySelector('#use-saved-gitlab-token').checked;
+  return {
+    sourceControl,
+    repositoryUrl: document.querySelector(`#${sourceControl}-repository`).value.trim(),
+    accessToken: useSaved ? null : document.querySelector(`#${sourceControl}-token`).value.trim() || null,
+  };
+}
+
+async function loadRepositoryBranches() {
+  const version = ++branchRequestVersion;
+  repositoryBranches.replaceChildren();
+  const sourceControl = sourceControlInput.value;
+  const repository = document.querySelector(`#${sourceControl}-repository`);
+  if (!repository.value.trim() || !repository.checkValidity()) {
+    branchStatus.textContent = 'Select a repository to load its branches, or enter a branch name.';
+    return;
+  }
+  branchStatus.textContent = 'Loading repository branches...';
+  try {
+    const branches = await api('/api/repositories/branches', {
+      method: 'POST',
+      body: JSON.stringify(readRepositoryConnection()),
+    });
+    if (version !== branchRequestVersion) return;
+    branches.forEach(branch => repositoryBranches.append(new Option(branch, branch)));
+    const requested = baseBranchInput.value;
+    const matches = branches.filter(branch => branch.toLowerCase() === requested.toLowerCase());
+    const selected = branches.includes(requested) ? requested : matches.length === 1 ? matches[0] : '';
+    if (selected) baseBranchInput.value = selected;
+    branchStatus.textContent = branches.length
+      ? 'Choose a suggested repository branch or enter a branch name.'
+      : 'This repository has no branches.';
+  } catch (error) {
+    if (version !== branchRequestVersion) return;
+    branchStatus.textContent = `Could not load branches: ${error.message}. Enter a branch name or refresh to retry.`;
+  }
 }
 
 async function initializeProjectSelector() {
@@ -342,6 +407,7 @@ async function initializeProjectSelector() {
     projectKeyInput.addEventListener('change', () => {
       const project = projects.find(item => item.key === projectKeyInput.value);
       if (project?.gitLabProjectPath) gitLabRepositoryInput.value = project.gitLabProjectPath;
+      loadRepositoryBranches();
     });
   } catch (error) {
     console.warn('Configured projects could not be loaded.', error);
@@ -358,6 +424,14 @@ const eventDateFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 const providerCatalog = {
+  aifa: {
+    name: 'AIFA', url: 'https://aifa-chatbot.dev.dotin.ir/v1',
+    toolCalling: true, vision: false, thinking: true,
+    // Provisional metadata; confirm the service limits and tool support with its owner.
+    maxInputTokens: 8192, maxOutputTokens: 2048,
+    reasoningEffort: 'low', supportsReasoningEffort: ['low', 'medium', 'high', 'xhigh', 'max'],
+    models: [['developer-model', 'developer-model']],
+  },
   openai: {
     name: 'OpenAI', url: 'https://api.openai.com/v1',
     toolCalling: true, vision: true, thinking: true,
@@ -713,6 +787,9 @@ async function loadDeepSeekPricing() {
 
 async function loadConfiguredProviders() {
   const configured = await api('/api/providers/configured');
+  document.querySelector('#saved-gitlab-token-option').hidden = !configured.gitlabToken;
+  document.querySelector('#use-saved-gitlab-token').checked = !!configured.gitlabToken;
+  syncSavedGitLabToken();
   Object.entries(configured).forEach(([providerId, isConfigured]) => {
     if (!isConfigured || !providerKeys[providerId]) return;
     configuredProviderKeys.add(providerId);
@@ -770,6 +847,7 @@ document.querySelector('#copy-planner-settings').addEventListener('click', () =>
 referenceFilesInput.addEventListener('change', renderReferenceStatus);
 referenceFolderInput.addEventListener('change', renderReferenceStatus);
 embeddingProviderInput.addEventListener('change', syncEmbeddingProvider);
+referenceSearchModeInput.addEventListener('change', syncReferenceSearchMode);
 cogniaEnabledInput.addEventListener('change', syncCogniaSettings);
 
 function syncEmbeddingProvider() {
@@ -782,6 +860,15 @@ function syncEmbeddingProvider() {
 }
 
 syncEmbeddingProvider();
+
+function syncReferenceSearchMode() {
+  const semantic = referenceSearchModeInput.value === 'semantic';
+  document.querySelector('#semantic-search-fields').hidden = !semantic;
+  [qdrantUrlInput, qdrantApiKeyInput, embeddingProviderInput, embeddingApiKeyInput]
+    .forEach(input => { input.disabled = !semantic; });
+}
+
+syncReferenceSearchMode();
 
 function syncCogniaSettings() {
   const enabled = cogniaEnabledInput.checked;
@@ -840,9 +927,10 @@ async function uploadReferenceDocuments() {
   const files = selectedReferenceFiles();
   if (!files.length) return null;
 
-  const { provider, qdrantUrl, qdrantApiKey, apiKey } = validateReferenceDocuments();
+  const { searchMode, provider, qdrantUrl, qdrantApiKey, apiKey } = validateReferenceDocuments();
   renderReferenceStatus(`Indexing ${files.length} reference ${files.length === 1 ? 'file' : 'files'}…`);
   const body = new FormData();
+  body.append('searchMode', searchMode);
   body.append('qdrantUrl', qdrantUrl);
   body.append('qdrantApiKey', qdrantApiKey);
   body.append('embeddingProvider', provider);
@@ -857,6 +945,11 @@ async function uploadReferenceDocuments() {
 
 function validateReferenceDocuments() {
   if (!selectedReferenceFiles().length) return null;
+
+  const searchMode = referenceSearchModeInput.value;
+  if (searchMode === 'exact') {
+    return { searchMode, provider: '', qdrantUrl: '', qdrantApiKey: '', apiKey: '' };
+  }
 
   if (!qdrantUrlInput || !qdrantApiKeyInput) {
     throw new Error('The reference-document form is out of date. Restart the API, then reload this page.');
@@ -878,7 +971,7 @@ function validateReferenceDocuments() {
     throw new Error('An OpenAI embedding API key is required when OpenAI embeddings are selected.');
   }
 
-  return { provider, qdrantUrl, qdrantApiKey, apiKey };
+  return { searchMode, provider, qdrantUrl, qdrantApiKey, apiKey };
 }
 
 form.addEventListener('submit', async (event) => {
@@ -898,6 +991,7 @@ form.addEventListener('submit', async (event) => {
   startElapsedTimer();
 
   const values = new FormData(form);
+  const connection = readRepositoryConnection();
   let agents;
   try {
     agents = readAgentConfigurations();
@@ -910,25 +1004,29 @@ form.addEventListener('submit', async (event) => {
   let referenceCollectionId;
   let cognia;
   try {
+    await api('/api/repositories/branches', {
+      method: 'POST', body: JSON.stringify(connection),
+    });
     cognia = readCogniaConfiguration();
     referenceCollectionId = await uploadReferenceDocuments();
   } catch (error) {
-    showError(error.message);
+    showError(`Could not prepare the run: ${error.message}`);
     resetElapsedTimer();
     setBusy(false);
+    setSetupStep('connection');
     return;
   }
 
   const request = {
-    sourceControl: values.get('sourceControl'),
-    repositoryUrl: (values.get('githubRepository') || values.get('gitlabRepository')).trim(),
+    sourceControl: connection.sourceControl,
+    repositoryUrl: connection.repositoryUrl,
     baseBranch: values.get('branch').trim(),
     task: values.get('task').trim(),
     agents,
     maxAiCalls: Number(values.get('maxAiCalls')),
     maxBudgetUsd: Number(values.get('maxBudgetUsd')),
-    githubToken: values.get('githubToken')?.trim() || null,
-    gitLabToken: values.get('gitlabToken')?.trim() || null,
+    githubToken: connection.sourceControl === 'github' ? connection.accessToken : null,
+    gitLabToken: connection.sourceControl === 'gitlab' ? connection.accessToken : null,
     referenceCollectionId,
     jiraIssueKey: changeRequestSource === 'jira' ? selectedJiraKey || null : null,
     jiraAttachmentIds: changeRequestSource === 'jira' && selectedJiraKey ? selectedJiraAttachmentIds : null,
@@ -1058,6 +1156,44 @@ async function action(url, body = {}) {
   }
 }
 
+document.querySelector('#jira-clarification-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const panel = document.querySelector('#jira-clarification');
+  const submit = document.querySelector('#jira-clarification-submit');
+  const errorBox = document.querySelector('#jira-clarification-error');
+  const clarificationId = panel.dataset.clarificationId;
+  const answer = document.querySelector('#jira-clarification-answer').value.trim();
+  if (!sessionId || !clarificationId || !answer || submit.disabled) return;
+  submit.disabled = true;
+  errorBox.hidden = true;
+  try {
+    const snapshot = await api(`/api/sessions/${sessionId}/clarify`, {
+      method: 'POST', body: JSON.stringify({ clarificationId, answer }),
+    });
+    render(snapshot);
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+  } finally { submit.disabled = false; }
+});
+
+function renderJiraClarification(snapshot) {
+  const panel = document.querySelector('#jira-clarification');
+  const request = snapshot.status === 'awaiting_input' ? snapshot.clarification : null;
+  panel.hidden = !request;
+  if (!request) {
+    delete panel.dataset.clarificationId;
+    return;
+  }
+  // Polling must preserve an answer the user is currently typing.
+  if (panel.dataset.clarificationId !== request.id) {
+    panel.dataset.clarificationId = request.id;
+    document.querySelector('#jira-clarification-answer').value = '';
+    document.querySelector('#jira-clarification-error').hidden = true;
+  }
+  document.querySelector('#jira-clarification-questions').textContent = request.questions;
+}
+
 async function refresh() {
   if (!sessionId) return;
   try {
@@ -1090,10 +1226,13 @@ function render(snapshot) {
   setStatus(snapshot.status, snapshot.sourceControl);
   renderEvents(snapshot.events || []);
   renderUsage(snapshot.usage, snapshot.status);
+  renderAgentSummaries(snapshot.events || [], snapshot.status);
+  renderJiraProblemNotice(snapshot.events || [], snapshot.status);
+  renderJiraClarification(snapshot);
   renderDiff(snapshot.diff || '');
   const reportAvailable = isTerminal(snapshot.status) || snapshot.status === 'awaiting_approval';
   reportButtons.forEach(button => { button.hidden = !reportAvailable; });
-  if (snapshot.error) showRunError(snapshot.error);
+  if (snapshot.error) showRunError(snapshot);
   else clearRunError();
   backButton.hidden = !snapshot.error;
 
@@ -1112,8 +1251,8 @@ function render(snapshot) {
   } else {
     pullRequestLink.removeAttribute('href');
   }
-  cancelButton.hidden = !['cloning', 'running'].includes(snapshot.status);
-  runButton.disabled = ['cloning', 'running', 'approving'].includes(snapshot.status);
+  cancelButton.hidden = !['cloning', 'running', 'awaiting_input'].includes(snapshot.status);
+  runButton.disabled = ['cloning', 'running', 'awaiting_input', 'approving'].includes(snapshot.status);
 
   if (snapshot.approval) {
     diffSummary.textContent = `${snapshot.approval.pushed ? 'Pushed' : 'Committed'} ${snapshot.approval.commit.slice(0, 10)} on ${snapshot.approval.branch}`;
@@ -1205,7 +1344,7 @@ function renderEvents(events) {
   if (fingerprint === eventFingerprint) return;
   eventFingerprint = fingerprint;
   updateTeamMap(events);
-  const visibleEvents = events.filter(e => e.type !== 'run_finished').slice().reverse();
+  const visibleEvents = events.filter(e => !['run_finished', 'agent_summary'].includes(e.type)).slice().reverse();
   emptyActivity.hidden = visibleEvents.length > 0;
   activity.classList.toggle('visible', visibleEvents.length > 0);
   activity.replaceChildren(...visibleEvents.map((entry) => {
@@ -1213,7 +1352,7 @@ function renderEvents(events) {
     element.className = `event ${entry.type}`;
     const header = document.createElement('header');
     const name = document.createElement('strong');
-    const labels = { handoff: 'Handoff', message: 'Agent response', tool: 'Tool activity', trace: 'Workflow trace', usage: 'Token usage', decision: 'Terminal decision', error: 'Error' };
+    const labels = { handoff: 'Handoff', message: 'Agent response', tool: 'Tool activity', trace: 'Workflow trace', usage: 'Token usage', decision: 'Terminal decision', error: 'Error', jira_problem: 'Jira problem report', jira_scope_change: 'Additional Jira changes', clarification_requested: 'Clarification requested', clarification_answered: 'User clarification' };
     name.textContent = entry.agent || labels[entry.type] || entry.type.replaceAll('_', ' ');
     const metadata = document.createElement('span');
     metadata.className = 'event-metadata';
@@ -1233,6 +1372,67 @@ function renderEvents(events) {
   activity.scrollTop = 0;
 }
 
+function renderJiraProblemNotice(events, status) {
+  const entry = events.filter(event => ['jira_problem', 'jira_scope_change'].includes(event.type)).slice(-1)[0];
+  jiraProblemNotice.replaceChildren();
+  jiraProblemNotice.hidden = !entry;
+  if (!entry) return;
+  const inDiff = ['awaiting_approval', 'approving', 'committed', 'pushed', 'creating_pull_request', 'pull_request_created'].includes(status);
+  if (inDiff) finalUsageSummary.before(jiraProblemNotice);
+  else runErrorBox.after(jiraProblemNotice);
+  jiraProblemNotice.dataset.status = entry.status;
+  const title = document.createElement('h3');
+  title.textContent = entry.status === 'posted' ? 'عامل Jira مشکلی پیدا کرد و نظر فارسی ثبت شد' : 'عامل Jira مشکلی پیدا کرد؛ ثبت نظر تأیید نشد';
+  const message = document.createElement('p');
+  if (entry.type === 'jira_scope_change') title.textContent = entry.status === 'posted' ? 'تغییرات خارج از شرح تسک در Jira ثبت شد' : 'ثبت تغییرات خارج از شرح تسک در Jira تأیید نشد';
+  message.textContent = entry.text || '';
+  jiraProblemNotice.append(title, message);
+  if (entry.target && /^https:\/\//i.test(entry.target)) {
+    const link = document.createElement('a');
+    link.href = entry.target;
+    link.textContent = entry.status === 'posted' ? `مشاهده نظر در تسک ${entry.source || ''}` : `بررسی تسک ${entry.source || ''}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    jiraProblemNotice.append(link);
+  }
+}
+
+function renderAgentSummaries(events, status) {
+  const finished = status === 'awaiting_approval' || isTerminal(status)
+    || ['approving', 'creating_pull_request'].includes(status);
+  const latest = new Map();
+  events.filter(event => event.type === 'agent_summary' && event.agent)
+    .forEach(event => latest.set(event.agent, event));
+  agentSummaries.replaceChildren();
+  agentSummaries.hidden = !finished || latest.size === 0;
+  if (agentSummaries.hidden) return;
+
+  const inDiff = ['awaiting_approval', 'approving', 'committed', 'pushed', 'creating_pull_request', 'pull_request_created'].includes(status);
+  if (inDiff) finalUsageSummary.before(agentSummaries);
+  else usageSummary.after(agentSummaries);
+
+  const title = document.createElement('h3');
+  title.textContent = 'Agent summaries';
+  const cards = document.createElement('div');
+  cards.className = 'agent-summary-cards';
+  const names = { jira: 'Jira', planner: 'Planner', developer: 'Developer', reviewer: 'Reviewer', security: 'Security', release_manager: 'Release manager' };
+  Object.keys(names).filter(agent => latest.has(agent)).forEach(agent => {
+    const entry = latest.get(agent);
+    const card = document.createElement('article');
+    card.className = 'agent-summary-card';
+    card.dataset.agent = agent;
+    const heading = document.createElement('h4');
+    heading.textContent = names[agent];
+    const text = document.createElement('p');
+    text.dir = 'rtl';
+    text.lang = 'fa';
+    text.textContent = entry.text || 'No summary was provided.';
+    card.append(heading, text);
+    cards.append(card);
+  });
+  agentSummaries.append(title, cards);
+}
+
 function renderUsage(summary, status) {
   renderUsageCard(usageSummary, summary, status, false);
   renderUsageCard(finalUsageSummary, summary, status, true);
@@ -1240,7 +1440,7 @@ function renderUsage(summary, status) {
 
 function renderUsageCard(container, summary, status, finalCard) {
   const finished = status === 'awaiting_approval' || isTerminal(status);
-  if (!summary || !summary.hasRequests) {
+  if (!summary || (!summary.hasRequests && !(summary.checkpointHits > 0))) {
     if (finalCard && finished) {
       const title = document.createElement('h3');
       title.textContent = 'Final token usage unavailable';
@@ -1266,19 +1466,20 @@ function renderUsageCard(container, summary, status, finalCard) {
   const cost = summary.estimatedCostUsd == null
     ? 'Cost estimate unavailable — add input and output USD-per-million rates for every model used.'
     : `Estimated cost: ${formatUsd(summary.estimatedCostUsd)}.`;
-  const agents = summary.byAgent.map(item =>
-    `${item.agent}: ${formatNumber(item.inputTokens)} in (${formatNumber(item.cachedInputTokens)} cached) / ${formatNumber(item.outputTokens)} out (${formatNumber(item.reasoningTokens)} reasoning)${item.estimatedCostUsd == null ? '' : ` (${formatUsd(item.estimatedCostUsd)})`}`).join(' · ');
-  details.textContent = `${formatNumber(summary.totalTokens)} total tokens · ${formatNumber(summary.inputTokens)} input (${formatNumber(summary.cachedInputTokens)} cached) · ${formatNumber(summary.outputTokens)} output (${formatNumber(summary.reasoningTokens)} reasoning). ${cost} ${agents}`;
   const requestDetails = summary.byAgent.map(item =>
-    `${item.agent}: ${formatNumber(item.llmRequestCount)} requests`).join(' | ');
-  details.textContent = `${formatNumber(summary.llmRequestCount)} AI requests | ${formatNumber(summary.totalTokens)} total tokens | ${formatNumber(summary.inputTokens)} input (${formatNumber(summary.cachedInputTokens)} cached) | ${formatNumber(summary.outputTokens)} output (${formatNumber(summary.reasoningTokens)} reasoning). ${cost} ${requestDetails}`;
-  container.replaceChildren(heading, details);
+    `${item.agent}: ${formatNumber(item.llmRequestCount)} AI requests, ${formatNumber(item.checkpointHits || 0)} checkpoint replays${item.llmRequestCount === 0 && item.checkpointHits > 0 ? ', $0 additional model cost' : ''}`).join(' | ');
+  details.textContent = `${formatNumber(summary.llmRequestCount)} AI requests | ${formatNumber(summary.checkpointHits || 0)} local checkpoint replays | ${formatNumber(summary.totalTokens)} total tokens | ${formatNumber(summary.inputTokens)} input (${formatNumber(summary.cachedInputTokens)} provider-cached) | ${formatNumber(summary.outputTokens)} output (${formatNumber(summary.reasoningTokens)} reasoning). ${cost}`;
+  const checkpoints = document.createElement('p');
+  checkpoints.textContent = 'Local checkpoint replays add no provider tokens or model cost. Provider-cached input tokens are billed at the configured cache rate.';
+  const breakdown = document.createElement('p');
+  breakdown.textContent = requestDetails;
+  container.replaceChildren(heading, details, checkpoints, breakdown);
   container.hidden = finalCard && !finished;
 }
 
 function updateTeamMap(events) {
   if (!teamMap) return;
-  const relevant = events.filter(event => event.type === 'handoff' || event.agent);
+  const relevant = events.filter(event => event.type !== 'agent_summary' && (event.type === 'handoff' || event.agent));
   const latest = relevant.at(-1);
   const activeAgent = latest?.type === 'handoff' ? latest.target : latest?.agent;
   const activeEdge = latest?.type === 'handoff' && latest.source && latest.target
@@ -1323,7 +1524,7 @@ function renderDiff(value) {
 function setStatus(status, sourceControl = 'github') {
   const requestKind = sourceControl?.toLowerCase() === 'gitlab' ? 'MR' : 'PR';
   const labels = {
-    cloning: 'Cloning', running: 'Agents working', awaiting_approval: 'Needs approval',
+    cloning: 'Cloning', running: 'Agents working', awaiting_input: 'Waiting for your answer', awaiting_approval: 'Needs approval',
     approving: 'Committing', committed: 'Committed', pushed: 'Pushed',
     creating_pull_request: `Creating ${requestKind}`, pull_request_created: `${requestKind} created`, rejected: 'Rejected',
     cancelled: 'Cancelled', failed: 'Failed', approval_failed: 'Commit failed', no_changes: 'No changes',
@@ -1331,11 +1532,11 @@ function setStatus(status, sourceControl = 'github') {
   statusBadge.textContent = labels[status] || status;
   statusBadge.className = 'status ' + (
     ['cloning', 'running', 'approving'].includes(status) ? 'working' :
-    status === 'awaiting_approval' ? 'review' :
+    ['awaiting_approval', 'awaiting_input'].includes(status) ? 'review' :
     ['committed', 'pushed', 'pull_request_created'].includes(status) ? 'success' :
     ['failed', 'approval_failed'].includes(status) ? 'failed' : 'idle');
-  const active = ['cloning', 'running', 'failed', 'approval_failed'].includes(status) ? 'running' :
-    status === 'awaiting_approval' ? 'review' :
+  const active = ['cloning', 'running', 'awaiting_input', 'failed', 'approval_failed', 'cancelled', 'no_changes', 'rejected'].includes(status) ? 'running' :
+    ['awaiting_approval', 'approving'].includes(status) ? 'review' :
     ['committed', 'pushed', 'creating_pull_request', 'pull_request_created'].includes(status) ? 'finish' : 'setup';
   setActiveStep(active);
 }
@@ -1386,7 +1587,11 @@ function resetOutput() {
   usageSummary.replaceChildren();
   finalUsageSummary.hidden = true;
   finalUsageSummary.replaceChildren();
+  agentSummaries.hidden = true;
+  agentSummaries.replaceChildren();
   resetElapsedTimer();
+  jiraProblemNotice.hidden = true;
+  jiraProblemNotice.replaceChildren();
   clearRunError();
   backButton.hidden = true;
   reportButtons.forEach(button => { button.hidden = true; });
@@ -1462,9 +1667,16 @@ function clearError() {
   errorBox.textContent = '';
 }
 
-function showRunError(message) {
-  runErrorBox.textContent = message;
-  runErrorBox.hidden = false;
+function showRunError(snapshot) {
+  const details = RunDiagnostics.fromSnapshot(snapshot);
+  RunDiagnostics.render(runErrorBox, details, {
+    edit: () => backButton.click(),
+    copy: message => navigator.clipboard.writeText(message),
+  });
+  if (details.status === 'input_required') {
+    statusBadge.textContent = 'Clarification needed';
+    statusBadge.className = 'status review';
+  }
 }
 
 function clearRunError() {
@@ -2183,7 +2395,9 @@ async function lookupJiraIssue(titleOnly, focusPreview = false) {
           setJiraError('#jira-issue-error');
           try {
             content = await api(`/api/jira/issues/${encodeURIComponent(key)}/attachments/${encodeURIComponent(attachment.id)}/text`);
-            preview.textContent = content.text;
+            preview.textContent = content.contentFormat && content.contentFormat !== 'text'
+              ? `${content.extractionNotice}\nFormat: ${content.contentFormat}\nSize: ${formatBytes(content.sourceBytes || 0)}`
+              : content.text;
             preview.hidden = false;
             if (content.hasMore) preview.textContent += '\n\n[Preview shows the first 12,000 characters. The Jira agent can read the remaining text.]';
             if (content.extractionLimitReached) preview.textContent += '\n[Extraction limit reached: only the first 400,000 characters are available.]';

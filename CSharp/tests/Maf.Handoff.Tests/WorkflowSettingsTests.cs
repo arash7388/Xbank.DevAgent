@@ -5,6 +5,14 @@ namespace Maf.Handoff.Tests;
 public sealed class WorkflowSettingsTests
 {
     [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void RepetitionThresholdMustAllowAnInitialVisit(int threshold)
+    {
+        WorkflowSettings settings = new("https://example.test", "model", "key") { MaxRepeatedWorkflowStates = threshold };
+        Assert.Throws<ConfigurationException>(settings.Validate);
+    }
+    [Theory]
     [InlineData(0, 1)]
     [InlineData(1, 0)]
     [InlineData(-1, 1)]

@@ -10,6 +10,52 @@ namespace Maf.Handoff.Tests;
 
 public sealed class AiCallStoreTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplayOnlyAgentAppearsInLiveAndArchivedSummaryWithoutProviderCost(bool streaming)
+    {
+        using DatabaseFixture db = new();
+        Guid run = Guid.NewGuid();
+        db.Store.Create(run, "test", "{}", DateTimeOffset.UtcNow);
+        StubClient provider = new();
+        var warmup = new CheckpointingChatClient(provider, db.Store, AgentNames.Jira, Settings, new(), "warmup");
+        ChatMessage[] input = [new(ChatRole.User, "Investigate the Jira issue")];
+        await warmup.GetResponseAsync(input);
+        TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings> { [AgentNames.Jira] = Settings });
+        var replay = new CheckpointingChatClient(provider, db.Store, AgentNames.Jira, Settings, new(), run.ToString("D"), collector);
+        if (streaming) await foreach (var update in replay.GetStreamingResponseAsync(input)) { }
+        else await replay.GetResponseAsync(input);
+
+        Assert.Equal(1, provider.Calls);
+        var live = collector.Snapshot();
+        // Older stored summaries omitted replay-only agents. Rebuild their breakdown from audit hits.
+        var saved = db.Store.GetLog(run).Usage!;
+        using (var connection = new SqliteConnection($"Data Source={db.Path};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE run_usage SET summary_json=$json WHERE run_id=$run";
+            command.Parameters.AddWithValue("$run", run.ToString("D"));
+            command.Parameters.AddWithValue("$json", JsonSerializer.Serialize(
+                saved with { TokenUsage = TokenUsageSummary.Empty with { EstimatedCostUsd = 0m } },
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            command.ExecuteNonQuery();
+        }
+        var archived = new SqliteLlmCheckpointStore(db.Path).GetLog(run).Usage!.TokenUsage;
+        foreach (var summary in new[] { live, archived })
+        {
+            Assert.Equal(0, summary.LlmRequestCount);
+            Assert.Equal(0, summary.TotalTokens);
+            Assert.Equal(0m, summary.EstimatedCostUsd);
+            Assert.Equal(1, summary.CheckpointHits);
+            var jira = Assert.Single(summary.ByAgent);
+            Assert.Equal(AgentNames.Jira, jira.Agent);
+            Assert.Equal(1, jira.CheckpointHits);
+            Assert.Equal(0m, jira.EstimatedCostUsd);
+        }
+    }
+
     private static readonly ModelProviderDefinition Price = new("model", "Test", "https://example.test",
         true, false, 1000, 1000, false, null, [], 2m, 8m, 0.5m);
     private static readonly WorkflowSettings Settings = new("https://example.test", "model", "secret-not-persisted", Provider: Price);
@@ -52,6 +98,8 @@ public sealed class AiCallStoreTests
         RunUsageMetrics summary = Assert.IsType<RunUsageMetrics>(log.Usage);
         Assert.Equal(1, summary.AiCalls);
         Assert.Equal(1, summary.CheckpointHits);
+        Assert.Equal(1, summary.TokenUsage.CheckpointHits);
+        Assert.Equal(1, Assert.Single(summary.TokenUsage.ByAgent).CheckpointHits);
         Assert.Equal(1, summary.CheckpointMisses);
         Assert.Equal(1, summary.CallsWithCacheHits);
         Assert.Equal(1, summary.CallsWithCacheMisses);

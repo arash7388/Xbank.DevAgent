@@ -13,7 +13,8 @@ public sealed record AgentTokenUsage(
     long OutputTokens,
     long ReasoningTokens,
     long TotalTokens,
-    decimal? EstimatedCostUsd);
+    decimal? EstimatedCostUsd,
+    long CheckpointHits = 0);
 
 /// <summary>Provider-reported token totals and an optional rate-based cost estimate for a workflow run.</summary>
 public sealed record TokenUsageSummary(
@@ -26,6 +27,21 @@ public sealed record TokenUsageSummary(
     long TotalTokens,
     decimal? EstimatedCostUsd)
 {
+    public long CheckpointHits => ByAgent.Sum(item => item.CheckpointHits);
+
+    public TokenUsageSummary WithCheckpoints(IReadOnlyList<CheckpointHitLogEntry> hits)
+    {
+        List<AgentTokenUsage> agents = ByAgent.Select(item => item with { CheckpointHits = 0 }).ToList();
+        foreach (var group in hits.GroupBy(hit => (hit.Agent, hit.Model)))
+        {
+            int index = agents.FindIndex(item => item.Agent == group.Key.Agent && item.Model == group.Key.Model);
+            if (index >= 0) agents[index] = agents[index] with { CheckpointHits = group.Count() };
+            else agents.Add(new(group.Key.Agent, group.Key.Model, 0, 0, 0, 0, 0, 0, 0m, group.Count()));
+        }
+        string[] order = [.. AgentNames.All];
+        return this with { ByAgent = agents.OrderBy(item => Array.IndexOf(order, item.Agent)).ToArray() };
+    }
+
     public bool HasUsage => TotalTokens > 0;
 
     public bool HasRequests => LlmRequestCount > 0;
@@ -46,6 +62,12 @@ public sealed class TokenUsageCollector(
     private readonly Lock _requestLock = new();
     private int _requestCount;
     private bool _budgetExceeded;
+
+    public void RecordCheckpointHit(string agent)
+    {
+        WorkflowSettings settings = GetSettings(agent);
+        _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).AddCheckpointHit();
+    }
 
     /// <summary>Reserves one outbound provider request, returning false when the run budget is exhausted.</summary>
     public bool RecordRequest(string agent)
@@ -140,6 +162,7 @@ public sealed class TokenUsageCollector(
     {
         private readonly Lock _lock = new();
         private long _requests;
+        private long _checkpointHits;
         private long _input;
         private long _cachedInput;
         private long _output;
@@ -154,6 +177,11 @@ public sealed class TokenUsageCollector(
             {
                 _requests++;
             }
+        }
+
+        internal void AddCheckpointHit()
+        {
+            lock (_lock) { _checkpointHits++; }
         }
 
         internal void Add(long input, long cachedInput, long output, long reasoning, long total, bool hasCompletePricingBreakdown)
@@ -181,7 +209,8 @@ public sealed class TokenUsageCollector(
                       (_cachedInput / 1_000_000m * (provider.CachedInputCostPerMillionTokens ?? inputRate)) +
                       (_output / 1_000_000m * outputRate)
                     : null;
-                return new(agent, model, _requests, _input, _cachedInput, _output, _reasoning, _total, cost);
+                if (_requests == 0 && _checkpointHits > 0) cost = 0m;
+                return new(agent, model, _requests, _input, _cachedInput, _output, _reasoning, _total, cost, _checkpointHits);
             }
         }
     }

@@ -41,7 +41,7 @@ internal static class RepositoryToolFactory
         RepositoryWorkspace workspace,
         IReferenceDocumentSearch? referenceDocuments = null) =>
     [
-        .. CreateReadTools(workspace, referenceDocuments, compactFileReads: true),
+        .. CreateReadTools(workspace, referenceDocuments),
         AIFunctionFactory.Create(
             (Func<string, string, string>)workspace.WriteFile,
             name: AgentToolCatalog.WriteRepositoryFile.Name),

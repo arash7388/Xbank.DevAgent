@@ -103,6 +103,15 @@ public sealed class AgentTeamFactoryTests
         Directory.CreateDirectory(root);
         try
         {
+            using (System.Diagnostics.Process git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git")
+            {
+                WorkingDirectory = root, ArgumentList = { "init", "--quiet" },
+                UseShellExecute = false, CreateNoWindow = true,
+            })!)
+            {
+                git.WaitForExit();
+                Assert.Equal(0, git.ExitCode);
+            }
             File.WriteAllText(Path.Combine(root, "settings.json"), "{ \"client\": \"ExistingConsumer\" }");
             RepositoryWorkspace workspace = (RepositoryWorkspace)Activator.CreateInstance(
                 typeof(RepositoryWorkspace), BindingFlags.Instance | BindingFlags.NonPublic,

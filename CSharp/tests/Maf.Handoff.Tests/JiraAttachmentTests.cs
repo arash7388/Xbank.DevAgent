@@ -11,6 +11,90 @@ namespace Maf.Handoff.Tests;
 public sealed class JiraAttachmentTests
 {
     [Fact]
+    public async Task AcceptsEpfsBinaryAttachmentWithExplicitExtractionStatus()
+    {
+        byte[] bytes = [0x45, 0x50, 0x46, 0x53, 0, 0, 0, 0x0F, 2, 0, 0, 0, 1, 0, 0, 0, 0x93, 0x75, 0x9E];
+        var jira = Create(new Handler(bytes, "ggg.txt"));
+        var result = await jira.ReadAttachmentAsync("TEST-1", "123");
+        Assert.Equal("epfs-binary", result.ContentFormat);
+        Assert.Equal(bytes.Length, result.SourceBytes);
+        Assert.Empty(result.Text);
+        Assert.Equal(0, result.TotalCharacters);
+        Assert.False(result.HasMore);
+        Assert.False(result.ExtractionLimitReached);
+        Assert.Contains("No document text was extracted", result.ExtractionNotice);
+
+        var selected = new SelectedJiraAttachments(jira, "TEST-1", ["123"]);
+        string context = await selected.LoadContextAsync();
+        Assert.Contains("Filename: ggg.txt", context);
+        Assert.Contains("epfs-binary", context);
+        Assert.Contains("Attachment accepted", context);
+        Assert.DoesNotContain("Could not load", context);
+        await Assert.ThrowsAsync<ArgumentException>(() => jira.ReadAttachmentAsync("TEST-1", "123", 1));
+    }
+
+    [Fact]
+    public async Task TextBeginningWithEpfsIsStillReadAsText()
+    {
+        const string text = "EPFS is mentioned in this clarification.";
+        var result = await Create(new Handler(Encoding.UTF8.GetBytes(text), "ggg.txt")).ReadAttachmentAsync("TEST-1", "123");
+        Assert.Equal("text", result.ContentFormat);
+        Assert.Equal(text, result.Text);
+        Assert.Null(result.ExtractionNotice);
+    }
+
+    [Theory]
+    [InlineData("utf-8", false)]
+    [InlineData("utf-8", true)]
+    [InlineData("utf-16", false)]
+    [InlineData("utf-16", true)]
+    [InlineData("utf-16BE", false)]
+    [InlineData("utf-16BE", true)]
+    [InlineData("utf-32", false)]
+    [InlineData("utf-32", true)]
+    [InlineData("utf-32BE", false)]
+    [InlineData("utf-32BE", true)]
+    public async Task ReadsUnicodeAttachmentIntoToolsAndAutomaticContext(string encodingName, bool includeBom)
+    {
+        const string text = "Clarification: توضیحات فارسی\r\nUnicode requirements: café, 日本語, 😀";
+        Encoding encoding = Encoding.GetEncoding(encodingName);
+        byte[] bytes = includeBom ? [.. encoding.GetPreamble(), .. encoding.GetBytes(text)] : encoding.GetBytes(text);
+        var jira = Create(new Handler(bytes, "ggg.txt"));
+        var result = await jira.ReadAttachmentAsync("TEST-1", "123");
+        Assert.Equal(text, result.Text);
+        Assert.Equal(text.Length, result.TotalCharacters);
+        Assert.False(result.HasMore);
+
+        var selected = new SelectedJiraAttachments(jira, "TEST-1", ["123"]);
+        Assert.Contains(text, await selected.LoadContextAsync());
+    }
+
+    [Fact]
+    public async Task PagesUnicodeAttachmentByDecodedCharacters()
+    {
+        string text = new string('x', 11999) + "توضیحات فارسی";
+        var jira = Create(new Handler(Encoding.Unicode.GetBytes(text), "ggg.txt"));
+        var first = await jira.ReadAttachmentAsync("TEST-1", "123");
+        var second = await jira.ReadAttachmentAsync("TEST-1", "123", 12000);
+        Assert.Equal(text, first.Text + second.Text);
+        Assert.Equal(text.Length, first.TotalCharacters);
+        Assert.True(first.HasMore);
+        Assert.False(second.HasMore);
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0xC3, 0x28 })]
+    [InlineData(new byte[] { 0xFF, 0xFE, 0x41 })]
+    public async Task ReportsInvalidEncodingInsteadOfSilentlyReplacingCharacters(byte[] bytes)
+    {
+        var jira = Create(new Handler(bytes, "ggg.txt"));
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => jira.ReadAttachmentAsync("TEST-1", "123"));
+        Assert.Contains("encoding", error.Message);
+        var selected = new SelectedJiraAttachments(jira, "TEST-1", ["123"]);
+        Assert.Contains("invalid or unrecognized encoding", await selected.LoadContextAsync());
+    }
+
+    [Fact]
     public async Task AutomaticContextLimitLeavesRemainingSelectedFilesAvailableToTools()
     {
         Handler handler = new(Encoding.UTF8.GetBytes(new string('x', 13000)), "requirements.txt", attachmentCount: 5);
