@@ -3,7 +3,8 @@ using Maf.Handoff.Core;
 
 namespace Maf.Handoff.Api;
 
-public sealed record SessionFailureDetails(string Title, string Summary, string? Status, string? Agent, string Message)
+public sealed record SessionFailureDetails(string Title, string Summary, string? Status, string? Agent, string Message,
+    string? TechnicalDetails = null)
 {
     public static SessionFailureDetails? FromEvents(string? error, IReadOnlyList<RunEvent> events)
     {
@@ -35,6 +36,39 @@ public sealed record SessionFailureDetails(string Title, string Summary, string?
             }
         }
         Flush();
+
+        // Also explain archived runs that hit the old build/review loop. Use actual
+        // build diagnostics rather than an agent's speculation about the failure.
+        string? buildEvidence = messages.LastOrDefault(item =>
+            (item.Agent is "reviewer" or "software-delivery-reviewer") &&
+            (item.Text.Contains("BUILD_FAILED.", StringComparison.Ordinal) ||
+             item.Text.StartsWith(BuildFailureMessages.Marker, StringComparison.Ordinal))).Text;
+        if (status == "build_blocked" || (status == "loop_detected" && buildEvidence is not null))
+        {
+            string? explanation = BuildFailureMessages.DescribeEnvironmentFailure(buildEvidence ?? "");
+            if (status == "build_blocked")
+            {
+                string? assessment = buildEvidence?.Split("\n\nBuild diagnostics:", 2, StringSplitOptions.None)[0];
+                explanation ??= assessment?.Replace(BuildFailureMessages.Marker, "", StringComparison.Ordinal).Trim();
+            }
+            if (!string.IsNullOrWhiteSpace(explanation))
+                return new("Build verification blocked", "Build verification could not complete.", "build_blocked", null,
+                    explanation, buildEvidence);
+        }
+
+        if (status == "loop_detected")
+            return new("Run stopped without progress", "The proposed changes are preserved and have not been approved.",
+                status, null,
+                "The agents repeated the same work without resolving the remaining issue. Review the last build or review findings in the activity log before starting a new run.",
+                messages.LastOrDefault(item => item.Text.Contains(HandoffTopology.LoopDetectedMarker, StringComparison.Ordinal)).Text ?? error);
+
+        if (status == "agent_turn_limit_reached")
+        {
+            var limit = messages.LastOrDefault(item => item.Text.Contains(HandoffTopology.AgentTurnLimitMarker, StringComparison.Ordinal));
+            if (!string.IsNullOrWhiteSpace(limit.Text))
+                return new(title, error, status, limit.Agent,
+                    limit.Text.Replace(HandoffTopology.AgentTurnLimitMarker, "", StringComparison.Ordinal).Trim(), limit.Text);
+        }
 
         var source = status switch
         {

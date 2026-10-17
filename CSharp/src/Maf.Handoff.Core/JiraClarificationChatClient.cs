@@ -36,7 +36,11 @@ internal sealed class JiraClarificationChatClient(IChatClient inner, IWorkflowUs
             else response = await inner.GetResponseAsync(history, options, cancellationToken).ConfigureAwait(false);
 
             string? assessment = JiraProblemReportingChatClient.FindProblemAssessment(response);
-            if (assessment is null)
+            // Reporting includes non-blocking assumptions; only an explicit blocking
+            // assessment should interrupt a ready handoff and wait for user input.
+            if (assessment is null ||
+                (!assessment.Contains(HandoffTopology.JiraClarificationMarker, StringComparison.Ordinal) &&
+                 !assessment.Contains("NEEDS_CLARIFICATION", StringComparison.Ordinal)))
             {
                 // Downstream agents also need the user's answers as task evidence.
                 foreach (ChatMessage message in clarifications.AsEnumerable().Reverse()) response.Messages.Insert(0, message);
@@ -47,7 +51,9 @@ internal sealed class JiraClarificationChatClient(IChatClient inner, IWorkflowUs
             string answer = await input.AskAsync(questions, cancellationToken).ConfigureAwait(false);
             // Discard a premature handoff: it was never executed and has no tool result.
             ChatMessage question = new(ChatRole.Assistant, questions) { AuthorName = AgentNames.Jira };
-            ChatMessage reply = new(ChatRole.User, "User clarification for this Jira task:\n" + answer);
+            ChatMessage reply = new(ChatRole.User, (answer == AutonomyPolicy.DelegatedDecision
+                ? "Run autonomy policy guidance (no human answer was requested):\n"
+                : "User clarification for this Jira task:\n") + answer);
             history.Add(question);
             history.Add(reply);
             clarifications.Add(question);

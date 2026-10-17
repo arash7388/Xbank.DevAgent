@@ -4,7 +4,11 @@ using System.Text;
 
 namespace Maf.Handoff.Core;
 
-internal sealed record RepositoryBuildResult(bool Succeeded, string Evidence);
+internal sealed record RepositoryBuildResult(bool Succeeded, string Evidence, string? BlockerMessage = null)
+{
+    internal static RepositoryBuildResult Failed(string evidence) =>
+        new(false, evidence, BuildFailureMessages.DescribeEnvironmentFailure(evidence));
+}
 
 public sealed partial class RepositoryWorkspace
 {
@@ -56,16 +60,18 @@ public sealed partial class RepositoryWorkspace
                     await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     return new(false, evidence + await stdout.ConfigureAwait(false) + "\n" +
-                        await stderr.ConfigureAwait(false) + "\nBuild timed out after five minutes.");
+                        await stderr.ConfigureAwait(false) + "\nBuild timed out after five minutes.",
+                        "Build verification timed out after five minutes. Check build performance and dependency access. " + BuildFailureMessages.NextStep);
                 }
                 string output = await stdout.ConfigureAwait(false);
                 string errors = await stderr.ConfigureAwait(false);
                 evidence.AppendLine($"Exit code: {process.ExitCode}");
-                if (process.ExitCode != 0) return new(false, evidence + output + "\n" + errors);
+                if (process.ExitCode != 0) return RepositoryBuildResult.Failed(evidence + output + "\n" + errors);
             }
             catch (Exception error) when (error is Win32Exception or InvalidOperationException or IOException)
             {
-                return new(false, evidence + $"Build could not run: {error.Message}");
+                return new(false, evidence + $"Build could not run: {error.Message}",
+                    "Build verification could not start. Check that dotnet is installed and available to the application. " + BuildFailureMessages.NextStep);
             }
         }
         return new(true, evidence + "BUILD_PASSED");

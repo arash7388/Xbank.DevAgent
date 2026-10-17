@@ -15,9 +15,10 @@ const loop = diagnostics.fromSnapshot({ error: 'Stopped without progress', event
   { type: 'message', agent: 'developer', text: loopMessage },
   { type: 'run_finished', status: 'loop_detected' },
 ] });
-assert.equal(loop.title, 'Workflow loop detected');
-assert.equal(loop.message, loopMessage);
-assert.equal(loop.agent, 'developer');
+assert.equal(loop.title, 'Run stopped without progress');
+assert.ok(!loop.message.includes('WORKFLOW_LOOP_DETECTED'));
+assert.equal(loop.technicalDetails, loopMessage);
+assert.equal(loop.agent, undefined);
 assert.equal(fallback.title, 'Clarification needed');
 assert.equal(fallback.agent, 'jira');
 assert.equal(fallback.message, text);
@@ -63,7 +64,7 @@ async function testRendering(snapshot) {
     copy: async message => { copied = message; },
   });
   assert.equal(panel.hidden, false);
-  assert.equal(panel.all('pre').at(-1).textContent, assessment.message);
+  assert.equal(panel.all('pre').slice(-1)[0].textContent, assessment.message);
   assert.equal(panel.all('h3')[0].textContent, 'Clarification needed');
   assert.ok(panel.classes.has('clarification'));
   assert.ok(panel.all('ol').length > 0, 'Questions should be rendered as an ordered list');
@@ -75,6 +76,14 @@ async function testRendering(snapshot) {
 }
 
 (async () => {
+  const loopPanel = doc.createElement('section');
+  let copiedTechnical;
+  diagnostics.render(loopPanel, loop, { copy: async value => { copiedTechnical = value; } });
+  assert.ok(!loopPanel.all('div').find(node => node.className === 'run-diagnostic-body').textContent.includes('WORKFLOW_'));
+  assert.equal(loopPanel.all('details')[0].open, undefined, 'Technical details should start collapsed');
+  assert.equal(loopPanel.all('summary')[0].textContent, 'Technical details');
+  await loopPanel.all('button')[0].listeners.click();
+  assert.equal(copiedTechnical, loopMessage);
   await testRendering({ error: 'Additional input required', events });
   const output = doc.createElement('div');
   diagnostics.renderMessage(output, '## Blockers\n<img src=x onerror=alert(1)>\n\n**Questions**\n1. Check `API` and **scope**.\n2. [Unsafe](javascript:alert%281%29) [Safe](https://example.com/issue)\nJIRA_INPUT_REQUIRED');
@@ -90,7 +99,7 @@ async function testRendering(snapshot) {
     const fs = require('fs');
     const snapshot = JSON.parse(fs.readFileSync(process.argv[2], 'utf8').replace(/^\uFEFF/, ''));
     const actual = await testRendering(snapshot);
-    assert.equal(actual.all('ol').at(-1).children.length, 4, 'All four questions from the reported run must be visible');
+    assert.equal(actual.all('ol').slice(-1)[0].children.length, 4, 'All four questions from the reported run must be visible');
     console.log('Passed: full assessment and all four questions from the reported Jira run.');
   }
   console.log('Passed: archive reconstruction, server details, formatted sections, copy/edit controls, and injection-safe text/links.');

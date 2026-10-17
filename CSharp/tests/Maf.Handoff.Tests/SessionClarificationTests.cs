@@ -46,18 +46,87 @@ public sealed class SessionClarificationTests
         Assert.Null(state.Snapshot().Clarification);
     }
 
+    [Fact]
+    public async Task FullyAutonomousSessionCannotEnterAwaitingInput()
+    {
+        State state = new(100);
+        Assert.Equal(AutonomyPolicy.DelegatedDecision, await state.Input.AskAsync("Choose an approach"));
+        SessionSnapshot snapshot = state.Snapshot();
+        Assert.Equal("running", snapshot.Status);
+        Assert.Null(snapshot.Clarification);
+        Assert.Equal(100, snapshot.AutonomyLevel);
+        Assert.Contains(snapshot.Events, item => item.Type == "autonomy_decision");
+    }
+
+    [Theory]
+    [InlineData(50, false, "awaiting_approval", false)]
+    [InlineData(100, false, "completed", false)]
+    [InlineData(100, true, "awaiting_approval", true)]
+    [InlineData(25, true, "awaiting_approval", true)]
+    public void CompletionPolicyDistinguishesFinishedPatchesAndAutomaticPublishing(int level, bool autoCommit, string expected, bool pending)
+    {
+        State state = new(level, autoCommit);
+        state.Invoke("ReadyForApproval", "patch");
+        Assert.Equal(expected, state.Snapshot().Status);
+        Assert.Equal(pending, state.Snapshot().AutomaticCompletionPending);
+        state.Invoke("FinishAutomaticCompletion");
+        Assert.False(state.Snapshot().AutomaticCompletionPending);
+    }
+
+    [Fact]
+    public void FullyAutonomousNoChangeRunDoesNotPublish()
+    {
+        State state = new(100, true);
+        state.Invoke("ReadyForApproval", "");
+        Assert.Equal("no_changes", state.Snapshot().Status);
+        Assert.False(state.Snapshot().AutomaticCompletionPending);
+    }
+
+    [Fact]
+    public void StoppedRunCannotBecomeFailedOrReadyForApproval()
+    {
+        State state = new();
+        state.Invoke("Cancel");
+        state.Invoke("MarkFailed", "Late provider error", "late patch");
+        state.Invoke("ReadyForApproval", "late patch");
+        state.Invoke("Cancel");
+        Assert.Equal("cancelled", state.Snapshot().Status);
+        Assert.Null(state.Snapshot().Error);
+        Assert.IsType<OperationCanceledException>(Assert.Throws<TargetInvocationException>(
+            () => state.Invoke("BeginAgentRun", new object[] { null! })).InnerException);
+        Assert.Equal("cancelled", state.Snapshot().Status);
+    }
+
+    [Theory]
+    [InlineData("awaiting_approval")]
+    [InlineData("approving")]
+    [InlineData("committed")]
+    [InlineData("pushed")]
+    [InlineData("failed")]
+    public void StopCannotOverwriteAnInactiveRun(string status)
+    {
+        State state = new();
+        state.SetStatus(status);
+        Assert.IsType<InvalidOperationException>(Assert.Throws<TargetInvocationException>(
+            () => state.Invoke("Cancel")).InnerException);
+        Assert.Equal(status, state.Snapshot().Status);
+        Assert.False(state.Cancellation.IsCancellationRequested);
+    }
+
     private sealed class State
     {
         private readonly Type _type = typeof(RepositorySessionService).GetNestedType("SessionState", BindingFlags.NonPublic)!;
         private readonly object _state;
-        public State()
+        public State(int autonomyLevel = 50, bool autoCommit = false)
         {
-            CreateSessionRequest request = new("https://example.test/repo.git", "main", "TASK-42", new Dictionary<string, AgentModelConfiguration>(), null);
+            CreateSessionRequest request = new("https://example.test/repo.git", "main", "TASK-42", new Dictionary<string, AgentModelConfiguration>(), null,
+                AutonomyLevel: autonomyLevel, AutoCommit: autoCommit);
             _state = Activator.CreateInstance(_type, BindingFlags.Instance | BindingFlags.NonPublic,
                 binder: null, args: [Guid.NewGuid(), request, (Action<RunEvent>)(_ => { })], culture: null)!;
             _type.GetField("_status", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_state, "running");
         }
         public IWorkflowUserInput Input => (IWorkflowUserInput)_state;
+        public void SetStatus(string status) => _type.GetField("_status", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_state, status);
         public CancellationTokenSource Cancellation => (CancellationTokenSource)_type.GetProperty("Cancellation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_state)!;
         public object? Invoke(string name, params object[] args) => _type.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(_state, args);
         public SessionSnapshot Snapshot() => (SessionSnapshot)Invoke("Snapshot")!;

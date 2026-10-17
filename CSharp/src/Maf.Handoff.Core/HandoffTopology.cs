@@ -45,6 +45,11 @@ public static class HandoffTopology
     public static string? GetTerminationStatus(IReadOnlyCollection<ChatMessage> conversation, WorkflowSettings settings)
     {
         ChatMessage[] assistantMessages = [.. conversation.Where(message => message.Role == ChatRole.Assistant)];
+        if (assistantMessages.Any(message =>
+                (message.AuthorName is "reviewer" or "software-delivery-reviewer") &&
+                !message.Contents.OfType<FunctionCallContent>().Any() &&
+                message.Text.StartsWith(BuildFailureMessages.Marker, StringComparison.Ordinal)))
+            return "build_blocked";
         // Limits and rejection take precedence over approval. Tool results and user-supplied
         // marker literals are evidence, not control messages.
         if (assistantMessages.Any(message => message.Text.Contains(LoopDetectedMarker, StringComparison.Ordinal)))

@@ -129,7 +129,7 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
             SET status = $status, error = $error, updated_at = $updated_at,
                 started_at = CASE WHEN $status = 'running' AND started_at IS NULL THEN $updated_at ELSE started_at END,
                 finished_at = CASE WHEN $status IN (
-                    'awaiting_approval', 'no_changes', 'failed', 'cancelled', 'rejected',
+                    'completed', 'awaiting_approval', 'no_changes', 'failed', 'cancelled', 'rejected',
                     'approval_failed', 'committed', 'pushed', 'pull_request_created')
                     THEN $updated_at ELSE finished_at END
             WHERE id = $id;

@@ -37,6 +37,31 @@ public sealed class ConversationTerminationTests
     }
 
     [Fact]
+    public async Task ReviewerApprovalInHandoffArgumentsCanComplete()
+    {
+        ScriptedClient provider = new((call, options) =>
+        {
+            if (call >= 4) return Text(HandoffTopology.CompletionMarker);
+            ChatResponse response = Handoff(options);
+            if (call == 3)
+            {
+                FunctionCallContent handoff = Assert.Single(response.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
+                handoff.Arguments!["reasonForHandoff"] = "REVIEW_APPROVED: independently inspected the latest diff.";
+                foreach (ChatMessage message in response.Messages)
+                    for (int index = message.Contents.Count - 1; index >= 0; index--)
+                        if (message.Contents[index] is TextContent) message.Contents.RemoveAt(index);
+                response.Messages.Last().Contents.Add(new TextContent(BuildFailureMessages.SkippedNotice));
+            }
+            return response;
+        });
+
+        List<RunEvent> events = await Run(provider);
+
+        Assert.Equal(4, provider.CallCount);
+        Assert.Equal("completed", Assert.Single(events, item => item.Type == "run_finished").Status);
+    }
+
+    [Fact]
     public async Task ReleaseCompletionWithoutReviewerConfirmationFails()
     {
         ScriptedClient provider = new((call, options) => call < 4

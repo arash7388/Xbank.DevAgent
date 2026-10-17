@@ -17,11 +17,12 @@ public static class AgentTeamFactory
         CodeGraphAudit? codeGraphAudit = null,
         IToolCallStore? toolCallStore = null,
         string? workflowId = null,
-        IJiraIssueSearch? jira = null)
+        IJiraIssueSearch? jira = null,
+        IWorkflowUserInput? userInput = null)
     {
         Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(name => name, _ => chatClient);
         Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => settings);
-        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId, jira);
+        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId, jira, userInput);
     }
 
     public static AgentTeam Create(
@@ -33,10 +34,17 @@ public static class AgentTeamFactory
         CodeGraphAudit? codeGraphAudit = null,
         IToolCallStore? toolCallStore = null,
         string? workflowId = null,
-        IJiraIssueSearch? jira = null)
+        IJiraIssueSearch? jira = null,
+        IWorkflowUserInput? userInput = null)
     {
         WorkflowSettings workflowSettings = Get(settingsByAgent, AgentNames.Developer);
+        userInput ??= jira as IWorkflowUserInput;
+        if (userInput is not null && userInput is not AutonomyUserInput)
+            userInput = new AutonomyUserInput(workflowSettings.AutonomyLevel, userInput);
         workflowSettings.Validate();
+        // Jira access, including Developer's comment reporting, requires the Jira agent.
+        if (!clients.ContainsKey(AgentNames.Jira) || !settingsByAgent.ContainsKey(AgentNames.Jira))
+            jira = null;
         bool codeGraphAvailable = workspace?.ContainsCSharpSource() is true && codeGraphTools is not null;
         if (codeGraphAvailable)
         {
@@ -60,11 +68,14 @@ public static class AgentTeamFactory
         if (workspace is not null)
         {
             effectiveClients[AgentNames.Reviewer] = new ReviewerBuildGuardChatClient(
-                Get(effectiveClients, AgentNames.Reviewer), workspace.BuildAsync);
+                Get(effectiveClients, AgentNames.Reviewer), workspace.BuildAsync, workflowSettings.SkipBuildVerification);
             effectiveClients[AgentNames.Developer] = new DeveloperHandoffGuardChatClient(
                 Get(effectiveClients, AgentNames.Developer),
                 () => !string.IsNullOrWhiteSpace(workspace.GetDiff()));
         }
+
+        effectiveClients[AgentNames.Reviewer] = new ReviewerApprovalChatClient(
+            Get(effectiveClients, AgentNames.Reviewer));
 
         ReviewerRemediationBudget remediationBudget = new(
             workflowSettings.MaxReviewerRemediationCycles);
@@ -79,7 +90,7 @@ public static class AgentTeamFactory
 
         // Clarification retries must pass through the same execution and request budgets.
         if (effectiveClients.TryGetValue(AgentNames.Jira, out IChatClient? intake) &&
-            jira is IWorkflowUserInput { IsAvailable: true } input)
+            userInput is { IsAvailable: true } input)
             effectiveClients[AgentNames.Jira] = new JiraClarificationChatClient(intake, input);
 
         return new(
@@ -130,8 +141,12 @@ public static class AgentTeamFactory
 
             if (agentName == AgentNames.Jira && jira is not null)
             {
-                tools.AddRange(JiraToolFactory.Create(jira));
+                tools.AddRange(JiraToolFactory.Create(jira, userInput));
             }
+            if (userInput is { IsAvailable: true } decisions)
+                tools.Add(AIFunctionFactory.Create(
+                    (string questions, CancellationToken cancellationToken) => decisions.AskAsync(questions, cancellationToken),
+                    name: "ask_user_decision", description: "Ask the user for a decision required by the selected autonomy policy. At 100% returns delegated decision guidance immediately."));
             if (agentName == AgentNames.Developer && jira is IJiraScopeChangeReporter changes)
                 tools.Add(AIFunctionFactory.Create(
                     (string changesInPersian, CancellationToken cancellationToken) => changes.ReportScopeChangeAsync(changesInPersian, cancellationToken),
@@ -207,7 +222,11 @@ public static class AgentTeamFactory
     {
         ChatOptions options = new()
         {
-            Instructions = instructions,
+            Instructions = instructions + AutonomyPolicy.Instructions(settings.AutonomyLevel) + (settings.SkipBuildVerification
+                ? "\n\nRUN BUILD POLICY: The user selected Skip build verification. Do not run or request a build for this run. " +
+                  "Continue independent code/security review and the release decision without requiring a successful build. " +
+                  "Do not block solely because build verification is unavailable. Report it as skipped, never passed."
+                : ""),
             Tools = tools,
         };
 

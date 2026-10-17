@@ -6,6 +6,35 @@ namespace Maf.Handoff.Tests;
 
 public sealed class AgentTeamFactoryTests
 {
+    [Theory]
+    [InlineData(50)]
+    [InlineData(100)]
+    public async Task EveryRequiredAgentCanRequestDecisionsWithoutJira(int level)
+    {
+        RecordingChatClient client = new();
+        WorkflowSettings settings = new("https://example.test", "model", "key") { AutonomyLevel = level };
+        DecisionInput input = new();
+        AgentTeam team = AgentTeamFactory.Create(client, settings, userInput: input);
+        foreach (var agent in team.All)
+        {
+            await agent.RunAsync("Inspect the assigned task");
+            var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single(client.Options!.Tools!, tool => tool.Name == "ask_user_decision"));
+            var response = await tool.InvokeAsync(new AIFunctionArguments { ["questions"] = "Which approach?" });
+            Assert.Equal(level == 100 ? AutonomyPolicy.DelegatedDecision : "Use the existing approach", response?.ToString());
+        }
+        Assert.Equal(level == 100 ? 0 : AgentNames.Required.Count, input.Calls);
+    }
+
+    private sealed class DecisionInput : IWorkflowUserInput
+    {
+        public int Calls { get; private set; }
+        public Task<string> AskAsync(string questions, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult("Use the existing approach");
+        }
+    }
+
     [Fact]
     public void RejectsConfigurationWithoutMandatoryReviewer()
     {
@@ -250,7 +279,7 @@ public sealed class AgentTeamFactoryTests
         Assert.Contains("Do not use CodeGraph.", options.Instructions, StringComparison.Ordinal);
         Assert.Contains("CODEGRAPH GUIDANCE", options.Instructions, StringComparison.Ordinal);
         Assert.Contains("never a handoff gate", options.Instructions, StringComparison.Ordinal);
-        Assert.EndsWith(
+        Assert.Contains(
             "Configuration, documentation, and other non-C# work normally needs no graph call.",
             options.Instructions,
             StringComparison.Ordinal);

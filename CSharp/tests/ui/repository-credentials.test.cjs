@@ -23,6 +23,7 @@ const context = {
   clearError() {}, stopPolling() {}, resetOutput() {}, startElapsedTimer() {}, resetElapsedTimer() {},
   setBusy(value) { context.runButton.disabled = value; },
   readAgentConfigurations() { return {}; },
+  selectedReferenceFiles() { return []; },
   showError(message) { context.error = message; },
   setSetupStep(step) { context.step = step; },
   uploadReferenceDocuments() { throw new Error('Must check repository access before uploading documents'); },

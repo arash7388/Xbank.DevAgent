@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20261007-4">
+  <link rel="stylesheet" href="/styles.css?v=20261016-1">
 </head>
 <body>
   <header class="app-header">
@@ -119,6 +119,8 @@
             <button id="jira-title-button" class="text-button" type="button">Title only</button>
           </form>
           <div id="jira-issue-error" class="form-error" role="alert" hidden></div>
+          <label><input id="jira-include-comments" type="checkbox" checked> Include Jira comments in the AI context</label>
+          <p class="field-guide">Uncheck to use the task without its comments. Comments remain visible in the preview.</p>
           <div class="jira-preview-actions"><button id="jira-select-task" class="primary" type="button" disabled>Use this task</button><p class="field-guide">Adds task context to your change request.</p></div>
           <div id="jira-issue-result" class="jira-issue-result" tabindex="-1">
             <div class="jira-empty-state"><span class="jira-empty-icon" aria-hidden="true">▤</span><h4>Review before you select</h4><p>Task details, comments, and attachments will appear here.</p></div>
@@ -357,6 +359,12 @@
           <div id="agent-models" class="agent-model-grid"></div>
         </fieldset>
 
+        <fieldset id="build-verification-settings">
+          <legend>Build verification</legend>
+          <label class="check-row" for="skip-build-verification"><input id="skip-build-verification" name="skipBuildVerification" type="checkbox"><span>Skip build verification and continue</span></label>
+          <p class="field-guide">Use when the build environment is unavailable. The workflow continues with a notification that compilation has not been verified.</p>
+        </fieldset>
+
         <fieldset id="agent-turn-limits">
           <legend>Agentic turn limits</legend>
           <p class="field-guide">Limits apply across all agents for this run. Further AI calls stop when either limit is reached. Budget uses reported tokens and configured model prices; a call in progress can exceed the budget, and unpriced usage cannot be counted.</p>
@@ -387,6 +395,21 @@
               <input id="claude-key" data-provider-key="claude" type="password" autocomplete="off" placeholder="Anthropic API key">
             </div>
           </div>
+        </fieldset>
+
+        <fieldset id="autonomy-settings">
+          <legend>Autonomy and completion</legend>
+          <label for="autonomy-level">Agent autonomy</label>
+          <div class="autonomy-heading"><output id="autonomy-label" for="autonomy-level" aria-live="polite">100% — Fully autonomous</output></div>
+          <input id="autonomy-level" name="autonomyLevel" type="range" min="0" max="100" step="25" value="100" list="autonomy-stops" aria-describedby="autonomy-description">
+          <datalist id="autonomy-stops"><option value="0" label="Guided"></option><option value="25" label="Assisted"></option><option value="50" label="Collaborative"></option><option value="75" label="Highly autonomous"></option><option value="100" label="Fully autonomous"></option></datalist>
+          <div class="autonomy-scale" aria-hidden="true"><span>Guided</span><span>Assisted</span><span>Collaborative</span><span>Highly autonomous</span><span>Fully autonomous</span></div>
+          <p id="autonomy-description" class="field-guide">Decide, implement, review, and repair without waiting for your answers. Record assumptions and finish with the patch or your selected completion actions.</p>
+          <p class="field-guide">At 100%, agents decide and record assumptions without waiting for your answers. Build policy, independent review, budgets, and Stop run still apply. Missing prerequisites can prevent completion.</p>
+          <label class="check-row"><input id="auto-commit" name="autoCommit" type="checkbox"><span>Automatically commit reviewed changes on the task branch</span></label>
+          <label class="check-row"><input id="auto-push" name="autoPush" type="checkbox"><span>Automatically push the task branch (includes commit)</span></label>
+          <label class="check-row"><input id="auto-create-pull-request" name="autoCreatePullRequest" type="checkbox"><span>Automatically create a PR / MR (includes commit and push)</span></label>
+          <p class="field-guide">These selections authorize completion actions when the run passes review. At 100% with no completion actions selected, the run finishes with the patch available for inspection.</p>
         </fieldset>
 
         <fieldset>
@@ -481,20 +504,22 @@
           <p id="session-label">No active session</p>
         </div>
         <div class="run-meta">
-          <button id="cancel-button" class="secondary" type="button" hidden>Cancel</button>
-          <button id="back-button" class="secondary" type="button" hidden>Back</button>
+          <button id="cancel-button" class="secondary" type="button" hidden>Stop run</button>
+          <button id="back-button" class="back-button" type="button" hidden>Edit configuration</button>
+          <button id="restart-run-button" class="secondary" type="button" hidden>Restart Agent Run</button>
           <button class="secondary report-button" type="button" hidden>Report</button>
           <span id="elapsed-timer" class="elapsed-timer" hidden aria-live="off"><span aria-hidden="true"></span><b>Elapsed</b> <time>00:00</time></span>
           <span id="status-badge" class="status idle">Idle</span>
         </div>
       </div>
       <section id="run-error" class="run-error" role="alert" aria-label="Workflow stop details" hidden></section>
+      <section id="build-warning-notice" class="jira-problem-notice" role="status" aria-live="polite" hidden></section>
       <section id="jira-problem-notice" class="jira-problem-notice" role="status" aria-live="polite" lang="fa" dir="rtl" hidden></section>
       <section id="jira-clarification" class="jira-problem-notice" aria-live="polite" hidden>
-        <h3>Jira needs your clarification</h3>
+        <h3>Agent decision needed</h3>
         <p id="jira-clarification-questions" lang="fa" dir="auto"></p>
         <form id="jira-clarification-form">
-          <label for="jira-clarification-answer">Your answer</label>
+          <label for="jira-clarification-answer">Your answer or decision</label>
           <textarea id="jira-clarification-answer" rows="4" maxlength="12000" required dir="auto"></textarea>
           <p class="field-guide">Answer the questions to continue this agent run.</p>
           <p id="jira-clarification-error" role="alert" hidden></p>
@@ -525,7 +550,26 @@
         </div>
       </div>
       <section id="final-usage-summary" class="usage-summary final-usage-summary" aria-live="polite" hidden></section>
-      <pre id="diff" class="diff"><code>No diff available.</code></pre>
+      <div class="diff-review" id="diff-review">
+        <div class="diff-toolbar" id="diff-toolbar" hidden>
+          <div class="diff-totals">
+            <span id="diff-file-count" class="diff-file-count">0 files changed</span>
+            <span id="diff-line-stats" class="diff-line-stats"></span>
+          </div>
+          <div class="diff-controls">
+            <button id="diff-collapse-all" class="text-button" type="button">Collapse all</button>
+            <div class="diff-view-toggle" role="group" aria-label="Diff layout">
+              <button id="diff-view-inline" class="diff-view-option" type="button" aria-pressed="true">Inline</button>
+              <button id="diff-view-split" class="diff-view-option" type="button" aria-pressed="false">Side by side</button>
+            </div>
+          </div>
+        </div>
+        <div class="diff-body" id="diff-body" hidden>
+          <nav id="diff-tree" class="diff-tree" aria-label="Changed files"></nav>
+          <div id="diff-files" class="diff-files" aria-label="Diff content"></div>
+        </div>
+        <div id="diff-empty" class="diff-empty">No diff available.</div>
+      </div>
     </section>
   </main>
 
@@ -569,6 +613,7 @@
   </dialog>
 
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>
-  <script src="/app.js?v=20261007-3" defer></script>
+  <script src="/autonomy.js?v=20261016-1" defer></script>
+  <script src="/app.js?v=20261016-1" defer></script>
 </body>
 </html>

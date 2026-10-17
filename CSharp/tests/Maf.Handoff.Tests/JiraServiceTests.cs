@@ -132,7 +132,46 @@ public sealed class JiraServiceTests
         Assert.Equal(0, (await selected.GetIssueCommentsAsync("WEPOD-42", 3, 20)).GetProperty("total").GetInt32());
         Assert.Contains("startAt=3&maxResults=20", handler.RequestUri!.Query);
         Assert.Empty(await selected.GetAttachmentsAsync("WEPOD-42"));
-        await Assert.ThrowsAsync<ArgumentException>(() => selected.ReadAttachmentAsync("WEPOD-42", "123"));
+        Assert.Equal("excluded-by-user", (await selected.ReadAttachmentAsync("WEPOD-42", "123")).ContentFormat);
+    }
+
+    [Theory]
+    [InlineData("WEPOD-42")]
+    [InlineData("WEPOD-43")]
+    public async Task ExcludedCommentsAreRemovedFromDetailsAndCannotBeReadForAnyIssue(string key)
+    {
+        RecordingHandler handler = new("""{"fields":{"description":"Task context","comment":{"comments":[{"body":"Excluded discussion"}]}},"renderedFields":{"comment":"Excluded rendered discussion"}}""");
+        var selected = new SelectedJiraComments(new SelectedJiraAttachments(CreateService(handler), "WEPOD-42", []), false);
+
+        var details = await selected.GetIssueDetailsAsync(key);
+        Assert.Equal("Task context", details.GetProperty("fields").GetProperty("description").GetString());
+        Assert.False(details.GetProperty("fields").TryGetProperty("comment", out _));
+        Assert.False(details.GetProperty("renderedFields").TryGetProperty("comment", out _));
+        Assert.True(details.GetProperty("commentsExcludedByUser").GetBoolean());
+        Assert.DoesNotContain("Excluded discussion", details.GetRawText());
+        Uri? detailsUri = handler.RequestUri;
+
+        var comments = await selected.GetIssueCommentsAsync(key, 50, 20);
+        Assert.Empty(comments.GetProperty("comments").EnumerateArray());
+        Assert.True(comments.GetProperty("commentsExcludedByUser").GetBoolean());
+        Assert.Same(detailsUri, handler.RequestUri); // No HTTP request for excluded comment pages.
+    }
+
+    [Fact]
+    public async Task IncludedCommentsRemainAvailableInDetailsAndCommentPages()
+    {
+        RecordingHandler handler = new("""{"fields":{"comment":{"comments":[{"body":"Keep existing API"}]}},"comments":[{"body":"Keep existing API"}]}""");
+        var selected = new SelectedJiraComments(CreateService(handler), true);
+        Assert.Contains("Keep existing API", (await selected.GetIssueDetailsAsync("WEPOD-42")).GetRawText());
+        Assert.Contains("Keep existing API", (await selected.GetIssueCommentsAsync("WEPOD-42")).GetRawText());
+        Assert.Contains("/WEPOD-42/comment?", handler.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public void ExistingSessionRequestsIncludeCommentsByDefault()
+    {
+        var request = System.Text.Json.JsonSerializer.Deserialize<CreateSessionRequest>("""{"RepositoryUrl":"https://example.test/repo.git","BaseBranch":"main","Task":"WEPOD-42","Agents":{},"GitHubToken":null}""");
+        Assert.True(request!.JiraIncludeComments);
     }
 
     [Fact]

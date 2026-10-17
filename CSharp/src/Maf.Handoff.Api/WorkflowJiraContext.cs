@@ -39,7 +39,7 @@ public sealed partial class WorkflowJiraContext(
                 return Publish(missing, scopeChange);
             }
 
-            string body = (scopeChange ? "گزارش تغییرات خارج از شرح تسک Jira\n\n" : "گزارش بررسی آمادگی تسک توسط عامل Jira\n\n") + problem;
+            string body = JiraCommentHandler.Format(problem, scopeChange);
             string? url = null;
             JiraProblemReport report;
             try
@@ -47,7 +47,7 @@ public sealed partial class WorkflowJiraContext(
                 url = writer.GetIssueUrl(issueKey);
                 JsonElement comment = await writer.PostCommentAsync(issueKey, body, cancellationToken);
                 string? id = comment.TryGetProperty("id", out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-                string title = scopeChange ? "گزارش تغییرات" : "گزارش مشکل";
+                string title = scopeChange ? "گزارش تغییر دامنهٔ محصول" : "گزارش محصول و ملاحظات فنی";
                 report = new(issueKey, "posted", $"{title} به‌صورت نظر فارسی در تسک {issueKey} ثبت شد.\n\n{problem}", id, writer.GetIssueUrl(issueKey, id));
             }
             catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or OperationCanceledException or JsonException)
@@ -90,8 +90,10 @@ public sealed partial class WorkflowJiraContext(
     [GeneratedRegex(@"\b[A-Za-z][A-Za-z0-9_]*-\d+\b")]
     private static partial Regex IssueKeyPattern();
 
-    public Task<JsonElement> GetIssueDetailsAsync(string key, CancellationToken cancellationToken = default) => reads.GetIssueDetailsAsync(key, cancellationToken);
-    public Task<JsonElement> GetIssueCommentsAsync(string key, int startAt = 0, int maxResults = 50, CancellationToken cancellationToken = default) => reads.GetIssueCommentsAsync(key, startAt, maxResults, cancellationToken);
+    public async Task<JsonElement> GetIssueDetailsAsync(string key, CancellationToken cancellationToken = default) =>
+        JiraCommentHandler.Annotate(await reads.GetIssueDetailsAsync(key, cancellationToken));
+    public async Task<JsonElement> GetIssueCommentsAsync(string key, int startAt = 0, int maxResults = 50, CancellationToken cancellationToken = default) =>
+        JiraCommentHandler.Annotate(await reads.GetIssueCommentsAsync(key, startAt, maxResults, cancellationToken));
     public Task<IReadOnlyList<JiraAttachmentInfo>> GetAttachmentsAsync(string key, CancellationToken cancellationToken = default) => reads.GetAttachmentsAsync(key, cancellationToken);
     public Task<JiraAttachmentText> ReadAttachmentAsync(string key, string id, int offset = 0, CancellationToken cancellationToken = default) => reads.ReadAttachmentAsync(key, id, offset, cancellationToken);
     public Task<IReadOnlyList<JiraIssueInfo>> SearchIssuesAsync(string jql, int maxResults = 10, CancellationToken cancellationToken = default) => reads.SearchIssuesAsync(jql, maxResults, cancellationToken);

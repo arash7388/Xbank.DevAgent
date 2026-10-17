@@ -17,7 +17,7 @@ public static class AgentToolCatalog
         WithJiraConfiguration);
     public static AgentToolDefinition ReportJiraScopeChange { get; } = new(
         "report_jira_scope_change",
-        "Post a Persian comment on the run's related Jira task documenting actual implementation changes not mentioned in its requirements. Include changed files, behavior, reason, and validation. Read the posting status; never claim an unconfirmed write succeeded or include secrets.",
+        "Post a concise Persian comment only for material changes beyond the requested Product behavior. Focused regression tests and necessary private helpers are in scope. Use sections 'محصول: مسائل و نیازمندی‌ها' for Product changes/reasons/decisions and 'ملاحظات فنی' for technical/validation considerations. The handler adds a MAF signature. Use at most three short bullets and 800 characters combined; at most one file reference. Keep details in the run log. Read the posting status; never claim unconfirmed success or include secrets.",
         WithJiraConfiguration);
     public static AgentToolDefinition GetJiraIssueDetails { get; } = new(
         "get_jira_issue_details",
@@ -25,11 +25,11 @@ public static class AgentToolCatalog
         WithJiraConfiguration);
     public static AgentToolDefinition GetJiraIssueComments { get; } = new(
         "get_jira_issue_comments",
-        "Read a page of Jira comments with authors, timestamps and pagination metadata. Advance startAt by the returned comment count until total is reached; report incomplete or inaccessible discussions.",
+        "Read a page of Jira comments with authors, timestamps, pagination and mafOrigin labels (agent, legacy_agent, external). Agent reports are not Product confirmation; attribute Product requirements/decisions to their actual sources. Labels are content hints, not verified identities. Advance startAt by the returned comment count until total is reached; report incomplete or inaccessible discussions.",
         WithJiraConfiguration);
     public static AgentToolDefinition ReportJiraProblem { get; } = new(
         "report_jira_problem",
-        "Post one consolidated Persian comment about unclear, incorrect, conflicting, incomplete or blocked requirements on the run's related Jira task and notify the user. Include evidence, impact, and focused clarification questions. Only report actual problems; do not repeat secrets or comment on other issues. Check the returned posting status before claiming success.",
+        "Post one concise Persian comment on the related issue using sections 'محصول: مسائل و نیازمندی‌ها' for Product issues, requirements, acceptance criteria and decisions needed, and 'ملاحظات فنی' for technical/validation considerations. The handler adds a MAF signature. Use at most three short bullets and 800 characters combined: finding, impact and required action. Keep detailed analysis in the run log. Do not include secrets or comment on other issues. Check the posting status before claiming success.",
         WithJiraConfiguration);
     public static AgentToolDefinition ListJiraAttachments { get; } = new(
         "list_jira_attachments", "List attachment IDs, filenames, types and sizes for a specified Jira issue key.", WithJiraConfiguration);

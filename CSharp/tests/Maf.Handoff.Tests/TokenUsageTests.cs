@@ -9,6 +9,34 @@ public sealed class TokenUsageTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void AifaCostsZeroAndMixedRunsOnlyChargePaidProviders(bool hasUsage)
+    {
+        ModelProviderDefinition paid = new("model", "Paid", "https://example.test",
+            true, false, 1000, 1000, false, null, [], 2m, 8m, 0.5m);
+        WorkflowSettings aifa = new(AifaRequestContext.Endpoint, AifaRequestContext.Model, "key",
+            Provider: paid with { Url = AifaRequestContext.Endpoint });
+        TokenUsageCollector collector = new(new Dictionary<string, WorkflowSettings>
+        {
+            [AgentNames.Planner] = aifa,
+            [AgentNames.Developer] = new("https://example.test", "model", "key", Provider: paid),
+        }, maxBudgetUsd: 0.01m);
+        Assert.True(collector.RecordRequest(AgentNames.Planner));
+        if (hasUsage) collector.Record(AgentNames.Planner, new UsageDetails
+        {
+            InputTokenCount = 1_000_000, OutputTokenCount = 500_000, TotalTokenCount = 1_500_000,
+        });
+        Assert.Equal(0m, collector.Snapshot().EstimatedCostUsd);
+        Assert.True(collector.RecordRequest(AgentNames.Developer));
+        collector.Record(AgentNames.Developer, new UsageDetails { InputTokenCount = 1000, OutputTokenCount = 500 });
+        TokenUsageSummary summary = collector.Snapshot();
+        Assert.Equal(0m, summary.ByAgent.Single(item => item.Agent == AgentNames.Planner).EstimatedCostUsd);
+        Assert.Equal(0.006m, summary.EstimatedCostUsd);
+        Assert.Equal(hasUsage ? 1_501_500 : 1500, summary.TotalTokens);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task BudgetStopsFurtherCallsAcrossAgents(bool streaming)
     {
         ModelProviderDefinition provider = new(

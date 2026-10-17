@@ -129,7 +129,12 @@ public sealed class JiraAttachmentTests
         var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", []);
         Assert.Contains("excluded all attachments", await selected.LoadContextAsync());
         Assert.Empty(await selected.GetAttachmentsAsync("TEST-1"));
-        await Assert.ThrowsAsync<ArgumentException>(() => selected.ReadAttachmentAsync("TEST-1", "123"));
+        var excluded = await selected.ReadAttachmentAsync("TEST-1", "123");
+        Assert.Equal("excluded-by-user", excluded.ContentFormat);
+        Assert.Empty(excluded.Text);
+        Assert.False(excluded.HasMore);
+        Assert.Contains("Do not retry", excluded.ExtractionNotice);
+        Assert.Empty((await selected.GetIssueDetailsAsync("TEST-1")).GetProperty("fields").GetProperty("attachment").EnumerateArray());
         Assert.Equal(0, handler.Downloads);
     }
 
@@ -140,8 +145,22 @@ public sealed class JiraAttachmentTests
         var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", ["123"]);
         Assert.Single(await selected.GetAttachmentsAsync("test-1"));
         Assert.Empty(await selected.GetAttachmentsAsync("TEST-2"));
-        await Assert.ThrowsAsync<ArgumentException>(() => selected.ReadAttachmentAsync("TEST-1", "999"));
-        await Assert.ThrowsAsync<ArgumentException>(() => selected.ReadAttachmentAsync("TEST-2", "123"));
+        Assert.Equal("excluded-by-user", (await selected.ReadAttachmentAsync("TEST-1", "999")).ContentFormat);
+        Assert.Equal("excluded-by-user", (await selected.ReadAttachmentAsync("TEST-2", "123")).ContentFormat);
+        Assert.Equal(0, handler.Downloads);
+    }
+
+    [Fact]
+    public async Task SelectionFiltersIssueDetailsAndHonorsCancellationForExcludedReads()
+    {
+        Handler handler = new(Encoding.UTF8.GetBytes("requirements"), "requirements.txt", attachmentCount: 2);
+        var selected = new SelectedJiraAttachments(Create(handler), "TEST-1", ["123"]);
+        var attachments = (await selected.GetIssueDetailsAsync("test-1")).GetProperty("fields").GetProperty("attachment");
+        Assert.Equal("123", Assert.Single(attachments.EnumerateArray()).GetProperty("id").GetString());
+        Assert.Empty((await selected.GetIssueDetailsAsync("TEST-2")).GetProperty("fields").GetProperty("attachment").EnumerateArray());
+        using CancellationTokenSource cancellation = new();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => selected.ReadAttachmentAsync("TEST-1", "999", cancellationToken: cancellation.Token));
         Assert.Equal(0, handler.Downloads);
     }
 

@@ -18,6 +18,16 @@ public sealed class RepositorySessionService(
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
     private readonly string _workspaceRoot = Path.Combine(Path.GetTempPath(), "maf-repository-workspaces");
 
+    private int MaxAgentTurns
+    {
+        get
+        {
+            int limit = configuration.GetValue("Workflow:MaxAgentTurns", 60);
+            if (limit < 1) throw new ConfigurationException("Workflow:MaxAgentTurns must be greater than zero.");
+            return limit;
+        }
+    }
+
     public SessionSnapshot Create(CreateSessionRequest request)
     {
         RepositoryProvider provider = ParseProvider(request.SourceControl);
@@ -249,37 +259,56 @@ public sealed class RepositorySessionService(
                 pair => pair.Key,
                 pair => pair.Value.ToSettings(
                     maxTotalMessages: 100,
-                    maxAgentTurns: 30,
+                    maxAgentTurns: MaxAgentTurns,
                     maxReviewerRemediationCycles: 5,
                     maxLlmRequests: request.MaxAiCalls,
                     maxBudgetUsd: request.MaxBudgetUsd) with
                 {
                     MaxRepeatedWorkflowStates = configuration.GetValue("Workflow:MaxRepeatedStates", 3),
+                    SkipBuildVerification = request.SkipBuildVerification,
+                    AutonomyLevel = request.AutonomyLevel,
                 },
                 StringComparer.Ordinal);
             IReferenceDocumentSearch? documents = CreateDocumentSearch(request);
-            IJiraIssueSearch workflowJira = jira;
+            IWorkflowUserInput decisions = new AutonomyUserInput(request.AutonomyLevel, state, questions =>
+            {
+                state.AddEvent(new("autonomy_decision", Text: questions + "\nDecision delegated to agents; no human answer requested.", Category: "input"));
+                Persist(state);
+            });
+            state.AddEvent(new("autonomy_policy", Text: $"Autonomy: {request.AutonomyLevel}%. Automatic commit: {request.AutoCommit}; push: {request.AutoPush}; PR/MR: {request.AutoCreatePullRequest}.", Category: "input"));
+            IJiraIssueSearch? workflowJira = null;
             string workflowTask = request.Task;
             if (request.JiraIssueKey is not null)
             {
                 workflowTask = $"Selected Jira issue: {request.JiraIssueKey}\n\n{workflowTask}";
-                SelectedJiraAttachments selectedAttachments = new(jira, request.JiraIssueKey, request.JiraAttachmentIds ?? []);
-                workflowJira = selectedAttachments;
-                workflowTask += await selectedAttachments.LoadContextAsync(state.Cancellation.Token);
             }
-            workflowJira = new WorkflowJiraContext(workflowJira, jira,
-                WorkflowJiraContext.ResolveIssueKey(request.JiraIssueKey, request.Task), runEvent =>
+            if (settingsByAgent.ContainsKey(AgentNames.Jira))
+            {
+                workflowJira = jira;
+                if (request.JiraIssueKey is not null)
                 {
-                    state.AddEvent(runEvent);
-                    Persist(state);
-                }, state);
+                    SelectedJiraAttachments selectedAttachments = new(jira, request.JiraIssueKey, request.JiraAttachmentIds ?? []);
+                    workflowJira = selectedAttachments;
+                    workflowTask += await selectedAttachments.LoadContextAsync(state.Cancellation.Token);
+                }
+                workflowJira = new SelectedJiraComments(workflowJira, request.JiraIncludeComments);
+                if (!request.JiraIncludeComments)
+                    workflowTask += "\nJira comment selection: The user excluded Jira comments from this run. Do not read or use issue comments; this intentional exclusion is not an evidence gap or a problem to report.\n";
+                workflowJira = new WorkflowJiraContext(workflowJira, jira,
+                    WorkflowJiraContext.ResolveIssueKey(request.JiraIssueKey, request.Task), runEvent =>
+                    {
+                        state.AddEvent(runEvent);
+                        Persist(state);
+                    }, decisions);
+            }
             HandoffWorkflowRunner runner = new(
                 settingsByAgent,
                 workspace,
                 documents,
                 request.CodeGraphEnabled && codeGraph.IsWorkflowEnabled ? codeGraph : null,
                 checkpointStore,
-                workflowJira);
+                workflowJira,
+                decisions);
             string? terminalStatus = null;
 
             await foreach (RunEvent runEvent in runner.RunAsync(
@@ -305,6 +334,7 @@ public sealed class RepositorySessionService(
             {
                 string reason = terminalStatus switch
                 {
+                    "build_blocked" => "Build verification is blocked by an unavailable build prerequisite. The proposed changes are preserved and have not been approved.",
                     "message_limit_reached" =>
                         "The workflow reached its conversation safety limit before release approval.",
                     "reviewer_remediation_limit_reached" =>
@@ -333,6 +363,7 @@ public sealed class RepositorySessionService(
             }
 
             state.ReadyForApproval(workspace.GetDiff());
+            await CompleteReviewedChangesAsync(state);
         }
         catch (OperationCanceledException)
         {
@@ -349,12 +380,23 @@ public sealed class RepositorySessionService(
         }
         finally
         {
+            state.FinishAutomaticCompletion();
             Persist(state);
             if (state.Request.ReferenceCollectionId is Guid collectionId)
             {
                 await referenceDocuments.DeleteAsync(collectionId);
             }
         }
+    }
+
+    private async Task CompleteReviewedChangesAsync(SessionState state)
+    {
+        CreateSessionRequest request = state.Request;
+        if (state.Snapshot().Status != "awaiting_approval" || !request.AutoCommit) return;
+        string branch = TaskBranchName.FromTask(request.JiraIssueKey, request.Task);
+        await ApproveAsync(state.Id, new(branch, $"Implement {branch}", request.AutoPush), state.Cancellation.Token);
+        if (request.AutoCreatePullRequest && state.Snapshot().Status is "committed" or "pushed")
+            await CreatePullRequestAsync(state.Id, state.Cancellation.Token);
     }
 
     private void Persist(SessionState state)
@@ -372,6 +414,12 @@ public sealed class RepositorySessionService(
         request.ReferenceCollectionId,
         request.JiraIssueKey,
         request.JiraAttachmentIds,
+        request.JiraIncludeComments,
+        request.SkipBuildVerification,
+        request.AutonomyLevel,
+        request.AutoCommit,
+        request.AutoPush,
+        request.AutoCreatePullRequest,
         cognia = request.Cognia is null ? null : new
         {
             request.Cognia.Endpoint,
@@ -394,8 +442,8 @@ public sealed class RepositorySessionService(
             StringComparer.Ordinal),
         limits = new
         {
-            maxTotalMessages = 60,
-            maxAgentTurns = 25,
+            maxTotalMessages = 100,
+            maxAgentTurns = MaxAgentTurns,
             maxReviewerRemediationCycles = 5,
             maxRepeatedWorkflowStates = configuration.GetValue("Workflow:MaxRepeatedStates", 3),
             maxLlmRequests = request.MaxAiCalls,
@@ -428,8 +476,12 @@ public sealed class RepositorySessionService(
         ? state
         : throw new KeyNotFoundException("Repository session was not found.");
 
-    private static void Validate(CreateSessionRequest request)
+    private void Validate(CreateSessionRequest request)
     {
+        if (!AutonomyPolicy.IsValid(request.AutonomyLevel))
+            throw new ArgumentException("Autonomy must be 0, 25, 50, 75, or 100.");
+        if (request.AutoPush && !request.AutoCommit || request.AutoCreatePullRequest && !request.AutoPush)
+            throw new ArgumentException("Automatic push requires automatic commit; automatic PR/MR creation requires automatic push.");
         _ = ParseProvider(request.SourceControl);
         if (string.IsNullOrWhiteSpace(request.RepositoryUrl) ||
             string.IsNullOrWhiteSpace(request.BaseBranch) ||
@@ -465,8 +517,8 @@ public sealed class RepositorySessionService(
             try
             {
                 configuration.ToSettings(
-                    maxTotalMessages: 60,
-                    maxAgentTurns: 25,
+                    maxTotalMessages: 100,
+                    maxAgentTurns: MaxAgentTurns,
                     maxReviewerRemediationCycles: 5,
                     maxLlmRequests: request.MaxAiCalls,
                     maxBudgetUsd: request.MaxBudgetUsd);
@@ -509,6 +561,7 @@ public sealed class RepositorySessionService(
         private PullRequestResult? _pullRequest;
         private TaskCompletionSource<string>? _answer;
         private SessionClarification? _clarification;
+        private bool _automaticCompletionPending;
         internal Action? PersistChanges { get; set; }
 
         internal SessionState(Guid id, CreateSessionRequest request, Action<RunEvent> persistEvent)
@@ -525,11 +578,18 @@ public sealed class RepositorySessionService(
 
         internal DateTimeOffset StartedAt { get; }
 
-        internal CancellationTokenSource Cancellation { get; } = new(TimeSpan.FromMinutes(20));
+        internal CancellationTokenSource Cancellation { get; } = new(TimeSpan.FromMinutes(50));
 
         public async Task<string> AskAsync(string questions, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(questions);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Request.AutonomyLevel == 100)
+            {
+                AddEvent(new("autonomy_decision", Text: questions + "\nDecision delegated to agents; no human answer requested.", Category: "input"));
+                PersistChanges?.Invoke();
+                return AutonomyPolicy.DelegatedDecision;
+            }
             TaskCompletionSource<string> answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (_lock)
             {
@@ -541,7 +601,7 @@ public sealed class RepositorySessionService(
                 _status = "awaiting_input";
                 // Human response time must not consume the autonomous execution timeout.
                 Cancellation.CancelAfter(Timeout.InfiniteTimeSpan);
-                AddEvent(new("clarification_requested", AgentNames.Jira, questions,
+                AddEvent(new("clarification_requested", Text: questions,
                     Source: _clarification.Id.ToString("D"), Status: "awaiting_input", Category: "input"));
             }
             try
@@ -578,7 +638,7 @@ public sealed class RepositorySessionService(
                 _answer = null;
                 _clarification = null;
                 _status = "running";
-                Cancellation.CancelAfter(TimeSpan.FromMinutes(20));
+                Cancellation.CancelAfter(TimeSpan.FromMinutes(50));
                 pending.TrySetResult(answer);
             }
         }
@@ -587,6 +647,8 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
+                if (_status == "cancelled") throw new OperationCanceledException();
+                Cancellation.Token.ThrowIfCancellationRequested();
                 _workspace = workspace;
                 Request = Request with { BaseBranch = workspace.BaseBranch };
                 _status = "running";
@@ -627,8 +689,11 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
+                if (_status == "cancelled") return;
                 _diff = diff;
-                _status = string.IsNullOrWhiteSpace(diff) ? "no_changes" : "awaiting_approval";
+                _status = string.IsNullOrWhiteSpace(diff) ? "no_changes"
+                    : Request.AutonomyLevel == 100 && !Request.AutoCommit ? "completed" : "awaiting_approval";
+                _automaticCompletionPending = Request.AutoCommit && !string.IsNullOrWhiteSpace(diff);
                 if (_status == "no_changes")
                 {
                     _error = "The workflow completed without changing source files.";
@@ -640,7 +705,7 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
-                if (_status != "awaiting_approval" || _workspace is null)
+                if (_status is not ("awaiting_approval" or "completed") || _workspace is null)
                 {
                     throw new InvalidOperationException("This session is not awaiting approval.");
                 }
@@ -760,8 +825,15 @@ public sealed class RepositorySessionService(
 
         internal void Cancel()
         {
+            lock (_lock)
+            {
+                if (_status == "cancelled") return;
+                if (_status is not ("cloning" or "running" or "awaiting_input"))
+                    throw new InvalidOperationException("Only an active agent run can be stopped.");
+                _status = "cancelled";
+                _clarification = null;
+            }
             Cancellation.Cancel();
-            MarkCancelled();
         }
 
         internal void Reject()
@@ -781,7 +853,9 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
+                if (_status is not ("cloning" or "running" or "awaiting_input" or "cancelled")) return;
                 _status = "cancelled";
+                _clarification = null;
             }
         }
 
@@ -789,6 +863,7 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
+                if (_status == "cancelled") return;
                 _status = "failed";
                 _error = error;
                 if (diff is not null) _diff = diff;
@@ -814,8 +889,15 @@ public sealed class RepositorySessionService(
                     _pullRequest,
                     _usage,
                     TaskBranchName.FromTask(Request.JiraIssueKey, Request.Task),
-                    _clarification);
+                    _clarification,
+                    Request.AutonomyLevel,
+                    _automaticCompletionPending);
             }
+        }
+
+        internal void FinishAutomaticCompletion()
+        {
+            lock (_lock) _automaticCompletionPending = false;
         }
 
         private void TrimEvents()
@@ -850,7 +932,13 @@ public sealed record CreateSessionRequest(
     string? JiraIssueKey = null,
     IReadOnlyList<string>? JiraAttachmentIds = null,
     int MaxAiCalls = 30,
-    decimal MaxBudgetUsd = 0.10m);
+    decimal MaxBudgetUsd = 0.10m,
+    bool JiraIncludeComments = true,
+    bool SkipBuildVerification = false,
+    int AutonomyLevel = 100,
+    bool AutoCommit = false,
+    bool AutoPush = false,
+    bool AutoCreatePullRequest = false);
 
 public sealed record ProjectRepositoryInfo(string Key, string? GitLabProjectPath);
 
@@ -888,7 +976,9 @@ public sealed record SessionSnapshot(
     PullRequestResult? PullRequest,
     TokenUsageSummary? Usage,
     string? Branch = null,
-    SessionClarification? Clarification = null)
+    SessionClarification? Clarification = null,
+    int AutonomyLevel = 100,
+    bool AutomaticCompletionPending = false)
 {
     // Derived from the durable event history too, so existing archived runs gain full diagnostics.
     public SessionFailureDetails? FailureDetails => SessionFailureDetails.FromEvents(Error, Events);

@@ -6,6 +6,26 @@ namespace Maf.Handoff.Tests;
 
 public sealed class RepositoryBuildTests
 {
+    [Theory]
+    [InlineData("error NU1101: Unable to find package XBank.OAuth. No packages exist", "XBank.OAuth")]
+    [InlineData("error NU1102: Unable to find package Example.Library with version (>= 1.0)", "Example.Library")]
+    [InlineData("error NU1301: Unable to load the service index", "network access")]
+    [InlineData("error NETSDK1045: The current .NET SDK does not support", ".NET SDK")]
+    public void EnvironmentFailuresExplainTheRequiredAction(string diagnostic, string expected)
+    {
+        RepositoryBuildResult result = RepositoryBuildResult.Failed(diagnostic);
+        Assert.False(result.Succeeded);
+        Assert.Contains(expected, result.BlockerMessage);
+        Assert.Contains("have not been approved", result.BlockerMessage);
+    }
+
+    [Theory]
+    [InlineData("error CS1002: ; expected")]
+    [InlineData("error NU1605: Detected package downgrade")]
+    [InlineData("An arbitrary build failure")]
+    public void CodeFailuresRemainEligibleForRemediation(string diagnostic)
+        => Assert.Null(RepositoryBuildResult.Failed(diagnostic).BlockerMessage);
+
     [Fact]
     public async Task BuildsNewProjectReportsCompilerErrorsAndBuildsTheFix()
     {

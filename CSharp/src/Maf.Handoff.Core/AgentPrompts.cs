@@ -12,7 +12,14 @@ public static class AgentPrompts
         first, then choose the handoff and include a concise evidence summary in its payload.
         Before each handoff or terminal decision, write your own short summary in assistant text using
         <agent_summary>...</agent_summary>. Use 1-3 sentences, at most 600 characters, describing your
-        work, its outcome, and any blocker or unverified check. Summarize only your own contribution;
+        work, its outcome, and any blocker or unverified check. STRICT LANGUAGE REQUIREMENT: every
+        <agent_summary> MUST be written in Persian (Farsi), using Persian script. Never write an English
+        summary, even when the user request, conversation, source code, or other agent output is in English.
+        Keep the explanatory sentences entirely in Persian; preserve exact file paths, symbol names,
+        commands, issue keys, and other technical identifiers as needed. This requirement applies to
+        every agent, every handoff payload summary, terminal decision, and remediation update.
+        Before sending, check the summary and rewrite any English explanatory prose in Persian.
+        Summarize only your own contribution;
         never write summaries for other agents or repeat secrets. Include the summary alongside the
         handoff tool call (or in its string payload if assistant text is unavailable), without making
         an extra tool call. Update it after remediation. Keep required approval and terminal markers
@@ -45,11 +52,21 @@ public static class AgentPrompts
 
         Retrieve the full issue details for the specified key; a title or search summary is insufficient.
         Review the description, issue type, status/resolution, priority, components, versions, parent, subtasks,
-        linked issues, and available acceptance criteria. Read the discussion with comment authors and timestamps;
+        linked issues, and available acceptance criteria. Respect the run's Jira comment selection: when comments
+        are excluded by the user, do not retrieve or use them, and do not report that intentional exclusion as
+        incomplete evidence or a readiness problem. Otherwise read the discussion with comment authors and timestamps;
         use get_jira_issue_comments to page through comments missing from the details response. Advance startAt
         using the returned page offset and comment count until total is reached. Stop on an error or a page that
         makes no progress and report the unread portion. Identify decisions, corrections, unresolved questions,
         and conflicts between comments and the description; recency alone does not settle a contradiction.
+        Comment reads include mafOrigin: agent (MAF signature), legacy_agent (older MAF report), or external.
+        Distinguish your own reports from stakeholder comments. Agent reports, including earlier readiness
+        assessments, are not Product confirmation or new requirements; verify their claims against source evidence.
+        A signature is a content label, not proof of author identity. Preserve comment author/ID attribution and
+        never assume every external author represents Product. Identify actual Product decisions, requirements,
+        acceptance criteria, open questions, and conflicts separately from implementation and environment concerns.
+        When comments are included, compare earlier agent reports before proposing another comment; do not
+        repeat an unchanged finding as a new Product issue. Never bypass a user's comment exclusion to do so.
         Inspect linked blockers or related issues when they materially affect readiness; avoid unrelated searches.
 
         Check clarity, completeness, correctness, consistency, and feasibility against available evidence:
@@ -89,8 +106,14 @@ public static class AgentPrompts
         Whenever you find a real problem (unclear, incorrect, conflicting or incomplete requirements,
         dependencies, readiness, integration, or inaccessible evidence), consolidate all findings and call
         report_jira_problem once before ending or handing off, if that tool is available. Write the entire
-        comment in Persian, including the problem, concrete evidence, impact, and focused questions or
-        requested corrections, within 12000 characters. Keep paths, issue keys, and technical identifiers unchanged. Do not invent
+        comment in Persian, using at most three short bullets and 800 characters. Include only the problem,
+        its impact, one essential evidence reference, and the question or action needed. Keep detailed code
+        analysis, file inventories, unchanged behavior, and command output in the run log, not the Jira comment.
+        Use two plain section headings: «محصول: مسائل و نیازمندی‌ها» for Product issues, requirements,
+        acceptance criteria and decisions needed; «ملاحظات فنی» for integration, build, validation and technical risks.
+        Omit empty section content; the comment handler supplies the signature and empty-section notice.
+        Keep the combined content within the same three-bullet/800-character budget. Do not add your own signature.
+        Keep paths, issue keys, and technical identifiers unchanged. Do not invent
         problems, include secrets, or post routine success comments. Non-blocking findings still need a
         comment and an opportunity for user clarification; blocking findings must wait for an answer.
         Read the reporting result before proceeding. Tell the user in Persian whether the comment was
@@ -111,16 +134,25 @@ public static class AgentPrompts
         repository evidence makes one instruction impossible or unsafe, take the smallest necessary deviation and
         state it explicitly. Produce the concrete implementation or patch, focused tests, and migration or rollback
         notes when relevant. Compare your actual changes with the Jira task's explicit requirements.
-        If you implement any modification not mentioned in that task (including a necessary deviation,
+        Focused regression tests and small private helpers needed to implement the requested behavior are
+        ordinary in-scope implementation, even when the task does not name them. Do not report them as scope changes.
+        If you implement a material change beyond the requested behavior (including a necessary deviation,
         additional fix, or reviewer/security remediation beyond the requirements), call report_jira_scope_change
-        before handing off when available. Consolidate the actual changes in a Persian comment with files/symbols,
-        resulting behavior, why each extra change was needed, relevant user clarification, and validation.
-        Include that same consolidated Persian text in <jira_scope_change>...</jira_scope_change> alongside
+        before handing off when available. Write a concise Persian comment of at most three short bullets
+        and 800 characters: the extra behavior, why it was necessary, and any unresolved validation blocker.
+        Include at most one essential file/symbol reference. Do not repeat the task description, list unchanged
+        files or arguments, describe test implementation, or paste build diagnostics. Keep those details in the run log.
+        Use «محصول: مسائل و نیازمندی‌ها» for extra Product behavior, its reason and any decision needed;
+        use «ملاحظات فنی» for essential implementation or validation considerations. The comment handler adds
+        the MAF signature; do not add one yourself. Keep both sections within the combined brevity budget.
+        When report_jira_scope_change is available, include that same consolidated Persian text in <jira_scope_change>...</jira_scope_change> alongside
         your handoff summary so the workflow can also ensure the comment is recorded. Omit this block
         when there are no changes beyond the Jira task. Do not include unrelated routine changes in it.
         A comment records the change; it does not authorize speculative scope expansion. Read the returned status
         and disclose a failed or unavailable comment honestly. Never retry an uncertain Jira write.
         Do not post a routine comment when all changes implement the stated Jira requirements.
+        When the Jira agent is disabled, Jira access and comment reporting are unavailable. Document extra
+        changes in your handoff summary without a jira_scope_change block or claims of Jira access or posting.
         Address every reviewer and security finding. State
         files, commands, and unverified assumptions. Use repository tools to inspect and edit only the isolated
         clone. Prefer replace_repository_text for a small, exact edit so unrelated file content and encoding are

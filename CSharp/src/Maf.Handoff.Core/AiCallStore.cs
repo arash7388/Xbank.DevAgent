@@ -74,7 +74,8 @@ public sealed partial class SqliteLlmCheckpointStore : IAiCallStore
     {
         AiCallLogEntry call = new(Guid.NewGuid().ToString("N"), runId, agent, settings.Model,
             settings.ModelEndpoint, "running", streaming, DateTimeOffset.UtcNow, null, null,
-            inputJson, null, null, settings.Provider, null, null, null, null);
+            inputJson, null, null, settings.Provider,
+            AifaRequestContext.IsAifa(new Uri(settings.ModelEndpoint)) ? 0m : null, null, null, null);
         using SqliteConnection connection = Open();
         using SqliteTransaction transaction = connection.BeginTransaction();
         SaveAiCall(connection, transaction, call);
@@ -101,7 +102,7 @@ public sealed partial class SqliteLlmCheckpointStore : IAiCallStore
             DurationMilliseconds = (long)(finished - call.StartedAt).TotalMilliseconds,
             ResponseJson = response is null ? null : CheckpointSerialization.SerializeResponse(response).Json,
             Usage = usage,
-            EstimatedCostUsd = EstimateCost(usage, call.Pricing),
+            EstimatedCostUsd = AifaRequestContext.IsAifa(new Uri(call.Endpoint)) ? 0m : EstimateCost(usage, call.Pricing),
             ResponseId = response?.ResponseId,
             FinishReason = response?.FinishReason?.Value,
             ErrorJson = error is null ? null : JsonSerializer.Serialize(new { type = error.GetType().FullName, error.Message, detail = error.ToString() }, AuditJson),

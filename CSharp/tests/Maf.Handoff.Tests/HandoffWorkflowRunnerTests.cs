@@ -6,12 +6,14 @@ namespace Maf.Handoff.Tests;
 
 public sealed class HandoffWorkflowRunnerTests
 {
-    [Fact]
-    public async Task EmitsAnIndependentSummaryForEveryAgentWithoutExtraModelCalls()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EmitsSummariesAndOptionalBuildNotificationWithoutExtraModelCalls(bool skipBuild)
     {
         SummaryHandoffChatClient chatClient = new();
         WorkflowSettings settings = new("https://example.test", "test-model", "test-key",
-            MaxTotalMessages: 30, MaxAgentTurns: 5);
+            MaxTotalMessages: 30, MaxAgentTurns: 5) { SkipBuildVerification = skipBuild };
         HandoffWorkflowRunner runner = new(settings, chatClient: chatClient);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
         List<RunEvent> events = [];
@@ -21,6 +23,13 @@ public sealed class HandoffWorkflowRunnerTests
         Assert.DoesNotContain(events, item => item.Type == "error");
         Assert.Contains(events, item => item.Type == "run_finished" && item.Status == "completed");
         Assert.Equal(4, chatClient.CallCount);
+        if (skipBuild)
+        {
+            RunEvent warning = Assert.Single(events, item => item.Type == "build_warning");
+            Assert.Equal("skipped", warning.Status);
+            Assert.Equal(BuildFailureMessages.SkippedNotice, warning.Text);
+        }
+        else Assert.DoesNotContain(events, item => item.Type == "build_warning");
         foreach (string name in AgentNames.Required)
         {
             RunEvent summary = events.Last(item => item.Type == "agent_summary" && item.Agent == name);
@@ -67,6 +76,9 @@ public sealed class HandoffWorkflowRunnerTests
         Assert.True(chatClient.CallCount > 0);
         Assert.Contains(events, runEvent =>
             runEvent.Type == "message" && runEvent.Text?.Contains("Test response") is true);
+        Assert.Contains(events, runEvent =>
+            runEvent.Type == "trace" && runEvent.Category == "response" &&
+            runEvent.Text == "Response completed. Reply: Test response");
         Assert.Equal("unavailable", events.Last(item => item.Type == "agent_summary" && item.Agent == "planner").Status);
         Assert.Equal("not_run", events.Last(item => item.Type == "agent_summary" && item.Agent == "developer").Status);
     }

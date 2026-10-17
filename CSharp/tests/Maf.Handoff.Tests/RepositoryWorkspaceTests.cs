@@ -5,6 +5,81 @@ namespace Maf.Handoff.Tests;
 
 public sealed class RepositoryWorkspaceTests
 {
+    [Theory]
+    [InlineData("updated")]
+    [InlineData("diverged")]
+    [InlineData("missing")]
+    public async Task PullBaseBranchRefreshesRemoteChangesAndRejectsFailures(string scenario)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-base-pull", Guid.NewGuid().ToString("N"));
+        string remote = Path.Combine(root, "remote");
+        string clone = Path.Combine(root, "clone");
+        Directory.CreateDirectory(remote);
+        try
+        {
+            await GitAsync(remote, "init", "--initial-branch=main");
+            File.WriteAllText(Path.Combine(remote, "task.txt"), "initial");
+            await GitAsync(remote, "add", ".");
+            await GitAsync(remote, "commit", "-m", "initial");
+            await GitAsync(root, "clone", "--", remote, clone);
+            string originalHead = await GitAsync(clone, "rev-parse", "HEAD");
+
+            File.WriteAllText(Path.Combine(remote, "task.txt"), "latest base");
+            await GitAsync(remote, "add", ".");
+            await GitAsync(remote, "commit", "-m", "remote update");
+            if (scenario == "diverged")
+            {
+                File.WriteAllText(Path.Combine(clone, "local.txt"), "local change");
+                await GitAsync(clone, "add", ".");
+                await GitAsync(clone, "commit", "-m", "local update");
+                originalHead = await GitAsync(clone, "rev-parse", "HEAD");
+            }
+            else if (scenario == "missing")
+            {
+                await GitAsync(clone, "remote", "remove", "origin");
+            }
+
+            RepositoryWorkspace workspace = CreateWorkspace(clone);
+            if (scenario == "updated")
+            {
+                await workspace.PullBaseBranchAsync(CancellationToken.None);
+                Assert.Equal("latest base", File.ReadAllText(Path.Combine(clone, "task.txt")));
+                Assert.Equal(await GitAsync(remote, "rev-parse", "HEAD"), await GitAsync(clone, "rev-parse", "HEAD"));
+                Assert.Equal(string.Empty, await GitAsync(clone, "status", "--porcelain"));
+            }
+            else
+            {
+                RepositoryException exception = await Assert.ThrowsAsync<RepositoryException>(() =>
+                    workspace.PullBaseBranchAsync(CancellationToken.None));
+                Assert.Contains("Unable to pull base branch 'main' before starting the agent run", exception.Message);
+                Assert.Equal(originalHead, await GitAsync(clone, "rev-parse", "HEAD"));
+            }
+        }
+        finally
+        {
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task<string> GitAsync(string directory, params string[] arguments)
+    {
+        System.Diagnostics.ProcessStartInfo startInfo = RepositoryWorkspace.CreateGitStartInfo(
+            directory,
+            ["-c", "user.name=MAF Tests", "-c", "user.email=maf-tests@example.com", "-c", "commit.gpgSign=false", .. arguments],
+            RepositoryProvider.GitHub,
+            accessToken: null);
+        using System.Diagnostics.Process process = System.Diagnostics.Process.Start(startInfo)!;
+        Task<string> output = process.StandardOutput.ReadToEndAsync();
+        Task<string> error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, await error);
+        return (await output).Trim();
+    }
+
     [Fact]
     public void LoopFingerprintDetectsEditsBeyondTheDisplayedDiffLimit()
     {

@@ -714,7 +714,7 @@ internal static class CheckpointSerialization
 
     private static bool IsReusableContent(AIContent content) =>
         content is TextContent or TextReasoningContent or FunctionCallContent or UsageContent &&
-        (content is not FunctionCallContent call || call.Name is not ("report_jira_problem" or "report_jira_scope_change" or "ask_jira_clarification"));
+        (content is not FunctionCallContent call || call.Name is not ("report_jira_problem" or "report_jira_scope_change" or "ask_jira_clarification" or "ask_user_decision"));
 
     private static object? SafeValue(object? value)
     {

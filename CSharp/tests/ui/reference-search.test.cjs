@@ -16,6 +16,7 @@ const context = {
   selectedReferenceFiles: () => [{ name: 'requirements.md' }],
   document: { querySelector: () => semanticFields },
   URL,
+  AbortSignal: { timeout(ms) { assert.equal(ms, 300_000); return { timeoutMs: ms }; } },
   renderReferenceStatus: () => {},
   FormData: class {
     constructor() { this.fields = {}; }
@@ -52,6 +53,7 @@ assert.equal(context.validateReferenceDocuments().searchMode, 'semantic');
 context.referenceSearchModeInput.value = 'exact';
 context.fetch = async (url, options) => {
   assert.equal(url, '/api/reference-collections');
+  assert.equal(options.signal.timeoutMs, 300_000);
   assert.equal(options.body.fields.searchMode, 'exact');
   assert.equal(options.body.fields.qdrantUrl, '');
   assert.equal(options.body.fields.embeddingApiKey, '');

@@ -10,6 +10,8 @@ namespace Maf.Handoff.Core;
 
 public static class ModelChatClientFactory
 {
+    private static readonly TimeSpan ModelRequestTimeout = TimeSpan.FromSeconds(120);
+
     public static IChatClient Create(WorkflowSettings settings)
         => Create(settings, new HttpClientHandler());
 
@@ -21,9 +23,9 @@ public static class ModelChatClientFactory
         {
             HttpClient httpClient = new(new AiRequestRetryHandler(handler))
             {
-                Timeout = Timeout.InfiniteTimeSpan,
+                Timeout = ModelRequestTimeout,
             };
-            AnthropicClient client = new() { ApiKey = settings.ApiKey, HttpClient = httpClient, MaxRetries = 0 };
+            AnthropicClient client = new() { ApiKey = settings.ApiKey, HttpClient = httpClient, MaxRetries = 0, Timeout = ModelRequestTimeout };
             return new TransportOwnedChatClient(client.AsIChatClient(settings.Model), httpClient);
         }
 
@@ -32,9 +34,9 @@ public static class ModelChatClientFactory
             // The provider-native adapter writes TextReasoningContent back to DeepSeek's
             // reasoning_content field on every assistant tool-call turn.
             DeepSeekUsageCapture usageCapture = new() { InnerHandler = new AiRequestRetryHandler(handler) };
-            HttpClient httpClient = new(usageCapture);
+            HttpClient httpClient = new(usageCapture) { Timeout = ModelRequestTimeout };
             IChatClient deepSeekClient = new DeepSeekClient(settings.ApiKey, new DeepSeekClientOptions
-                { Transport = new HttpClientPipelineTransport(httpClient), RetryPolicy = new ClientRetryPolicy(0) })
+                { Transport = new HttpClientPipelineTransport(httpClient), RetryPolicy = new ClientRetryPolicy(0), NetworkTimeout = ModelRequestTimeout })
                 .GetChatClient(settings.Model)
                 .AsIChatClient();
             return new DeepSeekToolHistoryChatClient(
@@ -44,7 +46,7 @@ public static class ModelChatClientFactory
         HttpMessageHandler transportHandler = new AiRequestRetryHandler(handler);
         if (AifaRequestContext.IsAifa(endpoint))
             transportHandler = new AifaRequestHandler(settings.AifaContext!, transportHandler);
-        HttpClient openAiTransport = new(transportHandler);
+        HttpClient openAiTransport = new(transportHandler) { Timeout = ModelRequestTimeout };
         OpenAIClient openAiClient = new(
             new ApiKeyCredential(settings.ApiKey),
             new OpenAIClientOptions
@@ -52,6 +54,7 @@ public static class ModelChatClientFactory
                 Endpoint = endpoint,
                 Transport = new HttpClientPipelineTransport(openAiTransport),
                 RetryPolicy = new ClientRetryPolicy(0),
+                NetworkTimeout = ModelRequestTimeout,
             });
 
         IChatClient chatClient = openAiClient.GetChatClient(settings.Model).AsIChatClient();

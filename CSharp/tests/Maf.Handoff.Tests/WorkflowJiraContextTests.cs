@@ -12,6 +12,41 @@ public sealed class WorkflowJiraContextTests
 {
     private const string Problem = "درخواست مبهم است؛ مقدار مورد انتظار RetryLimit مشخص نیست. لطفاً مقدار صحیح و معیار پذیرش را اعلام کنید.";
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CommentReadsDistinguishOwnReportsFromStakeholderEvidence(bool details)
+    {
+        string[] bodies =
+        [
+            JiraCommentHandler.Format("نیازمندی محصول تأیید شود.", false),
+            "گزارش بررسی آمادگی تسک توسط عامل Jira\r\n\r\nگزارش قبلی",
+            "گزارش تغییرات خارج از شرح تسک Jira\n\nگزارش قبلی",
+            "مقدار مورد انتظار از طرف محصول تأیید شد.",
+            "Quoted signature: " + JiraCommentHandler.Signature,
+        ];
+        var comments = bodies.Select((body, i) => new { id = i.ToString(), body, author = new { name = "stakeholder" } }).ToArray();
+        var page = new { startAt = 5, maxResults = 5, total = 10, comments };
+        RecordingHandler handler = new()
+        {
+            ResponseJson = details ? JsonSerializer.Serialize(new { fields = new { comment = page } }) : JsonSerializer.Serialize(page),
+        };
+        WorkflowJiraContext context = Create(handler, "WEPOD-42", _ => { });
+        JsonElement response = details ? await context.GetIssueDetailsAsync("WEPOD-42") : await context.GetIssueCommentsAsync("WEPOD-42", 5, 5);
+        JsonElement result = details ? response.GetProperty("fields").GetProperty("comment") : response;
+        Assert.Equal(5, result.GetProperty("startAt").GetInt32());
+        Assert.Equal(10, result.GetProperty("total").GetInt32());
+        string[] origins = ["agent", "legacy_agent", "legacy_agent", "external", "external"];
+        JsonElement[] items = result.GetProperty("comments").EnumerateArray().ToArray();
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            Assert.Equal(origins[i], items[i].GetProperty("mafOrigin").GetString());
+            Assert.Equal(bodies[i], items[i].GetProperty("body").GetString());
+            Assert.Equal("stakeholder", items[i].GetProperty("author").GetProperty("name").GetString());
+        }
+        Assert.Equal(1, handler.Calls);
+    }
+
     [Fact]
     public async Task PostsPersianProblemOnlyToBoundTaskAndPublishesActualResult()
     {
@@ -27,7 +62,8 @@ public sealed class WorkflowJiraContextTests
         Assert.Equal(HttpMethod.Post, handler.Method);
         Assert.EndsWith("/jira/rest/api/2/issue/WEPOD-42/comment", handler.Url);
         using JsonDocument json = JsonDocument.Parse(handler.Body!);
-        Assert.Equal("گزارش بررسی آمادگی تسک توسط عامل Jira\n\n" + Problem, json.RootElement.GetProperty("body").GetString());
+        Assert.Equal(JiraCommentHandler.Format(Problem, false), json.RootElement.GetProperty("body").GetString());
+        Assert.StartsWith(JiraCommentHandler.Signature, json.RootElement.GetProperty("body").GetString());
         RunEvent notice = Assert.Single(events);
         Assert.Equal("jira_problem", notice.Type);
         Assert.Equal("posted", notice.Status);
@@ -130,7 +166,7 @@ public sealed class WorkflowJiraContextTests
         Assert.Equal("jira_scope_change", events[1].Type);
         Assert.Equal("WEPOD-42", events[1].Source);
         using JsonDocument json = JsonDocument.Parse(handler.Body!);
-        Assert.Equal("گزارش تغییرات خارج از شرح تسک Jira\n\n" + changes, json.RootElement.GetProperty("body").GetString());
+        Assert.Equal(JiraCommentHandler.Format(changes, true), json.RootElement.GetProperty("body").GetString());
         await context.ReportScopeChangeAsync("اصلاح تکمیلی در Validator.cs برای رفع خطای بازبینی؛ آزمون موفق بود.");
         Assert.Equal(3, handler.Calls);
     }
@@ -161,25 +197,50 @@ public sealed class WorkflowJiraContextTests
         Assert.Equal("jira_scope_change", Assert.Single(events).Type);
     }
 
-    [Fact]
-    public async Task DeveloperHasBoundCommentToolEvenWhenJiraIntakeIsDisabled()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task DeveloperJiraAccessRequiresEnabledJiraAgent(bool jiraEnabled, bool streaming)
     {
         RecordingHandler handler = new();
-        WorkflowJiraContext context = Create(handler, "WEPOD-42", _ => { });
+        List<RunEvent> events = [];
+        WorkflowJiraContext context = Create(handler, "WEPOD-42", events.Add);
         WorkflowSettings settings = new("https://example.test", "model", "key");
-        AgentTeam team = AgentTeamFactory.Create(new ToolCheckingClient(), settings, jira: context);
-        Assert.Null(team.Jira);
-        await team.Developer.RunAsync("Inspect scope comment availability.");
-        Assert.Equal(0, handler.Calls);
+        Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(
+            name => name, _ => (IChatClient)new ToolCheckingClient(jiraEnabled));
+        Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => settings);
+        if (jiraEnabled)
+        {
+            clients[AgentNames.Jira] = new ToolCheckingClient(jiraEnabled);
+            settingsByAgent[AgentNames.Jira] = settings;
+        }
+        AgentTeam team = AgentTeamFactory.Create(clients, settingsByAgent, jira: context);
+        Assert.Equal(jiraEnabled, team.Jira is not null);
+        if (streaming)
+        {
+            await foreach (var update in team.Developer.RunStreamingAsync("Inspect scope comment availability.")) { }
+        }
+        else
+            await team.Developer.RunAsync("Inspect scope comment availability.");
+        Assert.Equal(jiraEnabled ? 1 : 0, handler.Calls);
+        Assert.Equal(jiraEnabled ? 1 : 0, events.Count);
+        if (jiraEnabled) Assert.Equal("jira_scope_change", events[0].Type);
     }
 
-    private sealed class ToolCheckingClient : IChatClient
+    private sealed class ToolCheckingClient(bool jiraEnabled) : IChatClient
     {
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
-            Assert.Contains(options!.Tools!, tool => tool.Name == "report_jira_scope_change");
-            Assert.DoesNotContain(options.Tools!, tool => tool.Name == "report_jira_problem" || tool.Name == "ask_jira_clarification");
-            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "No additional changes.")));
+            var tools = options?.Tools ?? [];
+            Assert.Equal(jiraEnabled, tools.Any(tool => tool.Name == "report_jira_scope_change"));
+            Assert.DoesNotContain(tools, tool => tool.Name == "report_jira_problem" || tool.Name == "ask_jira_clarification");
+            if (!jiraEnabled) Assert.DoesNotContain(tools, tool => tool.Name.Contains("jira", StringComparison.Ordinal));
+            // A model or custom prompt can still emit the marker without a tool. Disabled Jira
+            // must also prevent the automatic reporting wrapper from making an HTTP write.
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                "<jira_scope_change>" + Problem + "</jira_scope_change>")));
         }
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
             ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -192,6 +253,7 @@ public sealed class WorkflowJiraContextTests
 
     private sealed class RecordingHandler(HttpStatusCode status = HttpStatusCode.Created, bool networkFailure = false) : HttpMessageHandler
     {
+        public string ResponseJson { get; init; } = "{\"id\":\"321\"}";
         public int Calls { get; private set; }
         public string? Url { get; private set; }
         public HttpMethod? Method { get; private set; }
@@ -201,9 +263,9 @@ public sealed class WorkflowJiraContextTests
             Calls++;
             Url = request.RequestUri!.AbsoluteUri;
             Method = request.Method;
-            Body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
             if (networkFailure) throw new HttpRequestException("private remote error");
-            return new(status) { Content = new StringContent("{\"id\":\"321\"}") };
+            return new(status) { Content = new StringContent(ResponseJson) };
         }
     }
 }

@@ -3,10 +3,11 @@ using Microsoft.Extensions.AI;
 
 namespace Maf.Handoff.Core;
 
-/// <summary>Runs an actual build before the reviewer's forward handoff can execute.</summary>
+/// <summary>Verifies the build before forward handoff unless the user explicitly skips it.</summary>
 internal sealed class ReviewerBuildGuardChatClient(
     IChatClient innerClient,
-    Func<CancellationToken, Task<RepositoryBuildResult>> build) : IChatClient
+    Func<CancellationToken, Task<RepositoryBuildResult>> build,
+    bool skipBuildVerification = false) : IChatClient
 {
     public async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages,
         ChatOptions? options = null, CancellationToken cancellationToken = default)
@@ -34,7 +35,33 @@ internal sealed class ReviewerBuildGuardChatClient(
         FunctionCallContent[] calls = response.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>().ToArray();
         if (handoffs.Length != 2 || calls.Length != 1 || calls[0].Name != handoffs[1].Name) return;
 
+        if (skipBuildVerification)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            FunctionCallContent forward = calls[0];
+            Dictionary<string, object?> skippedArguments = forward.Arguments is null ? [] : new(forward.Arguments);
+            skippedArguments["reasonForHandoff"] = skippedArguments.GetValueOrDefault("reasonForHandoff") +
+                "\n" + BuildFailureMessages.SkippedNotice;
+            foreach (ChatMessage message in response.Messages)
+                for (int index = 0; index < message.Contents.Count; index++)
+                    if (ReferenceEquals(message.Contents[index], forward))
+                        message.Contents[index] = new FunctionCallContent(forward.CallId, forward.Name, skippedArguments);
+            response.Messages.Last().Contents.Add(new TextContent(BuildFailureMessages.SkippedNotice));
+            return;
+        }
+
         RepositoryBuildResult result = await build(cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded && result.BlockerMessage is not null)
+        {
+            // An environment prerequisite cannot be repaired by repeating code review.
+            // Remove the approval and handoff entirely so termination stops this run.
+            response.Messages.Clear();
+            response.Messages.Add(new ChatMessage(ChatRole.Assistant,
+                BuildFailureMessages.Marker + "\n" + result.BlockerMessage + "\n\nBuild diagnostics:\n" + result.Evidence)
+                { AuthorName = AgentNames.Reviewer });
+            response.FinishReason = ChatFinishReason.Stop;
+            return;
+        }
         string evidence = result.Succeeded
             ? result.Evidence
             : "BUILD_FAILED. Reviewer must inspect these diagnostics; Developer must fix the build failure, " +

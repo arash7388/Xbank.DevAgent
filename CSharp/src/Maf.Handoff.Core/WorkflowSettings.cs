@@ -11,6 +11,10 @@ public sealed record WorkflowSettings(
 {
     public AifaRequestContext? AifaContext { get; init; }
 
+    public bool SkipBuildVerification { get; init; }
+
+    public int AutonomyLevel { get; init; } = 100;
+
     public int MaxReviewerRemediationCycles { get; init; } = 5;
 
     public int MaxLlmRequests { get; init; } = 25;
@@ -68,6 +72,8 @@ public sealed record WorkflowSettings(
 
     public void Validate()
     {
+        if (!AutonomyPolicy.IsValid(AutonomyLevel))
+            throw new ConfigurationException("Autonomy must be 0, 25, 50, 75, or 100.");
         if (!Uri.TryCreate(ModelEndpoint, UriKind.Absolute, out Uri? endpoint) ||
             endpoint.Scheme != Uri.UriSchemeHttps)
         {

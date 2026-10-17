@@ -13,6 +13,7 @@ public sealed class HandoffWorkflowRunner
     private readonly IReferenceDocumentSearch? _referenceDocuments;
     private readonly ICodeGraphTools? _codeGraphTools;
     private readonly IJiraIssueSearch? _jira;
+    private readonly IWorkflowUserInput? _userInput;
     private readonly ILlmCheckpointStore? _checkpointStore;
 
     public HandoffWorkflowRunner(
@@ -22,7 +23,8 @@ public sealed class HandoffWorkflowRunner
         IReferenceDocumentSearch? referenceDocuments = null,
         ICodeGraphTools? codeGraphTools = null,
         ILlmCheckpointStore? checkpointStore = null,
-        IJiraIssueSearch? jira = null)
+        IJiraIssueSearch? jira = null,
+        IWorkflowUserInput? userInput = null)
     {
         _settings = settings;
         _workspace = workspace;
@@ -30,6 +32,7 @@ public sealed class HandoffWorkflowRunner
         _referenceDocuments = referenceDocuments;
         _codeGraphTools = codeGraphTools;
         _jira = jira;
+        _userInput = userInput;
         _checkpointStore = checkpointStore;
     }
 
@@ -39,13 +42,15 @@ public sealed class HandoffWorkflowRunner
         IReferenceDocumentSearch? referenceDocuments = null,
         ICodeGraphTools? codeGraphTools = null,
         ILlmCheckpointStore? checkpointStore = null,
-        IJiraIssueSearch? jira = null)
+        IJiraIssueSearch? jira = null,
+        IWorkflowUserInput? userInput = null)
     {
         _settingsByAgent = settingsByAgent;
         _workspace = workspace;
         _referenceDocuments = referenceDocuments;
         _codeGraphTools = codeGraphTools;
         _jira = jira;
+        _userInput = userInput;
         _checkpointStore = checkpointStore;
     }
 
@@ -101,7 +106,8 @@ public sealed class HandoffWorkflowRunner
                 codeGraphAudit,
                 _checkpointStore as IToolCallStore,
                 workflowId,
-                _jira);
+                _jira,
+                _userInput);
         }
         else
         {
@@ -127,7 +133,8 @@ public sealed class HandoffWorkflowRunner
                 codeGraphAudit,
                 _checkpointStore as IToolCallStore,
                 workflowId,
-                _jira);
+                _jira,
+                _userInput);
         }
         string status = "stopped_without_release_approval";
         string? activeAgent = null;
@@ -135,6 +142,8 @@ public sealed class HandoffWorkflowRunner
         AgentRunSummaryCollector summaries = new(bundle.Team.All.Select(agent => agent.Name!));
 
         yield return RunEvent.Trace(null, $"Workflow started. Waiting for the {bundle.Team.StartAgent.Name} agent.");
+        if (workflowSettings.SkipBuildVerification)
+            yield return new RunEvent("build_warning", Text: BuildFailureMessages.SkippedNotice, Status: "skipped", Category: "build");
         foreach (RunEvent summary in summaries.InitialEvents()) yield return summary;
         if (summaries.Activate(bundle.Team.StartAgent.Name) is RunEvent startingSummary) yield return startingSummary;
 
@@ -194,15 +203,9 @@ public sealed class HandoffWorkflowRunner
                         if (summaries.Activate(responseAgent) is RunEvent responsePendingSummary) yield return responsePendingSummary;
                         if (summaries.Observe(responseAgent, response.Response.Messages) is RunEvent agentSummary)
                             yield return agentSummary;
-                        string finishReason = response.Response.FinishReason?.ToString() ?? "not reported";
-                        int messageCount = response.Response.Messages.Count;
-                        string contentKinds = string.Join(", ", response.Response.Messages
-                            .SelectMany(message => message.Contents)
-                            .Select(content => content.GetType().Name)
-                            .Distinct(StringComparer.Ordinal));
                         yield return RunEvent.Trace(
                             responseAgent,
-                            $"Response completed. Finish reason: {finishReason}; messages: {messageCount}; content: {(contentKinds.Length == 0 ? "none" : contentKinds)}.",
+                            ResponseLogFormatter.Format(response.Response.Messages, response.Response.FinishReason?.ToString()),
                             "response");
                         break;
 

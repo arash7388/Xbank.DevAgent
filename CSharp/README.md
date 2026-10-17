@@ -4,7 +4,26 @@ Project scope: this C# application is the sole active project for requests and p
 
 A .NET 10 sample that connects Microsoft Agent Framework 1.19 handoff agents to a GitHub or GitLab
 repository. The agents inspect and edit an isolated clone, then the browser shows the exact Git diff
-and requires user confirmation before any commit or push.
+as a browsable changed-file tree with per-file add/delete stats and a toggle between inline and
+side-by-side layouts. Commit, push, and PR/MR creation require either explicit approval after review
+or the corresponding completion selections authorized before starting the run.
+
+In **Agents**, **Autonomy and completion** offers five autonomy levels: 0% Guided (ask before major
+decisions), 25% Assisted (ask about unclear requirements), 50% Collaborative (resolve minor
+ambiguity), 75% Highly autonomous (infer decisions and ask only when essential), and 100% Fully autonomous
+(the default; make decisions, record assumptions, and continue without waiting for human input).
+In browser sessions, all agents receive
+the selected decision policy and an `ask_user_decision` tool, including runs with Jira disabled. At 100%,
+both generic and Jira clarification paths return delegated-decision guidance immediately; that guidance
+is never presented as a factual answer from the user. Intermediate levels guide the model's judgment
+about when to ask; they are not probabilities or confidence scores.
+
+Automatic **commit**, **push**, and **PR/MR creation** are separate upfront selections, all off by default.
+Push includes commit; PR/MR creation includes both. Actions run only after successful workflow review.
+At 100% without automatic commit, a successful run ends as `completed` with its patch available for
+inspection and optional later approval. Other levels retain the normal final approval step unless
+automatic commit was selected. Autonomy does not disable independent review, build policy, execution
+limits, budgets, or cancellation. Missing prerequisites and unresolved defects remain visible failures.
 
 No Azure services or Azure packages are used. The workbench supports OpenAI through Chat
 Completions, AIFA through the same OpenAI-compatible transport with organizational identity headers,
@@ -21,6 +40,7 @@ DeepSeek's missing `reasoning_content` error; requests with complete history kee
 OpenAI reasoning values are passed through its Chat Completions options. Tool calling is mandatory
 for this handoff topology.
 
+Model clients use a 120-second HTTP and SDK network timeout.
 AI provider HTTP requests use [Polly](https://www.pollydocs.org/strategies/retry) for three retries
 after the initial attempt, waiting 1, 2, and 4 seconds. Network failures and HTTP 408, 429, and 5xx
 responses are retried; other errors and cancellation propagate immediately. SDK retries are disabled
@@ -44,12 +64,20 @@ Before starting a run, **Review & confirm** shows the full change request, repos
 settings, enabled and disabled agents, model selections, reasoning, guidance, token pricing, and
 selected reference and Jira attachments. Credentials appear only as configured or missing.
 When a run ends, **Agent summaries** shows a separate short note written by each enabled agent
-about its own work, outcome, and blockers. Remediation replaces that agent's earlier note.
+about its own work, outcome, and blockers. Every agent is strictly instructed to write these summaries
+in Persian (Farsi), regardless of the request language, preserving technical identifiers as needed.
+Remediation replaces that agent's earlier note.
 Agents that were not reached or did not provide a summary are identified explicitly. Summaries
 remain available in saved runs and require no additional model requests. The CLI prints them
 at the end of the run as well.
 Use **Edit** to return to a setup step; returning to review rebuilds the summary from the current
 values. Documents are indexed and the session starts only after **Confirm and start agent run**.
+
+If you need to correct a setting during execution, choose **Stop run**, then **Edit configuration**.
+Your form values are retained. Review the corrected settings and confirm to start a new run with
+a fresh isolated clone and conversation; the stopped run remains in history and is not committed or pushed.
+After a run stops or finishes, **Restart Agent Run** returns to Connection with the existing form inputs
+and selected attachments retained. Edit any setup step, review the inputs, and confirm to start a new run.
 
 Jira and security are optional and start disabled. Every run uses Planner to produce a
 repository-backed implementation contract before Developer changes the repository. When Jira is enabled,
@@ -57,11 +85,19 @@ it assesses task readiness before handing evidence to Planner: full issue detail
 acceptance criteria, selected attachments, a targeted code/test/documentation inspection, dependencies, and
 integration risks. Its read-only repository and document tools support that assessment. It reports READY,
 READY_WITH_ASSUMPTIONS, or NEEDS_CLARIFICATION with source citations. Blocking ambiguities produce focused
-questions and pause the active session at `awaiting_input` before planning or implementation. Answer in
+questions according to the autonomy policy. Below 100%, questions can pause the active session at
+`awaiting_input` before planning or implementation. At 100%, agents receive delegated-decision guidance
+and continue using documented assumptions. For interactive questions, answer in
 the agent-run screen to resume the same Jira agent with its context and repository clone. The execution
-timeout pauses while waiting; cancellation remains available. Follow-up questions use the same run.
-Non-blocking gaps also give the user an opportunity to clarify before continuing.
+timeout is 50 minutes and pauses while waiting; cancellation remains available. Answering a clarification
+restarts the 50-minute timeout. Follow-up questions use the same run.
+Non-blocking gaps are handled according to the selected autonomy policy.
 Planner, Developer, Reviewer, and Release Manager are required.
+
+The Jira task preview has an **Include Jira comments in the AI context** checkbox, enabled by default.
+Uncheck it to exclude comments from the run; the backend filters comments from issue details and blocks
+comment reads, while the preview still shows them. This controls reading comments, not posting reports.
+
 When Jira finds unclear, incorrect, conflicting, incomplete, or otherwise problematic requirements,
 it consolidates its evidence, impact, and clarification questions into one Persian comment on the related
 task using `report_jira_problem`. The selected task takes precedence; a manual request must identify exactly
@@ -69,11 +105,25 @@ one full issue key. The UI immediately shows a Persian notice with the findings,
 including on saved runs. Blocking findings wait for an answer before implementation; confirmed non-blocking
 assumptions remain explicit. No comment is posted for a clean readiness assessment. Failed or uncertain writes are
 not retried automatically, and a missing task or posting failure is clearly reported in the UI.
-Developer records actual modifications beyond the Jira task's explicit requirements (including necessary
-additional fixes and review remediation) through `report_jira_scope_change`. The Persian comment includes
-affected files, behavior, reason, and validation. A separate `jira_scope_change` event records the posting
+In the Agents step, **Skip build verification and continue** disables the automatic build for that run.
+It is off by default. The choice appears in run confirmation and saved configuration; a persistent
+notification records that compilation was not verified. Code review and release gates still run,
+and agents must not claim a skipped build passed. API clients can set `skipBuildVerification: true`.
+
+Every workflow comment passes through `JiraCommentHandler`, which adds `[MAF-AI:v1]` and two sections:
+**محصول: مسائل و نیازمندی‌ها** for Product issues, requirements, acceptance criteria, and decisions;
+**ملاحظات فنی** for technical considerations and validation blockers. Reporting instructions limit the
+combined content to three short bullets and 800 characters, keeping detailed evidence in the run log.
+Comment reads label signed reports as `mafOrigin: agent`, older MAF reports as `legacy_agent`, and other
+comments as `external`. These content labels do not verify author identity or establish Product approval.
+The agent attributes stakeholder decisions to their actual sources and avoids repeating unchanged agent findings.
+Comment exclusion still applies to these reads.
+Developer records material changes beyond the requested Product behavior through `report_jira_scope_change`.
+Focused regression tests and necessary private helpers are in scope and do not require a scope-change comment.
+A separate `jira_scope_change` event records the posting
 outcome. Duplicate identical reports reuse their result, including uncertain writes. This capability is
-available even when Jira intake is disabled. Interactive clarification requires the active API process;
+available only when the Jira agent is enabled. Disabled Jira runs cannot access Jira or post comments.
+Interactive clarification requires the active API process;
 integrations without it retain the `JIRA_INPUT_REQUIRED` fallback. Questions and answers are persisted in
 the run's event history.
 Stopped runs show the complete agent explanation in a formatted panel with source attribution, highlighted
@@ -81,15 +131,22 @@ blockers and questions, an original-text view, and copy/edit controls. Clarifica
 "Clarification needed" label. The panel also reconstructs explanations for previously saved runs.
 Reviewer independently inspects and confirms every change before release. Completion requires a
 reviewer-issued `REVIEW_APPROVED` after the latest Developer work; missing approval stops the run with
-`review_approval_missing`. With a repository attached, the reviewer's forward handoff automatically
+`review_approval_missing`. Unless **Skip build verification and continue** is selected,
+with a repository attached the reviewer's forward handoff automatically
 runs `dotnet build` on its .NET solutions and projects before Security or Release Manager receives
-the change. Compiler errors and other build failures return diagnostics to Developer for fixes,
-followed by another independent review and build. Existing remediation and workflow limits bound
+the change. Compiler errors return diagnostics to Developer for fixes, followed by another independent
+review and build. Known package-feed, missing-dependency, SDK, and build-environment failures stop with
+an actionable build-blocked message. The skip option bypasses the build and preserves a notification
+without claiming compilation passed. Existing remediation and workflow limits bound
 these attempts. Each build has a five-minute timeout and bounded diagnostic output; cancellation
 stops its process tree. Repositories without .NET build targets record an explicit skip. The host
 must have a suitable .NET SDK and access to required package feeds; the Docker image includes the SDK.
 Enable Security when the work's
-context or risk needs it. A run allows at most 25 model
+context or risk needs it. The web app allows 60 model turns per agent by default. Set
+`Workflow:MaxAgentTurns` in `appsettings.json` or the `Workflow__MaxAgentTurns` environment variable
+to a positive integer to change this limit. The run's Maximum AI calls and USD budget still apply.
+The saved run configuration records the effective turn limit.
+For CLI and direct factory use, a run allows at most 25 model
 requests by default (`MAF_MAX_LLM_REQUESTS`), including checkpoint replays. Each agent also has a hard
 limit of 25 model turns (`MAF_MAX_AGENT_TURNS`), counting its initial request, tool rounds, continuations,
 and later activations together. These limits apply even to workflows created directly through the
@@ -234,7 +291,7 @@ docker compose -f docker-compose.qdrant.yml up -d
 When selecting a Jira task, the first five supported attachments are checked by default. Uncheck individual files
 or choose **Exclude all** before using the task. Changes to checkboxes on the selected task take effect
 immediately. Selected files are automatically downloaded and their extracted text is sent to the LLM
-before the workflow starts, even if the Jira agent is disabled. Excluded files cannot be read by the
+before the workflow starts when the Jira agent is enabled. Disabled Jira runs do not load attachments. Excluded files cannot be read by the
 workflow's Jira tools. Jira attachment loading supports text/source files, DOCX, and text-based PDF,
 up to 5 MB per file and 5 selected files. Automatic context includes up to 12,000 characters per file
 and 48,000 characters total; the Jira agent can page through the rest of selected files. Loading
@@ -346,6 +403,9 @@ security are optional. For example, the planner entry is:
 A real request must also supply developer and release-manager entries.
 
 ## AIFA organizational service
+
+AIFA calls are free: every agent using AIFA reports $0 cost, including calls without token usage.
+Input, cached input, and output rates are fixed at zero; other providers keep their configured pricing.
 
 Select **AIFA** for an agent to use `developer-model` at
 `https://aifa-chatbot.dev.dotin.ir/v1/chat/completions`. Enter the bearer token in **AIFA API key**

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Maf.Handoff.Core;
 
 namespace Maf.Handoff.Api;
@@ -59,8 +60,11 @@ public sealed class SelectedJiraAttachments(
 
     public Task<JiraAttachmentText> ReadAttachmentAsync(string key, string attachmentId, int offset = 0, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!key.Equals(issueKey, StringComparison.OrdinalIgnoreCase) || !attachmentIds.Contains(attachmentId, StringComparer.Ordinal))
-            throw new ArgumentException("The user did not include this Jira attachment in the workflow.");
+            return Task.FromResult(new JiraAttachmentText(key, attachmentId, "", "", offset, 0, false, false,
+                ContentFormat: "excluded-by-user",
+                ExtractionNotice: "The user did not include this Jira attachment in the workflow. Do not retry or treat this intentional exclusion as missing evidence. Use only attachments returned by list_jira_attachments."));
         return jira.ReadAttachmentAsync(key, attachmentId, offset, cancellationToken);
     }
 
@@ -70,8 +74,25 @@ public sealed class SelectedJiraAttachments(
     public Task<string?> GetIssueTitleByKeyAsync(string key, CancellationToken cancellationToken = default) =>
         jira.GetIssueTitleByKeyAsync(key, cancellationToken);
 
-    public Task<JsonElement> GetIssueDetailsAsync(string key, CancellationToken cancellationToken = default) =>
-        jira.GetIssueDetailsAsync(key, cancellationToken);
+    public async Task<JsonElement> GetIssueDetailsAsync(string key, CancellationToken cancellationToken = default)
+    {
+        JsonElement details = await jira.GetIssueDetailsAsync(key, cancellationToken);
+        JsonObject filtered = JsonNode.Parse(details.GetRawText())!.AsObject();
+        if (filtered["fields"] is JsonObject fields && fields["attachment"] is JsonArray attachments)
+        {
+            for (int index = attachments.Count - 1; index >= 0; index--)
+            {
+                string? id = attachments[index]?["id"]?.GetValue<string>();
+                if (!key.Equals(issueKey, StringComparison.OrdinalIgnoreCase) ||
+                    id is null || !attachmentIds.Contains(id, StringComparer.Ordinal))
+                    attachments.RemoveAt(index);
+            }
+        }
+        // Rendered HTML cannot be filtered reliably by attachment ID.
+        if (filtered["renderedFields"] is JsonObject renderedFields) renderedFields.Remove("attachment");
+        filtered["attachmentSelectionApplied"] = true;
+        return JsonSerializer.SerializeToElement(filtered);
+    }
 
     public Task<JsonElement> GetIssueCommentsAsync(string key, int startAt = 0, int maxResults = 50, CancellationToken cancellationToken = default) =>
         jira.GetIssueCommentsAsync(key, startAt, maxResults, cancellationToken);

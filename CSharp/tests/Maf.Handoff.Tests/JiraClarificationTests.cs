@@ -11,14 +11,18 @@ public sealed class JiraClarificationTests
     private const string Questions = "مقدار مورد انتظار RetryLimit چند است؟";
 
     [Theory]
-    [InlineData("tool")]
-    [InlineData("marker")]
-    [InlineData("assumptions")]
-    public async Task PausesIntakeAndCompletesSameWorkflowAfterAnswer(string mode)
+    [InlineData("tool", false)]
+    [InlineData("marker", false)]
+    [InlineData("blocking_handoff", false)]
+    [InlineData("tool", true)]
+    [InlineData("marker", true)]
+    [InlineData("blocking_handoff", true)]
+    public async Task ClarificationUsesHumanAnswersOrDelegatedDecisionsAndCompletesSameWorkflow(string mode, bool autonomous)
     {
         InputJira jira = new();
         int intakeCalls = 0;
         int downstreamCalls = 0;
+        string expectedAnswer = autonomous ? AutonomyPolicy.DelegatedDecision : "RetryLimit=7";
         string[] names = [AgentNames.Jira, .. AgentNames.Required];
         Dictionary<string, IChatClient> clients = names.ToDictionary(name => name, name => (IChatClient)new Client((messages, options) =>
         {
@@ -29,35 +33,72 @@ public sealed class JiraClarificationTests
                     {
                         "tool" => new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("ask", "ask_jira_clarification",
                             new Dictionary<string, object?> { ["questionsInPersian"] = Questions })])),
-                        "assumptions" => ForwardHandoff(options!, "READY_WITH_ASSUMPTIONS\n" + Questions),
+                        "blocking_handoff" => ForwardHandoff(options!, "NEEDS_CLARIFICATION\n" + Questions),
                         _ => new(new ChatMessage(ChatRole.Assistant, Questions + "\nJIRA_INPUT_REQUIRED")),
                     };
-                Assert.Contains(messages, message => message.Text.Contains("RetryLimit=7", StringComparison.Ordinal) ||
-                    message.Contents.OfType<FunctionResultContent>().Any(result => result.Result?.ToString()?.Contains("RetryLimit=7") is true));
-                return ForwardHandoff(options!, "READY; user confirmed RetryLimit=7");
+                Assert.Contains(messages, message => message.Text.Contains(expectedAnswer, StringComparison.Ordinal) ||
+                    message.Contents.OfType<FunctionResultContent>().Any(result => result.Result?.ToString()?.Contains(expectedAnswer) is true));
+                return ForwardHandoff(options!, "READY_WITH_ASSUMPTIONS; no blocking questions remain");
             }
             downstreamCalls++;
             if (name == AgentNames.ReleaseManager)
                 return new(new ChatMessage(ChatRole.Assistant, "WORKFLOW_COMPLETE"));
             return ForwardHandoff(options!, name == AgentNames.Reviewer ? "REVIEW_APPROVED" : "Confirmed RetryLimit=7");
         }));
-        WorkflowSettings settings = new("https://example.test", "model", "key");
+        WorkflowSettings settings = new("https://example.test", "model", "key") { AutonomyLevel = autonomous ? 100 : 50 };
         WorkflowBundle bundle = HandoffWorkflowFactory.Create(clients, names.ToDictionary(name => name, _ => settings), jira: jira);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
         await using StreamingRun run = await InProcessExecution.RunStreamingAsync(bundle.Workflow, "Assess TASK-42", cancellationToken: timeout.Token);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         Task<ChatMessage[]> watch = CollectAsync(run, timeout.Token);
-        Assert.Contains(Questions, await jira.Asked.Task.WaitAsync(timeout.Token));
-        Assert.Equal(0, downstreamCalls);
-        jira.Answer.SetResult("RetryLimit=7");
+        if (!autonomous)
+        {
+            Assert.Contains(Questions, await jira.Asked.Task.WaitAsync(timeout.Token));
+            Assert.Equal(0, downstreamCalls);
+            jira.Answer.SetResult("RetryLimit=7");
+        }
         ChatMessage[] transcript = await watch;
+        Assert.Equal(!autonomous, jira.Asked.Task.IsCompleted);
 
         Assert.Equal(2, intakeCalls);
         Assert.Equal(4, downstreamCalls);
         Assert.Equal("completed", HandoffTopology.GetTerminationStatus(transcript, settings));
-        Assert.Contains(transcript, message => message.Text.Contains("RetryLimit=7", StringComparison.Ordinal) ||
-            message.Contents.OfType<FunctionResultContent>().Any(result => result.Result?.ToString()?.Contains("RetryLimit=7") is true));
+        Assert.Contains(transcript, message => message.Text.Contains(expectedAnswer, StringComparison.Ordinal) ||
+            message.Contents.OfType<FunctionResultContent>().Any(result => result.Result?.ToString()?.Contains(expectedAnswer) is true));
         Assert.DoesNotContain(transcript, message => message.Role == ChatRole.Assistant && message.Text.Contains("JIRA_INPUT_REQUIRED"));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task NonBlockingAssumptionsPreserveHandoffWithoutAsking(bool streaming, bool markerInPayload)
+    {
+        InputJira jira = new();
+        FunctionCallContent handoff = new("handoff", "handoff_to_planner",
+            new Dictionary<string, object?>
+            {
+                ["reasonForHandoff"] = markerInPayload ? "READY_WITH_ASSUMPTIONS; proceed to Planner" : "Proceed to Planner",
+            });
+        Client client = new((_, _) => new(new ChatMessage(ChatRole.Assistant,
+            [new TextContent(markerInPayload ? "Readiness confirmed" : "READY_WITH_ASSUMPTIONS; no blocking gaps"), handoff])));
+        using JiraClarificationChatClient guard = new(client, jira);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        ChatResponse response;
+        if (streaming)
+        {
+            List<ChatResponseUpdate> updates = [];
+            await foreach (ChatResponseUpdate update in guard.GetStreamingResponseAsync([], cancellationToken: timeout.Token))
+                updates.Add(update);
+            response = updates.ToChatResponse();
+        }
+        else response = await guard.GetResponseAsync([], cancellationToken: timeout.Token);
+
+        Assert.False(jira.Asked.Task.IsCompleted);
+        Assert.Equal("handoff_to_planner", Assert.Single(response.Messages.SelectMany(message => message.Contents)
+            .OfType<FunctionCallContent>()).Name);
     }
 
     [Fact]

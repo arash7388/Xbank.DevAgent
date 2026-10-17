@@ -22,6 +22,12 @@
         : ['rejected_by_release', 'review_approval_missing'].includes(status)
           && ['release_manager', 'software-delivery-release_manager'].includes(message.agent))
       || (status === 'input_required' ? messages[messages.length - 1] : null);
+    if (status === 'loop_detected') return {
+      title: 'Run stopped without progress', status,
+      summary: 'The proposed changes are preserved and have not been approved.',
+      message: 'The agents repeated the same work without resolving the remaining issue. Review the last build or review findings in the activity log before starting a new run.',
+      technicalDetails: source?.text || snapshot.error,
+    };
     return {
       title: status === 'input_required' ? 'Clarification needed'
         : status === 'loop_detected' ? 'Workflow loop detected'
@@ -119,7 +125,7 @@
     heading.append(badge, title);
     if (details.agent) {
       const source = doc.createElement('p'); source.className = 'run-diagnostic-source';
-      source.textContent = `Reported by ${details.agent.replace(/^software-delivery-/, '').replaceAll('_', ' ')}`;
+      source.textContent = `Reported by ${details.agent.replace(/^software-delivery-/, '').replace(/_/g, ' ')}`;
       heading.append(source);
     }
     const controls = doc.createElement('div'); controls.className = 'run-diagnostic-actions';
@@ -130,7 +136,7 @@
     if (actions.copy) {
       const copy = doc.createElement('button'); copy.type = 'button'; copy.className = 'secondary'; copy.textContent = 'Copy full message';
       copy.addEventListener('click', async () => {
-        try { await actions.copy(details.message); copy.textContent = 'Copied'; }
+        try { await actions.copy(details.technicalDetails || details.message); copy.textContent = 'Copied'; }
         catch { copy.textContent = 'Select the original message to copy'; original.open = true; }
       });
       controls.append(copy);
@@ -139,8 +145,8 @@
     const body = doc.createElement('div'); body.className = 'run-diagnostic-body';
     renderMessage(body, details.message);
     const original = doc.createElement('details'); original.className = 'run-diagnostic-original';
-    const summary = doc.createElement('summary'); summary.textContent = 'Original message';
-    const raw = doc.createElement('pre'); raw.textContent = details.message; original.append(summary, raw);
+    const summary = doc.createElement('summary'); summary.textContent = details.technicalDetails ? 'Technical details' : 'Original message';
+    const raw = doc.createElement('pre'); raw.textContent = details.technicalDetails || details.message; original.append(summary, raw);
     const children = [header];
     if (clarification) {
       const next = doc.createElement('p'); next.className = 'run-diagnostic-next';

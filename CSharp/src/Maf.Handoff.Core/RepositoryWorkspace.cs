@@ -89,7 +89,21 @@ public sealed partial class RepositoryWorkspace
             throw new RepositoryException($"Git clone failed: {SanitizeGitError(result.StandardError)}");
         }
 
+        await workspace.PullBaseBranchAsync(cancellationToken);
         return workspace;
+    }
+
+    internal async Task PullBaseBranchAsync(CancellationToken cancellationToken)
+    {
+        GitResult result = await RunGitAsync(
+            RootPath,
+            ["pull", "--ff-only", "--no-rebase", "origin", BaseBranch],
+            cancellationToken);
+        if (result.ExitCode != 0)
+        {
+            throw new RepositoryException(
+                $"Unable to pull base branch '{BaseBranch}' before starting the agent run: {SanitizeGitError(result.StandardError)}");
+        }
     }
 
     public static async Task<string[]> ListBranchesAsync(
