@@ -490,11 +490,73 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .diff-panel { overflow-y: auto; background: #fbfcfd !important; }
 .diff-heading { background: #fff; }
-.diff { flex: 1; min-height: 360px; margin: 0; padding: 16px; overflow: auto; color: #2b333c; background: #f8fafb; font: 12px/1.55 "Cascadia Code", Consolas, monospace; white-space: pre; tab-size: 4; }
-.diff .add { display: block; color: #165f3b; background: #e8f7ee; }
-.diff .del { display: block; color: #9c2d25; background: #ffedeb; }
-.diff .hunk { display: block; color: #5743a5; background: #f0edff; }
-.diff .file { display: block; color: #145b8e; font-weight: 700; }
+
+.diff-review { border-top: 1px solid var(--line); background: #fff; }
+.diff-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; background: #f7f9fc; border-bottom: 1px solid var(--line); }
+.diff-totals { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
+.diff-file-count { color: #3a4657; font-weight: 600; }
+.diff-line-stats { display: flex; gap: 8px; font-family: "Cascadia Code", Consolas, monospace; }
+.diff-controls { display: flex; align-items: center; gap: 10px; }
+.diff-view-toggle { display: inline-flex; padding: 2px; border: 1px solid #ccd6e4; border-radius: 8px; background: #eef2f8; }
+.diff-view-option { min-height: 26px; padding: 3px 10px; color: #4a5666; background: transparent; border: 0; border-radius: 6px; font-size: 11px; font-weight: 600; box-shadow: none; }
+.diff-view-option:hover:not(:disabled) { background: #e2e9f4; }
+.diff-view-option.active { color: #fff; background: var(--blue); }
+.diff-empty { padding: 24px 16px; color: var(--muted); background: #f8fafb; font-size: 12px; }
+
+.diff-body { display: grid; grid-template-columns: minmax(190px, 280px) minmax(0, 1fr); border-top: 1px solid var(--line); }
+.diff-tree { max-height: 62vh; padding: 10px 8px; overflow: auto; background: #fbfcfe; border-right: 1px solid var(--line); font-size: 12px; }
+.diff-tree-list { margin: 0; padding: 0; list-style: none; }
+.diff-tree-list .diff-tree-list { padding-left: 12px; }
+.diff-tree-folder > details > summary { display: flex; align-items: center; gap: 6px; padding: 3px 6px; color: #5a6779; border-radius: 6px; font-weight: 600; cursor: pointer; }
+.diff-tree-folder > details > summary:hover { background: #eef3fb; }
+.diff-tree-file-button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 0; padding: 3px 6px; color: #33404f; background: transparent; border: 0; border-radius: 6px; font-size: 12px; font-weight: 500; text-align: left; box-shadow: none; }
+.diff-tree-file-button:hover { background: #eef3fb; }
+.diff-tree-file-button.active { color: #174fae; background: #e2ecff; }
+.diff-tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-tree-stat { display: flex; gap: 6px; flex: none; font-family: "Cascadia Code", Consolas, monospace; font-size: 10px; }
+
+.diff-files { max-height: 62vh; overflow: auto; background: #fff; }
+.diff-file + .diff-file { border-top: 1px solid var(--line); }
+.diff-file-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #f7f9fc; border-bottom: 1px solid var(--line); }
+.diff-file-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-height: 0; padding: 0; color: #28374a; background: transparent; border: 0; font-size: 12px; font-weight: 650; text-align: left; box-shadow: none; }
+.diff-file-chevron { color: #8592a4; transition: transform 140ms ease; }
+.diff-file.collapsed .diff-file-chevron { transform: rotate(-90deg); }
+.diff-file.collapsed .diff-file-body { display: none; }
+.diff-file-path { overflow-wrap: anywhere; font-family: "Cascadia Code", Consolas, monospace; }
+.diff-file-status { flex: none; padding: 2px 7px; color: #4a5666; background: #e8edf5; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.diff-status-added { color: #0f6b3e; background: #dcf6e7; }
+.diff-status-deleted { color: #9c2d25; background: #ffe1de; }
+.diff-status-renamed { color: #7a4a00; background: #ffefd4; }
+.diff-file-stats { display: flex; gap: 8px; flex: none; font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; }
+.diff-file-binary { padding: 14px; color: var(--muted); font-size: 12px; }
+
+.diff-hunk-header { padding: 4px 14px; color: #5743a5; background: #f0edff; white-space: pre; font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; }
+.diff-line, .diff-split-row { display: flex; }
+.diff-line { font: 12px/1.55 "Cascadia Code", Consolas, monospace; }
+.diff-gutter { flex: none; width: 46px; padding: 0 8px; color: #93a0b1; background: #f4f7fb; text-align: right; user-select: none; }
+.diff-line-marker { flex: none; width: 16px; text-align: center; user-select: none; }
+.diff-line-code { flex: 1; min-width: 0; padding: 0 12px 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-line.add { background: #e8f7ee; }
+.diff-line.add .diff-line-code, .diff-line.add .diff-line-marker { color: #165f3b; }
+.diff-line.del { background: #ffedeb; }
+.diff-line.del .diff-line-code, .diff-line.del .diff-line-marker { color: #9c2d25; }
+.diff-line-meta .diff-line-code { color: #8592a4; font-style: italic; }
+
+.diff-split-row { border-bottom: 1px solid #eef2f7; font: 12px/1.55 "Cascadia Code", Consolas, monospace; }
+.diff-split-side { display: flex; flex: 1 1 50%; min-width: 0; }
+.diff-split-side + .diff-split-side { border-left: 1px solid var(--line); }
+.diff-split-side .diff-gutter { width: 40px; }
+.diff-split-side .diff-line-code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-split-side.add { background: #e8f7ee; }
+.diff-split-side.add .diff-line-code { color: #165f3b; }
+.diff-split-side.del { background: #ffedeb; }
+.diff-split-side.del .diff-line-code { color: #9c2d25; }
+.diff-split-side.meta .diff-line-code { color: #8592a4; font-style: italic; }
+.diff-split-side.empty { background: #fafbfd; }
+
+.diff-stat-add { color: #159669; font-weight: 700; }
+.diff-stat-del { color: #d2455a; font-weight: 700; }
+.diff-stat-binary { color: #7a4a00; font-weight: 700; }
 
 .run-log { border-top: 1px solid var(--line); background: #fff; }
 .run-log-content { max-height: 420px; padding: 10px 18px 18px; overflow: auto; }
@@ -587,6 +649,10 @@ dialog p { margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1
     min-height: 430px;
   }
   .diff-panel { min-height: 520px; }
+  .diff-toolbar { flex-wrap: wrap; }
+  .diff-body { grid-template-columns: 1fr; }
+  .diff-tree { max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  .diff-files { max-height: 52vh; }
   .two-columns { grid-template-columns: 1fr; gap: 0; }
   .agent-model-grid, .credential-grid { grid-template-columns: 1fr; }
   .usage-price-card { grid-template-columns: 1fr; }

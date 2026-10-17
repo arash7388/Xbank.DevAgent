@@ -37,6 +37,9 @@ public static class AgentTeamFactory
     {
         WorkflowSettings workflowSettings = Get(settingsByAgent, AgentNames.Developer);
         workflowSettings.Validate();
+        // Jira access, including Developer's comment reporting, requires the Jira agent.
+        if (!clients.ContainsKey(AgentNames.Jira) || !settingsByAgent.ContainsKey(AgentNames.Jira))
+            jira = null;
         bool codeGraphAvailable = workspace?.ContainsCSharpSource() is true && codeGraphTools is not null;
         if (codeGraphAvailable)
         {

@@ -60,7 +60,8 @@ flowchart TB
    The execution timeout pauses while waiting, and cancellation still stops the run. Marker-based
    assessments from custom prompts are intercepted before workflow termination; retries retain request budgets.
    Developer posts separate Persian scope-change comments on the bound task, with deduplicated outcomes
-   and durable `jira_scope_change` events, even when Jira intake is disabled.
+   and durable `jira_scope_change` events when the Jira agent is enabled. Disabled Jira runs receive no
+   Jira tools or reporting clients and do not load Jira attachments.
    Planner, developer, reviewer, security, and release manager then use their scoped repository tools.
    Jira and Planner reads are compacted for reconnaissance. Developer reads preserve the source text,
    including whitespace and line endings, for exact edits. Text replacements require a unique match,

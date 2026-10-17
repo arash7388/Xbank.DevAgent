@@ -66,7 +66,7 @@ public sealed class TokenUsageCollector(
     public void RecordCheckpointHit(string agent)
     {
         WorkflowSettings settings = GetSettings(agent);
-        _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).AddCheckpointHit();
+        _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider, settings.ModelEndpoint)).AddCheckpointHit();
     }
 
     /// <summary>Reserves one outbound provider request, returning false when the run budget is exhausted.</summary>
@@ -93,7 +93,7 @@ public sealed class TokenUsageCollector(
 
             _requestCount++;
             WorkflowSettings settings = GetSettings(agent);
-            _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).AddRequest();
+            _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider, settings.ModelEndpoint)).AddRequest();
             return true;
         }
     }
@@ -125,7 +125,7 @@ public sealed class TokenUsageCollector(
         }
 
         WorkflowSettings settings = GetSettings(agent);
-        _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider)).Add(
+        _usage.GetOrAdd(agent, _ => new(settings.Model, settings.Provider, settings.ModelEndpoint)).Add(
             input,
             cachedInput,
             output,
@@ -158,8 +158,9 @@ public sealed class TokenUsageCollector(
         ? value
         : throw new ConfigurationException($"Model configuration for agent '{agent}' is required.");
 
-    private sealed class MutableAgentUsage(string model, ModelProviderDefinition? provider)
+    private sealed class MutableAgentUsage(string model, ModelProviderDefinition? provider, string endpoint)
     {
+        private readonly bool _isAifa = AifaRequestContext.IsAifa(new Uri(endpoint));
         private readonly Lock _lock = new();
         private long _requests;
         private long _checkpointHits;
@@ -209,7 +210,7 @@ public sealed class TokenUsageCollector(
                       (_cachedInput / 1_000_000m * (provider.CachedInputCostPerMillionTokens ?? inputRate)) +
                       (_output / 1_000_000m * outputRate)
                     : null;
-                if (_requests == 0 && _checkpointHits > 0) cost = 0m;
+                if (_isAifa || (_requests == 0 && _checkpointHits > 0)) cost = 0m;
                 return new(agent, model, _requests, _input, _cachedInput, _output, _reasoning, _total, cost, _checkpointHits);
             }
         }

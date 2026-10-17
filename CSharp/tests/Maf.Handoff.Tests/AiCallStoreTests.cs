@@ -11,6 +11,33 @@ namespace Maf.Handoff.Tests;
 public sealed class AiCallStoreTests
 {
     [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void PersistsZeroCostForAifaEvenWithoutPricingOrCompleteUsage(int usageKind)
+    {
+        using DatabaseFixture db = new();
+        Guid run = Guid.NewGuid();
+        db.Store.Create(run, "test", "{}", DateTimeOffset.UtcNow);
+        WorkflowSettings settings = new(AifaRequestContext.Endpoint, AifaRequestContext.Model, "key",
+            Provider: usageKind == 0 ? null : Price with { Url = AifaRequestContext.Endpoint });
+        string id = db.Store.StartAiCall(run.ToString("D"), AgentNames.Developer, settings, "{}", false);
+        Assert.Equal(0m, db.Store.GetLog(run).Usage!.EstimatedCostUsd);
+        UsageDetails? usage = usageKind switch
+        {
+            1 => new() { TotalTokenCount = 100 },
+            2 => new() { InputTokenCount = 80, OutputTokenCount = 20, TotalTokenCount = 100 },
+            _ => null,
+        };
+        db.Store.FinishAiCall(id, new(new ChatMessage(ChatRole.Assistant, "Done")), usage, null);
+        WorkflowRunLog log = new SqliteLlmCheckpointStore(db.Path).GetLog(run);
+        Assert.Equal(0m, Assert.Single(log.AiCalls!).EstimatedCostUsd);
+        Assert.Equal(0m, log.Usage!.EstimatedCostUsd);
+        Assert.Equal(0m, Assert.Single(log.Usage.TokenUsage.ByAgent).EstimatedCostUsd);
+        Assert.Equal(usageKind == 0 ? 0 : 100, log.Usage.TotalTokens);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ReplayOnlyAgentAppearsInLiveAndArchivedSummaryWithoutProviderCost(bool streaming)

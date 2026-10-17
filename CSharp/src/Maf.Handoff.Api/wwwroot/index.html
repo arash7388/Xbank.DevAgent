@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20261007-4">
+  <link rel="stylesheet" href="/styles.css?v=20261007-5">
 </head>
 <body>
   <header class="app-header">
@@ -525,7 +525,26 @@
         </div>
       </div>
       <section id="final-usage-summary" class="usage-summary final-usage-summary" aria-live="polite" hidden></section>
-      <pre id="diff" class="diff"><code>No diff available.</code></pre>
+      <div class="diff-review" id="diff-review">
+        <div class="diff-toolbar" id="diff-toolbar" hidden>
+          <div class="diff-totals">
+            <span id="diff-file-count" class="diff-file-count">0 files changed</span>
+            <span id="diff-line-stats" class="diff-line-stats"></span>
+          </div>
+          <div class="diff-controls">
+            <button id="diff-collapse-all" class="text-button" type="button">Collapse all</button>
+            <div class="diff-view-toggle" role="group" aria-label="Diff layout">
+              <button id="diff-view-inline" class="diff-view-option" type="button" aria-pressed="true">Inline</button>
+              <button id="diff-view-split" class="diff-view-option" type="button" aria-pressed="false">Side by side</button>
+            </div>
+          </div>
+        </div>
+        <div class="diff-body" id="diff-body" hidden>
+          <nav id="diff-tree" class="diff-tree" aria-label="Changed files"></nav>
+          <div id="diff-files" class="diff-files" aria-label="Diff content"></div>
+        </div>
+        <div id="diff-empty" class="diff-empty">No diff available.</div>
+      </div>
     </section>
   </main>
 
@@ -569,6 +588,6 @@
   </dialog>
 
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>
-  <script src="/app.js?v=20261007-3" defer></script>
+  <script src="/app.js?v=20261007-4" defer></script>
 </body>
 </html>

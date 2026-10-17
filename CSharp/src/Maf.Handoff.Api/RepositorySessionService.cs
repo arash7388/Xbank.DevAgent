@@ -258,21 +258,28 @@ public sealed class RepositorySessionService(
                 },
                 StringComparer.Ordinal);
             IReferenceDocumentSearch? documents = CreateDocumentSearch(request);
-            IJiraIssueSearch workflowJira = jira;
+            IJiraIssueSearch? workflowJira = null;
             string workflowTask = request.Task;
             if (request.JiraIssueKey is not null)
             {
                 workflowTask = $"Selected Jira issue: {request.JiraIssueKey}\n\n{workflowTask}";
-                SelectedJiraAttachments selectedAttachments = new(jira, request.JiraIssueKey, request.JiraAttachmentIds ?? []);
-                workflowJira = selectedAttachments;
-                workflowTask += await selectedAttachments.LoadContextAsync(state.Cancellation.Token);
             }
-            workflowJira = new WorkflowJiraContext(workflowJira, jira,
-                WorkflowJiraContext.ResolveIssueKey(request.JiraIssueKey, request.Task), runEvent =>
+            if (settingsByAgent.ContainsKey(AgentNames.Jira))
+            {
+                workflowJira = jira;
+                if (request.JiraIssueKey is not null)
                 {
-                    state.AddEvent(runEvent);
-                    Persist(state);
-                }, state);
+                    SelectedJiraAttachments selectedAttachments = new(jira, request.JiraIssueKey, request.JiraAttachmentIds ?? []);
+                    workflowJira = selectedAttachments;
+                    workflowTask += await selectedAttachments.LoadContextAsync(state.Cancellation.Token);
+                }
+                workflowJira = new WorkflowJiraContext(workflowJira, jira,
+                    WorkflowJiraContext.ResolveIssueKey(request.JiraIssueKey, request.Task), runEvent =>
+                    {
+                        state.AddEvent(runEvent);
+                        Persist(state);
+                    }, state);
+            }
             HandoffWorkflowRunner runner = new(
                 settingsByAgent,
                 workspace,

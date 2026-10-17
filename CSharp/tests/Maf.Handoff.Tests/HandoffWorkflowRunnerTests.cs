@@ -67,6 +67,9 @@ public sealed class HandoffWorkflowRunnerTests
         Assert.True(chatClient.CallCount > 0);
         Assert.Contains(events, runEvent =>
             runEvent.Type == "message" && runEvent.Text?.Contains("Test response") is true);
+        Assert.Contains(events, runEvent =>
+            runEvent.Type == "trace" && runEvent.Category == "response" &&
+            runEvent.Text == "Response completed. Reply: Test response");
         Assert.Equal("unavailable", events.Last(item => item.Type == "agent_summary" && item.Agent == "planner").Status);
         Assert.Equal("not_run", events.Last(item => item.Type == "agent_summary" && item.Agent == "developer").Status);
     }

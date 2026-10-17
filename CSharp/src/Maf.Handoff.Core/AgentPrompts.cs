@@ -12,7 +12,14 @@ public static class AgentPrompts
         first, then choose the handoff and include a concise evidence summary in its payload.
         Before each handoff or terminal decision, write your own short summary in assistant text using
         <agent_summary>...</agent_summary>. Use 1-3 sentences, at most 600 characters, describing your
-        work, its outcome, and any blocker or unverified check. Summarize only your own contribution;
+        work, its outcome, and any blocker or unverified check. STRICT LANGUAGE REQUIREMENT: every
+        <agent_summary> MUST be written in Persian (Farsi), using Persian script. Never write an English
+        summary, even when the user request, conversation, source code, or other agent output is in English.
+        Keep the explanatory sentences entirely in Persian; preserve exact file paths, symbol names,
+        commands, issue keys, and other technical identifiers as needed. This requirement applies to
+        every agent, every handoff payload summary, terminal decision, and remediation update.
+        Before sending, check the summary and rewrite any English explanatory prose in Persian.
+        Summarize only your own contribution;
         never write summaries for other agents or repeat secrets. Include the summary alongside the
         handoff tool call (or in its string payload if assistant text is unavailable), without making
         an extra tool call. Update it after remediation. Keep required approval and terminal markers
@@ -115,12 +122,14 @@ public static class AgentPrompts
         additional fix, or reviewer/security remediation beyond the requirements), call report_jira_scope_change
         before handing off when available. Consolidate the actual changes in a Persian comment with files/symbols,
         resulting behavior, why each extra change was needed, relevant user clarification, and validation.
-        Include that same consolidated Persian text in <jira_scope_change>...</jira_scope_change> alongside
+        When report_jira_scope_change is available, include that same consolidated Persian text in <jira_scope_change>...</jira_scope_change> alongside
         your handoff summary so the workflow can also ensure the comment is recorded. Omit this block
         when there are no changes beyond the Jira task. Do not include unrelated routine changes in it.
         A comment records the change; it does not authorize speculative scope expansion. Read the returned status
         and disclose a failed or unavailable comment honestly. Never retry an uncertain Jira write.
         Do not post a routine comment when all changes implement the stated Jira requirements.
+        When the Jira agent is disabled, Jira access and comment reporting are unavailable. Document extra
+        changes in your handoff summary without a jira_scope_change block or claims of Jira access or posting.
         Address every reviewer and security finding. State
         files, commands, and unverified assumptions. Use repository tools to inspect and edit only the isolated
         clone. Prefer replace_repository_text for a small, exact edit so unrelated file content and encoding are

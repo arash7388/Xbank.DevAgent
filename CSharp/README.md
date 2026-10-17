@@ -4,7 +4,8 @@ Project scope: this C# application is the sole active project for requests and p
 
 A .NET 10 sample that connects Microsoft Agent Framework 1.19 handoff agents to a GitHub or GitLab
 repository. The agents inspect and edit an isolated clone, then the browser shows the exact Git diff
-and requires user confirmation before any commit or push.
+as a browsable changed-file tree with per-file add/delete stats and a toggle between inline and
+side-by-side layouts, and requires user confirmation before any commit or push.
 
 No Azure services or Azure packages are used. The workbench supports OpenAI through Chat
 Completions, AIFA through the same OpenAI-compatible transport with organizational identity headers,
@@ -44,7 +45,9 @@ Before starting a run, **Review & confirm** shows the full change request, repos
 settings, enabled and disabled agents, model selections, reasoning, guidance, token pricing, and
 selected reference and Jira attachments. Credentials appear only as configured or missing.
 When a run ends, **Agent summaries** shows a separate short note written by each enabled agent
-about its own work, outcome, and blockers. Remediation replaces that agent's earlier note.
+about its own work, outcome, and blockers. Every agent is strictly instructed to write these summaries
+in Persian (Farsi), regardless of the request language, preserving technical identifiers as needed.
+Remediation replaces that agent's earlier note.
 Agents that were not reached or did not provide a summary are identified explicitly. Summaries
 remain available in saved runs and require no additional model requests. The CLI prints them
 at the end of the run as well.
@@ -73,7 +76,8 @@ Developer records actual modifications beyond the Jira task's explicit requireme
 additional fixes and review remediation) through `report_jira_scope_change`. The Persian comment includes
 affected files, behavior, reason, and validation. A separate `jira_scope_change` event records the posting
 outcome. Duplicate identical reports reuse their result, including uncertain writes. This capability is
-available even when Jira intake is disabled. Interactive clarification requires the active API process;
+available only when the Jira agent is enabled. Disabled Jira runs cannot access Jira or post comments.
+Interactive clarification requires the active API process;
 integrations without it retain the `JIRA_INPUT_REQUIRED` fallback. Questions and answers are persisted in
 the run's event history.
 Stopped runs show the complete agent explanation in a formatted panel with source attribution, highlighted
@@ -234,7 +238,7 @@ docker compose -f docker-compose.qdrant.yml up -d
 When selecting a Jira task, the first five supported attachments are checked by default. Uncheck individual files
 or choose **Exclude all** before using the task. Changes to checkboxes on the selected task take effect
 immediately. Selected files are automatically downloaded and their extracted text is sent to the LLM
-before the workflow starts, even if the Jira agent is disabled. Excluded files cannot be read by the
+before the workflow starts when the Jira agent is enabled. Disabled Jira runs do not load attachments. Excluded files cannot be read by the
 workflow's Jira tools. Jira attachment loading supports text/source files, DOCX, and text-based PDF,
 up to 5 MB per file and 5 selected files. Automatic context includes up to 12,000 characters per file
 and 48,000 characters total; the Jira agent can page through the rest of selected files. Loading
@@ -346,6 +350,9 @@ security are optional. For example, the planner entry is:
 A real request must also supply developer and release-manager entries.
 
 ## AIFA organizational service
+
+AIFA calls are free: every agent using AIFA reports $0 cost, including calls without token usage.
+Input, cached input, and output rates are fixed at zero; other providers keep their configured pricing.
 
 Select **AIFA** for an agent to use `developer-model` at
 `https://aifa-chatbot.dev.dotin.ir/v1/chat/completions`. Enter the bearer token in **AIFA API key**

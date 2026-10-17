@@ -194,15 +194,9 @@ public sealed class HandoffWorkflowRunner
                         if (summaries.Activate(responseAgent) is RunEvent responsePendingSummary) yield return responsePendingSummary;
                         if (summaries.Observe(responseAgent, response.Response.Messages) is RunEvent agentSummary)
                             yield return agentSummary;
-                        string finishReason = response.Response.FinishReason?.ToString() ?? "not reported";
-                        int messageCount = response.Response.Messages.Count;
-                        string contentKinds = string.Join(", ", response.Response.Messages
-                            .SelectMany(message => message.Contents)
-                            .Select(content => content.GetType().Name)
-                            .Distinct(StringComparer.Ordinal));
                         yield return RunEvent.Trace(
                             responseAgent,
-                            $"Response completed. Finish reason: {finishReason}; messages: {messageCount}; content: {(contentKinds.Length == 0 ? "none" : contentKinds)}.",
+                            ResponseLogFormatter.Format(response.Response.Messages, response.Response.FinishReason?.ToString()),
                             "response");
                         break;
 

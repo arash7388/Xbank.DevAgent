@@ -11,14 +11,14 @@ internal sealed partial class AgentRunSummaryCollector(IEnumerable<string> agent
     private string? _activeAgent;
 
     internal IEnumerable<RunEvent> InitialEvents() => _agents.Select(agent =>
-        RunEvent.AgentSummary(agent, "This agent was not reached during the run.", "not_run"));
+        RunEvent.AgentSummary(agent, "در این اجرا نوبت به این عامل نرسید.", "not_run"));
 
     internal RunEvent? Activate(string? agent)
     {
         string? name = Normalize(agent);
         if (name is null || name == _activeAgent) return null;
         _activeAgent = name;
-        return RunEvent.AgentSummary(name, "This agent did not provide a short summary before stopping.", "unavailable");
+        return RunEvent.AgentSummary(name, "این عامل پیش از توقف، خلاصه‌ای ارائه نکرد.", "unavailable");
     }
 
     internal RunEvent? Observe(string? agent, IEnumerable<ChatMessage> messages)

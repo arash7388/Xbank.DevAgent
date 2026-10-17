@@ -161,25 +161,50 @@ public sealed class WorkflowJiraContextTests
         Assert.Equal("jira_scope_change", Assert.Single(events).Type);
     }
 
-    [Fact]
-    public async Task DeveloperHasBoundCommentToolEvenWhenJiraIntakeIsDisabled()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task DeveloperJiraAccessRequiresEnabledJiraAgent(bool jiraEnabled, bool streaming)
     {
         RecordingHandler handler = new();
-        WorkflowJiraContext context = Create(handler, "WEPOD-42", _ => { });
+        List<RunEvent> events = [];
+        WorkflowJiraContext context = Create(handler, "WEPOD-42", events.Add);
         WorkflowSettings settings = new("https://example.test", "model", "key");
-        AgentTeam team = AgentTeamFactory.Create(new ToolCheckingClient(), settings, jira: context);
-        Assert.Null(team.Jira);
-        await team.Developer.RunAsync("Inspect scope comment availability.");
-        Assert.Equal(0, handler.Calls);
+        Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(
+            name => name, _ => (IChatClient)new ToolCheckingClient(jiraEnabled));
+        Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => settings);
+        if (jiraEnabled)
+        {
+            clients[AgentNames.Jira] = new ToolCheckingClient(jiraEnabled);
+            settingsByAgent[AgentNames.Jira] = settings;
+        }
+        AgentTeam team = AgentTeamFactory.Create(clients, settingsByAgent, jira: context);
+        Assert.Equal(jiraEnabled, team.Jira is not null);
+        if (streaming)
+        {
+            await foreach (var update in team.Developer.RunStreamingAsync("Inspect scope comment availability.")) { }
+        }
+        else
+            await team.Developer.RunAsync("Inspect scope comment availability.");
+        Assert.Equal(jiraEnabled ? 1 : 0, handler.Calls);
+        Assert.Equal(jiraEnabled ? 1 : 0, events.Count);
+        if (jiraEnabled) Assert.Equal("jira_scope_change", events[0].Type);
     }
 
-    private sealed class ToolCheckingClient : IChatClient
+    private sealed class ToolCheckingClient(bool jiraEnabled) : IChatClient
     {
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
-            Assert.Contains(options!.Tools!, tool => tool.Name == "report_jira_scope_change");
-            Assert.DoesNotContain(options.Tools!, tool => tool.Name == "report_jira_problem" || tool.Name == "ask_jira_clarification");
-            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "No additional changes.")));
+            var tools = options?.Tools ?? [];
+            Assert.Equal(jiraEnabled, tools.Any(tool => tool.Name == "report_jira_scope_change"));
+            Assert.DoesNotContain(tools, tool => tool.Name == "report_jira_problem" || tool.Name == "ask_jira_clarification");
+            if (!jiraEnabled) Assert.DoesNotContain(tools, tool => tool.Name.Contains("jira", StringComparison.Ordinal));
+            // A model or custom prompt can still emit the marker without a tool. Disabled Jira
+            // must also prevent the automatic reporting wrapper from making an HTTP write.
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                "<jira_scope_change>" + Problem + "</jira_scope_change>")));
         }
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
             ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
