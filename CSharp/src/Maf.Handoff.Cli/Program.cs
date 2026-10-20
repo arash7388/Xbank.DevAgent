@@ -10,6 +10,9 @@ if (args.Length == 0 || args is ["--help"] or ["-h"])
 try
 {
     WorkflowSettings settings = WorkflowSettings.FromEnvironment();
+    settings.Validate();
+    using HttpClient connectivityClient = new();
+    await new RunConnectivityCheck(connectivityClient).CheckAsync([settings.ModelEndpoint]);
     HandoffWorkflowRunner runner = new(settings);
     string task = string.Join(' ', args);
     Dictionary<string, RunEvent> summaries = new(StringComparer.Ordinal);
@@ -40,5 +43,10 @@ try
 catch (ConfigurationException exception)
 {
     Console.Error.WriteLine($"Configuration error: {exception.Message}");
+    return 2;
+}
+catch (RunConnectivityException exception)
+{
+    Console.Error.WriteLine($"Cannot start the run: {exception.Message}");
     return 2;
 }

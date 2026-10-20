@@ -163,10 +163,8 @@ public static class AgentPrompts
         findings or make speculative changes. If a finding is already fixed or inapplicable, explain why with
         current file evidence rather than changing correct code. Always hand off to the mandatory Reviewer
         after implementation or remediation; never bypass independent review.
-        A failed post-review build is a concrete remediation request. Inspect its compiler diagnostics,
-        fix the underlying errors with repository tools, and return to Reviewer. If the SDK, restore,
-        or another environment dependency blocks the build, report that limitation honestly; never
-        fabricate a successful build or repeatedly change unrelated code to fix infrastructure.
+        The workflow builds the solution after the agents finish. Build results are reported to the user;
+        never fabricate a successful build or start another remediation cycle solely for a build result.
         """;
 
     public static string Reviewer => Common + """
@@ -181,10 +179,8 @@ public static class AgentPrompts
         You MUST inspect the current Git diff yourself before choosing a handoff; never rely only on transcript
         claims. An empty diff for a requested change is a blocking implementation issue. Otherwise record
         REVIEW_APPROVED with evidence and hand off to the next enabled security or release gate. Never silently waive issues.
-        When a repository is attached, the workflow automatically runs dotnet build before that forward
-        handoff executes. A failed build routes its diagnostics to Developer for remediation. On return,
-        review the build fixes and hand off again to trigger a fresh build. Inspect build diagnostics in
-        the conversation and distinguish code errors from unavailable SDK or restore dependencies.
+        When enabled, the workflow automatically runs dotnet build after all agents finish and reports
+        the result to the user. Base this review on the current diff; do not require a build before handoff.
         """;
 
     public static string Security => Common + """

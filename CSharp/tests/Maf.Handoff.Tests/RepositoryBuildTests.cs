@@ -27,7 +27,7 @@ public sealed class RepositoryBuildTests
         => Assert.Null(RepositoryBuildResult.Failed(diagnostic).BlockerMessage);
 
     [Fact]
-    public async Task BuildsNewProjectReportsCompilerErrorsAndBuildsTheFix()
+    public async Task BuildsSolutionWithoutRebuildingIndividualProjectsAndReportsCompilerErrors()
     {
         string root = Path.Combine(Path.GetTempPath(), "maf-build", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -43,6 +43,8 @@ public sealed class RepositoryBuildTests
             File.WriteAllText(Path.Combine(root, ".gitignore"), "bin/\nobj/\n");
             File.WriteAllText(Path.Combine(root, "Example.csproj"),
                 "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(root, "Example.slnx"), "<Solution><Project Path=\"Example.csproj\" /></Solution>");
+            File.WriteAllText(Path.Combine(root, "Unrelated.csproj"), "<Project Sdk=\"Unavailable.Sdk\" />");
             File.WriteAllText(Path.Combine(root, "Example.cs"), "public class Example { invalid syntax }");
             RepositoryWorkspace workspace = (RepositoryWorkspace)typeof(RepositoryWorkspace)
                 .GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single()
@@ -50,11 +52,14 @@ public sealed class RepositoryBuildTests
 
             RepositoryBuildResult failed = await workspace.BuildAsync(CancellationToken.None);
             Assert.False(failed.Succeeded);
+            Assert.Contains("dotnet build Example.slnx", failed.Evidence);
             Assert.Contains("error CS", failed.Evidence);
             File.WriteAllText(Path.Combine(root, "Example.cs"), "public class Example { }");
             RepositoryBuildResult fixedResult = await workspace.BuildAsync(CancellationToken.None);
             Assert.True(fixedResult.Succeeded, fixedResult.Evidence);
             Assert.Contains("BUILD_PASSED", fixedResult.Evidence);
+            Assert.DoesNotContain("dotnet build Example.csproj", fixedResult.Evidence);
+            Assert.DoesNotContain("Unrelated.csproj", fixedResult.Evidence);
         }
         finally { Directory.Delete(root, recursive: true); }
     }

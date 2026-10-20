@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Maf.Handoff.Core;
+using Maf.Handoff.Talk;
 
 namespace Maf.Handoff.Api;
 
@@ -13,7 +14,9 @@ public sealed class RepositorySessionService(
     JiraService jira,
     ILlmCheckpointStore checkpointStore,
     IWorkflowRunStore workflowRunStore,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    RunConnectivityCheck? connectivityCheck = null,
+    ITalkNotifications? talkNotifications = null)
 {
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
     private readonly string _workspaceRoot = Path.Combine(Path.GetTempPath(), "maf-repository-workspaces");
@@ -28,7 +31,36 @@ public sealed class RepositorySessionService(
         }
     }
 
-    public SessionSnapshot Create(CreateSessionRequest request)
+    public async Task PreflightAsync(IReadOnlyDictionary<string, AgentModelConfiguration> agents,
+        CancellationToken cancellationToken = default)
+    {
+        var resolved = ResolveAgents(agents, Guid.NewGuid());
+        ValidateAgentConfigurations(resolved, 25, 1m);
+        await CheckConnectivityAsync(resolved, cancellationToken);
+    }
+
+    private Dictionary<string, AgentModelConfiguration> ResolveAgents(
+        IReadOnlyDictionary<string, AgentModelConfiguration>? agents, Guid sessionId)
+    {
+        if (agents is null) throw new ArgumentException("Agent model configurations are required.");
+        return agents.ToDictionary(pair => pair.Key,
+            pair => ApplyConfiguredProviderKey(pair.Value ?? throw new ArgumentException($"Model configuration for agent '{pair.Key}' is required."), sessionId),
+            StringComparer.Ordinal);
+    }
+
+    private async Task CheckConnectivityAsync(IReadOnlyDictionary<string, AgentModelConfiguration> agents,
+        CancellationToken cancellationToken)
+    {
+        if (connectivityCheck is not null)
+        {
+            await connectivityCheck.CheckAsync(agents.Values.Select(agent => ModelProviderDefinition.NormalizeEndpoint(agent.Provider.Url)), cancellationToken);
+            return;
+        }
+        using HttpClient client = new();
+        await new RunConnectivityCheck(client).CheckAsync(agents.Values.Select(agent => ModelProviderDefinition.NormalizeEndpoint(agent.Provider.Url)), cancellationToken);
+    }
+
+    public async Task<SessionSnapshot> CreateAsync(CreateSessionRequest request, CancellationToken cancellationToken = default)
     {
         RepositoryProvider provider = ParseProvider(request.SourceControl);
         request = request with { SourceControl = provider.ToString().ToLowerInvariant() };
@@ -43,10 +75,7 @@ public sealed class RepositorySessionService(
         Guid id = Guid.NewGuid();
         request = request with
         {
-            Agents = request.Agents.ToDictionary(
-                pair => pair.Key,
-                pair => ApplyConfiguredProviderKey(pair.Value, id),
-                StringComparer.Ordinal),
+            Agents = ResolveAgents(request.Agents, id),
         };
         Validate(request);
         _ = TaskBranchName.FromTask(request.JiraIssueKey, request.Task);
@@ -63,7 +92,14 @@ public sealed class RepositorySessionService(
              request.JiraAttachmentIds.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 100)))
             throw new ArgumentException("Select at most 5 Jira attachments and provide their issue key.");
         request = request with { JiraAttachmentIds = request.JiraAttachmentIds?.ToArray() };
-        SessionState state = new(id, request, runEvent => workflowRunStore.AppendEvent(id, runEvent));
+        await CheckConnectivityAsync(request.Agents, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        SessionState state = new(id, request, runEvent =>
+        {
+            workflowRunStore.AppendEvent(id, runEvent);
+            if (TalkNotification.FromEvent(id, runEvent) is { } notification)
+                talkNotifications?.Publish(notification);
+        });
         state.PersistChanges = () => Persist(state);
         if (!_sessions.TryAdd(id, state))
         {
@@ -131,6 +167,8 @@ public sealed class RepositorySessionService(
                 Status = log.Run.Status, Error = log.Run.Error,
                 Events = log.Events ?? saved.Events,
                 Usage = log.Usage?.TokenUsage ?? saved.Usage,
+                CanRequestChanges = false,
+                ExecutionPending = false,
             };
         }
         // Older databases retain configuration and execution logs, but no session snapshot.
@@ -161,6 +199,18 @@ public sealed class RepositorySessionService(
         SessionState state = GetState(id);
         state.Reject();
         Persist(state);
+    }
+
+    public SessionSnapshot RequestChanges(Guid id, ModifySessionRequest request)
+    {
+        SessionState state = GetState(id);
+        if (state.Request.ReferenceCollectionId is Guid collectionId && !referenceDocuments.Exists(collectionId))
+            throw new InvalidOperationException("The attached references have expired. Start a new run and attach them again.");
+        RepositoryWorkspace workspace = state.BeginModification(request);
+        Persist(state);
+        SessionSnapshot snapshot = state.Snapshot();
+        _ = Task.Run(() => ExecuteAsync(state, workspace));
+        return snapshot;
     }
 
     public async Task<SessionSnapshot> ApproveAsync(
@@ -238,13 +288,13 @@ public sealed class RepositorySessionService(
         return state.Snapshot();
     }
 
-    private async Task ExecuteAsync(SessionState state)
+    private async Task ExecuteAsync(SessionState state, RepositoryWorkspace? existingWorkspace = null)
     {
         try
         {
             CreateSessionRequest request = state.Request;
             RepositoryProvider provider = ParseProvider(request.SourceControl);
-            RepositoryWorkspace workspace = await RepositoryWorkspace.CloneAsync(
+            RepositoryWorkspace workspace = existingWorkspace ?? await RepositoryWorkspace.CloneAsync(
                 request.RepositoryUrl,
                 request.BaseBranch,
                 AccessToken(request, provider),
@@ -254,6 +304,21 @@ public sealed class RepositorySessionService(
                 ConfiguredGitLabHost());
             state.BeginAgentRun(workspace);
             Persist(state);
+
+            ICodeGraphTools? workflowCodeGraph = null;
+            if (request.CodeGraphEnabled && codeGraph.IsWorkflowEnabled && workspace.ContainsCSharpSource())
+            {
+                var freshness = codeGraph.CheckWorkflowFreshness(
+                    request.RepositoryUrl, workspace.RootPath, state.Cancellation.Token);
+                foreach (CodeGraphFreshness check in freshness)
+                    state.AddEvent(new(check.IsFresh ? "codegraph_status" : "codegraph_warning",
+                        Text: check.Message + (check.IsFresh ? $" SHA-256: {check.CurrentHash}" :
+                            " Graph tools are disabled for this run; agents will use repository inspection."),
+                        Category: "codegraph"));
+                if (freshness.Count > 0 && freshness.All(check => check.IsFresh))
+                    workflowCodeGraph = codeGraph;
+                Persist(state);
+            }
 
             Dictionary<string, WorkflowSettings> settingsByAgent = request.Agents.ToDictionary(
                 pair => pair.Key,
@@ -277,7 +342,7 @@ public sealed class RepositorySessionService(
             });
             state.AddEvent(new("autonomy_policy", Text: $"Autonomy: {request.AutonomyLevel}%. Automatic commit: {request.AutoCommit}; push: {request.AutoPush}; PR/MR: {request.AutoCreatePullRequest}.", Category: "input"));
             IJiraIssueSearch? workflowJira = null;
-            string workflowTask = request.Task;
+            string workflowTask = state.WorkflowTask();
             if (request.JiraIssueKey is not null)
             {
                 workflowTask = $"Selected Jira issue: {request.JiraIssueKey}\n\n{workflowTask}";
@@ -305,7 +370,7 @@ public sealed class RepositorySessionService(
                 settingsByAgent,
                 workspace,
                 documents,
-                request.CodeGraphEnabled && codeGraph.IsWorkflowEnabled ? codeGraph : null,
+                workflowCodeGraph,
                 checkpointStore,
                 workflowJira,
                 decisions);
@@ -380,12 +445,13 @@ public sealed class RepositorySessionService(
         }
         finally
         {
-            state.FinishAutomaticCompletion();
-            Persist(state);
-            if (state.Request.ReferenceCollectionId is Guid collectionId)
+            // Keep references available while the user can revise the uncommitted result.
+            if (!state.HasReviewableResult && state.Request.ReferenceCollectionId is Guid collectionId)
             {
                 await referenceDocuments.DeleteAsync(collectionId);
             }
+            state.FinishAutomaticCompletion();
+            Persist(state);
         }
     }
 
@@ -404,6 +470,7 @@ public sealed class RepositorySessionService(
         SessionSnapshot snapshot = state.Snapshot();
         workflowRunStore.UpdateStatus(snapshot.Id, snapshot.Status, snapshot.Error);
         workflowRunStore.SaveSnapshot(snapshot.Id, JsonSerializer.Serialize(snapshot));
+        state.NotifyStatusChange(snapshot, talkNotifications);
     }
 
     private string SerializeWorkflowConfig(CreateSessionRequest request) => JsonSerializer.Serialize(new
@@ -501,31 +568,41 @@ public sealed class RepositorySessionService(
             throw new ArgumentException("Change request must be 20,000 characters or fewer.");
         }
 
-        foreach (string unexpectedAgent in request.Agents.Keys.Except(AgentNames.All, StringComparer.Ordinal))
+        ValidateAgentConfigurations(request.Agents, request.MaxAiCalls, request.MaxBudgetUsd);
+    }
+
+    private void ValidateAgentConfigurations(IReadOnlyDictionary<string, AgentModelConfiguration> agents,
+        int maxAiCalls, decimal maxBudgetUsd)
+    {
+        foreach (string unexpectedAgent in agents.Keys.Except(AgentNames.All, StringComparer.Ordinal))
         {
             throw new ArgumentException($"Unknown agent configuration '{unexpectedAgent}'.");
         }
 
         foreach (string agentName in AgentNames.Required)
         {
-            if (!request.Agents.TryGetValue(agentName, out AgentModelConfiguration? configuration) ||
-                configuration is null)
+            if (!agents.ContainsKey(agentName))
             {
                 throw new ArgumentException($"Model configuration for agent '{agentName}' is required.");
             }
+        }
 
+        foreach ((string agentName, AgentModelConfiguration configuration) in agents)
+        {
             try
             {
+                if (string.IsNullOrWhiteSpace(configuration.ApiKey))
+                    throw new ConfigurationException($"No API key is configured for model '{configuration.Provider.Id}' ({configuration.Provider.Name}). Enter the provider API key in the connection settings before starting the run.");
                 configuration.ToSettings(
                     maxTotalMessages: 100,
                     maxAgentTurns: MaxAgentTurns,
                     maxReviewerRemediationCycles: 5,
-                    maxLlmRequests: request.MaxAiCalls,
-                    maxBudgetUsd: request.MaxBudgetUsd);
+                    maxLlmRequests: maxAiCalls,
+                    maxBudgetUsd: maxBudgetUsd);
             }
             catch (ConfigurationException exception)
             {
-                throw new ArgumentException($"Agent '{agentName}': {exception.Message}", nameof(request), exception);
+                throw new ArgumentException($"Agent '{agentName}': {exception.Message}", nameof(agents), exception);
             }
         }
     }
@@ -557,12 +634,29 @@ public sealed class RepositorySessionService(
         private string _diff = string.Empty;
         private string? _error;
         private TokenUsageSummary? _usage;
+        private TokenUsageSummary? _previousUsage;
+        private readonly List<string> _modificationPrompts = [];
+        private bool _executionPending = true;
         private ApprovalResult? _approval;
         private PullRequestResult? _pullRequest;
         private TaskCompletionSource<string>? _answer;
         private SessionClarification? _clarification;
         private bool _automaticCompletionPending;
         internal Action? PersistChanges { get; set; }
+        private string? _lastNotifiedStatus;
+        private string? _lastNotifiedError;
+
+        internal void NotifyStatusChange(SessionSnapshot snapshot, ITalkNotifications? notifications)
+        {
+            lock (_lock)
+            {
+                if (_lastNotifiedStatus == snapshot.Status && _lastNotifiedError == snapshot.Error) return;
+                _lastNotifiedStatus = snapshot.Status;
+                _lastNotifiedError = snapshot.Error;
+                if (TalkNotification.FromSession(snapshot.Id, snapshot.Status, snapshot.Error) is { } notification)
+                    notifications?.Publish(notification);
+            }
+        }
 
         internal SessionState(Guid id, CreateSessionRequest request, Action<RunEvent> persistEvent)
         {
@@ -578,7 +672,56 @@ public sealed class RepositorySessionService(
 
         internal DateTimeOffset StartedAt { get; }
 
-        internal CancellationTokenSource Cancellation { get; } = new(TimeSpan.FromMinutes(50));
+        internal CancellationTokenSource Cancellation { get; private set; } = new(TimeSpan.FromMinutes(50));
+
+        internal bool HasReviewableResult
+        {
+            get { lock (_lock) return _status is "awaiting_approval" or "completed" or "no_changes"; }
+        }
+
+        internal RepositoryWorkspace BeginModification(ModifySessionRequest request)
+        {
+            string prompt = request.Prompt?.Trim() ?? "";
+            if (prompt.Length is 0 or > 12000)
+                throw new ArgumentException("Provide a modification prompt between 1 and 12000 characters.");
+            lock (_lock)
+            {
+                if (!HasReviewableResult || _executionPending || _automaticCompletionPending || _workspace is null)
+                    throw new InvalidOperationException("Only a finished, uncommitted result can be modified.");
+                AddEvent(new("modification_requested", Text: prompt, Status: "running", Category: "input"));
+                _modificationPrompts.Add(prompt);
+                _previousUsage = _usage;
+                _events.RemoveAll(item => item.Type is "agent_summary" or "jira_problem" or "build_warning" or "build_result");
+                _error = null;
+                _status = "running";
+                _executionPending = true;
+                // Each revision requires human review, including after an automatically completed run.
+                Request = Request with { AutoCommit = false, AutoPush = false, AutoCreatePullRequest = false };
+                Cancellation.Dispose();
+                Cancellation = new(TimeSpan.FromMinutes(50));
+                return _workspace;
+            }
+        }
+
+        internal string WorkflowTask()
+        {
+            lock (_lock)
+            {
+                if (_modificationPrompts.Count == 0) return Request.Task;
+                return $"""
+                    Original change request:
+                    {Request.Task}
+
+                    The user requested revisions to the existing uncommitted workflow result.
+                    Inspect the current repository diff and files, preserve relevant existing changes, and apply the feedback below.
+                    Follow all original requirements except where later feedback explicitly changes them.
+                    Later modification prompts take precedence over earlier prompts when they conflict.
+                    Run the normal implementation, build verification, and independent review gates for the revised result.
+
+                    {string.Join("\n\n", _modificationPrompts.Select((prompt, index) => $"Modification {index + 1}:\n{prompt}"))}
+                    """;
+            }
+        }
 
         public async Task<string> AskAsync(string questions, CancellationToken cancellationToken = default)
         {
@@ -659,6 +802,11 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
+                if (runEvent.Usage is not null)
+                {
+                    _usage = CombineUsage(_previousUsage, runEvent.Usage);
+                    runEvent = runEvent with { Usage = _usage };
+                }
                 _persistEvent(runEvent);
                 if (runEvent.Type == "agent_summary")
                 {
@@ -666,11 +814,6 @@ public sealed class RepositorySessionService(
                 }
                 if (runEvent.Type == "jira_problem")
                     _events.RemoveAll(previous => previous.Type == "jira_problem");
-                if (runEvent.Usage is not null)
-                {
-                    _usage = runEvent.Usage;
-                }
-
                 if (runEvent.Type == "message" && _events.LastOrDefault() is RunEvent previous &&
                     previous.Type == "message" && previous.Agent == runEvent.Agent)
                 {
@@ -840,7 +983,7 @@ public sealed class RepositorySessionService(
         {
             lock (_lock)
             {
-                if (_status != "awaiting_approval")
+                if (_status is not ("awaiting_approval" or "completed") || _automaticCompletionPending)
                 {
                     throw new InvalidOperationException("Only a pending patch can be rejected.");
                 }
@@ -891,13 +1034,40 @@ public sealed class RepositorySessionService(
                     TaskBranchName.FromTask(Request.JiraIssueKey, Request.Task),
                     _clarification,
                     Request.AutonomyLevel,
-                    _automaticCompletionPending);
+                    _automaticCompletionPending,
+                    HasReviewableResult && !_executionPending && !_automaticCompletionPending && _workspace is not null,
+                    _executionPending,
+                    [.. _modificationPrompts]);
             }
         }
 
         internal void FinishAutomaticCompletion()
         {
-            lock (_lock) _automaticCompletionPending = false;
+            lock (_lock)
+            {
+                _automaticCompletionPending = false;
+                _executionPending = false;
+                Cancellation.CancelAfter(Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        private static TokenUsageSummary CombineUsage(TokenUsageSummary? previous, TokenUsageSummary current)
+        {
+            if (previous is null) return current;
+            AgentTokenUsage[] agents = previous.ByAgent.Concat(current.ByAgent)
+                .GroupBy(item => (item.Agent, item.Model))
+                .Select(group => new AgentTokenUsage(group.Key.Agent, group.Key.Model,
+                    group.Sum(item => item.LlmRequestCount), group.Sum(item => item.InputTokens),
+                    group.Sum(item => item.CachedInputTokens), group.Sum(item => item.OutputTokens),
+                    group.Sum(item => item.ReasoningTokens), group.Sum(item => item.TotalTokens),
+                    group.All(item => item.EstimatedCostUsd is null) ? null : group.Sum(item => item.EstimatedCostUsd),
+                    group.Sum(item => item.CheckpointHits))).ToArray();
+            return new(agents, previous.LlmRequestCount + current.LlmRequestCount,
+                previous.InputTokens + current.InputTokens, previous.CachedInputTokens + current.CachedInputTokens,
+                previous.OutputTokens + current.OutputTokens, previous.ReasoningTokens + current.ReasoningTokens,
+                previous.TotalTokens + current.TotalTokens,
+                previous.EstimatedCostUsd is null && current.EstimatedCostUsd is null ? null
+                    : (previous.EstimatedCostUsd ?? 0m) + (current.EstimatedCostUsd ?? 0m));
         }
 
         private void TrimEvents()
@@ -949,6 +1119,7 @@ public sealed record ApproveSessionRequest(
 
 public sealed record SessionClarification(Guid Id, string Questions);
 public sealed record ClarifySessionRequest(Guid ClarificationId, string Answer);
+public sealed record ModifySessionRequest(string Prompt);
 
 internal sealed record PullRequestPreparation(
     RepositoryWorkspace Workspace,
@@ -978,7 +1149,10 @@ public sealed record SessionSnapshot(
     string? Branch = null,
     SessionClarification? Clarification = null,
     int AutonomyLevel = 100,
-    bool AutomaticCompletionPending = false)
+    bool AutomaticCompletionPending = false,
+    bool CanRequestChanges = false,
+    bool ExecutionPending = false,
+    IReadOnlyList<string>? ModificationPrompts = null)
 {
     // Derived from the durable event history too, so existing archived runs gain full diagnostics.
     public SessionFailureDetails? FailureDetails => SessionFailureDetails.FromEvents(Error, Events);

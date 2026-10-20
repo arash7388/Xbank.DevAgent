@@ -29,6 +29,7 @@ const context = {
   uploadReferenceDocuments() { throw new Error('Must check repository access before uploading documents'); },
   async api(url, options) {
     calls.push({ url, body: JSON.parse(options.body) });
+    if (url === '/api/runs/preflight') return { status: 'ok' };
     throw new Error('GitLab rejected the token');
   },
 };
@@ -59,9 +60,10 @@ vm.runInContext(source.slice(submitStart, source.indexOf('\nfunction readAgentCo
 
 (async () => {
   await submit({ preventDefault() {}, submitter: context.runButton });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, '/api/repositories/branches');
-  assert.equal(calls[0].body.accessToken, null);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, '/api/runs/preflight');
+  assert.equal(calls[1].url, '/api/repositories/branches');
+  assert.equal(calls[1].body.accessToken, null);
   assert.equal(context.step, 'connection');
   assert.match(context.error, /GitLab rejected the token/);
   assert.equal(context.runButton.disabled, false);
@@ -84,10 +86,11 @@ vm.runInContext(source.slice(submitStart, source.indexOf('\nfunction readAgentCo
     return url === '/api/repositories/branches' ? ['develop'] : { id: 'test-session' };
   };
   await submit({ preventDefault() {}, submitter: context.runButton });
-  assert.equal(calls[1].url, '/api/repositories/branches');
-  assert.equal(calls[2].url, '/api/sessions');
-  assert.equal(calls[2].body.gitLabToken, calls[1].body.accessToken);
-  assert.equal(calls[2].body.repositoryUrl, calls[1].body.repositoryUrl);
-  assert.equal(calls[2].body.sourceControl, calls[1].body.sourceControl);
+  assert.equal(calls[2].url, '/api/runs/preflight');
+  assert.equal(calls[3].url, '/api/repositories/branches');
+  assert.equal(calls[4].url, '/api/sessions');
+  assert.equal(calls[4].body.gitLabToken, calls[3].body.accessToken);
+  assert.equal(calls[4].body.repositoryUrl, calls[3].body.repositoryUrl);
+  assert.equal(calls[4].body.sourceControl, calls[3].body.sourceControl);
   console.log('Repository credential UI checks passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

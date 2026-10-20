@@ -2,12 +2,47 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Maf.Handoff.Api;
+using Maf.Handoff.Core;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
 namespace Maf.Handoff.Tests;
 
 public sealed class JiraServiceTests
 {
+    [Theory]
+    [InlineData("get_jira_issue_title")]
+    [InlineData("get_jira_issue_details")]
+    [InlineData("get_jira_issue_comments")]
+    [InlineData("list_jira_attachments")]
+    [InlineData("read_jira_attachment")]
+    public async Task AgentToolsReturnGuidanceForInvalidKeysWithoutCallingJira(string name)
+    {
+        RecordingHandler handler = new("{}");
+        AIFunction tool = JiraToolFactory.Create(CreateService(handler)).OfType<AIFunction>().Single(tool => tool.Name == name);
+        foreach (string key in new[] { "", "42", "WEPOD", "https://jira.test/browse/WEPOD-42", "Issue title" })
+        {
+            object? result = await tool.InvokeAsync(new AIFunctionArguments
+            {
+                ["issueKey"] = key, ["startAt"] = 0, ["maxResults"] = 10,
+                ["attachmentId"] = "1", ["offset"] = 0,
+            });
+            Assert.Contains("invalid_issue_key", JsonSerializer.Serialize(result));
+            Assert.Contains("search_jira_issues", JsonSerializer.Serialize(result));
+            Assert.Null(handler.RequestUri);
+        }
+    }
+
+    [Fact]
+    public async Task AgentTitleToolTrimsValidKeyAndPreservesResult()
+    {
+        RecordingHandler handler = new("""{"fields":{"summary":"Issue title"}}""");
+        AIFunction tool = JiraToolFactory.Create(CreateService(handler)).OfType<AIFunction>().Single(tool => tool.Name == "get_jira_issue_title");
+        object? result = await tool.InvokeAsync(new AIFunctionArguments { ["issueKey"] = " WEPOD-42\n" });
+        Assert.Equal("\"Issue title\"", JsonSerializer.Serialize(result));
+        Assert.EndsWith("/rest/api/2/issue/WEPOD-42?fields=summary", handler.RequestUri!.ToString());
+    }
+
     [Fact]
     public async Task SearchUsesBasicAuthenticationAndParsesIssueFields()
     {

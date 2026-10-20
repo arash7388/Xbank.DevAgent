@@ -200,6 +200,7 @@
 
         <section id="codegraph-overview" class="codegraph-card" hidden>
           <div class="card-heading"><div><h3>Database overview</h3><p id="codegraph-db-meta"></p></div></div>
+          <div id="codegraph-freshness" role="status" aria-live="polite"></div>
           <div id="codegraph-counts" class="codegraph-counts"></div>
           <div class="codegraph-summary-grid">
             <div><h4>Node kinds</h4><div id="codegraph-node-kinds"></div></div>
@@ -361,8 +362,8 @@
 
         <fieldset id="build-verification-settings">
           <legend>Build verification</legend>
-          <label class="check-row" for="skip-build-verification"><input id="skip-build-verification" name="skipBuildVerification" type="checkbox"><span>Skip build verification and continue</span></label>
-          <p class="field-guide">Use when the build environment is unavailable. The workflow continues with a notification that compilation has not been verified.</p>
+          <label class="check-row" for="build-project"><input id="build-project" name="buildProject" type="checkbox" checked><span>Build project</span></label>
+          <p class="field-guide">Build the solution after applying changes and show the result. Build failures are reported without starting another repair cycle.</p>
         </fieldset>
 
         <fieldset id="agent-turn-limits">
@@ -545,6 +546,7 @@
           <button class="secondary report-button" type="button" hidden>Report</button>
           <a id="pull-request-link" class="button-link" target="_blank" rel="noopener noreferrer" hidden>View PR</a>
           <button id="generate-pr-button" class="secondary" type="button" hidden>Generate PR</button>
+          <button id="request-changes-button" class="secondary" type="button" hidden>Request changes</button>
           <button id="reject-button" class="danger" type="button" hidden>Reject</button>
           <button id="approve-button" class="primary" type="button" hidden>Approve</button>
         </div>
@@ -572,6 +574,23 @@
       </div>
     </section>
   </main>
+
+  <dialog id="modification-dialog" aria-labelledby="modification-title">
+    <form id="modification-form" method="dialog">
+      <div class="dialog-header">
+        <h2 id="modification-title">Request changes</h2>
+        <button id="close-modification-dialog" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <p>Describe how to revise this result. The agents will update the existing changes and return a new diff for your review.</p>
+      <label for="modification-prompt">Modification prompt</label>
+      <textarea id="modification-prompt" rows="6" maxlength="12000" required placeholder="For example: Keep the current changes, but add validation for empty input."></textarea>
+      <p id="modification-error" class="field-guide" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button id="modification-cancel" class="secondary" type="button">Cancel</button>
+        <button id="modification-submit" class="primary" type="submit">Revise result</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="approval-dialog">
     <form id="approval-form" method="dialog">

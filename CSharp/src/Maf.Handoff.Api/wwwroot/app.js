@@ -322,7 +322,7 @@ function renderRunReview() {
   const autonomySettings = document.querySelector('#autonomy-settings');
   if (autonomySettings) controls(section('Autonomy and completion', 'agents'), autonomySettings);
   row(section('Build verification', 'agents'), 'Build verification',
-    document.querySelector('#skip-build-verification')?.checked ? 'Skipped — compilation will not be verified' : 'Required');
+    document.querySelector('#build-project')?.checked ? 'Build after changes — report result' : 'Skipped — compilation will not be verified');
   const agents = section('Agents and model settings', 'agents');
   agentModels.querySelectorAll('.agent-model-card').forEach(agent => {
     const card = document.createElement('section');
@@ -1048,6 +1048,10 @@ async function startAgentRun() {
   let referenceCollectionId;
   let cognia;
   try {
+    runButton.textContent = 'Checking internet connection…';
+    await api('/api/runs/preflight', {
+      method: 'POST', body: JSON.stringify(agents), timeoutMs: 30_000,
+    });
     runButton.textContent = 'Checking repository access…';
     await api('/api/repositories/branches', {
       method: 'POST', body: JSON.stringify(connection), timeoutMs: 30_000,
@@ -1071,7 +1075,7 @@ async function startAgentRun() {
     agents,
     maxAiCalls: Number(values.get('maxAiCalls')),
     maxBudgetUsd: Number(values.get('maxBudgetUsd')),
-    skipBuildVerification: values.get('skipBuildVerification') === 'on',
+    skipBuildVerification: values.get('buildProject') !== 'on',
     autonomyLevel: Number(values.get('autonomyLevel') ?? 100),
     autoCommit: values.get('autoCommit') === 'on',
     autoPush: values.get('autoPush') === 'on',
@@ -1116,7 +1120,7 @@ function readAgentConfigurations() {
     const preset = providerCatalog[providerId];
     const apiKey = providerKeys[providerId].value.trim();
     if (!apiKey && !configuredProviderKeys.has(providerId)) {
-      throw new Error(`An API key for ${preset.name} is required by the ${card.dataset.agent} agent.`);
+      throw new Error(`An API key for ${preset.name} is required by the ${card.dataset.agent} agent (model '${model}'). Enter it in the connection settings before starting the run.`);
     }
     return [card.dataset.agent, {
       apiKey,
@@ -1192,6 +1196,44 @@ restartRunButton.addEventListener('click', () => {
 rejectButton.addEventListener('click', async () => {
   if (!sessionId || !confirm('Reject this patch? The isolated clone will not be committed or pushed.')) return;
   await action(`/api/sessions/${sessionId}/reject`);
+});
+
+const modificationDialog = document.querySelector('#modification-dialog');
+const modificationPrompt = document.querySelector('#modification-prompt');
+const modificationSubmit = document.querySelector('#modification-submit');
+const modificationError = document.querySelector('#modification-error');
+document.querySelector('#request-changes-button').addEventListener('click', () => {
+  if (!sessionId) return;
+  modificationError.hidden = true;
+  modificationDialog.showModal();
+  modificationPrompt.focus();
+});
+document.querySelector('#close-modification-dialog').addEventListener('click', () => modificationDialog.close());
+document.querySelector('#modification-cancel').addEventListener('click', () => modificationDialog.close());
+document.querySelector('#modification-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const prompt = modificationPrompt.value.trim();
+  if (!sessionId || !prompt || modificationSubmit.disabled) return;
+  const modifyingSessionId = sessionId;
+  modificationSubmit.disabled = true;
+  modificationError.hidden = true;
+  try {
+    const snapshot = await api(`/api/sessions/${modifyingSessionId}/modify`, {
+      method: 'POST', body: JSON.stringify({ prompt }),
+    });
+    if (sessionId !== modifyingSessionId) return;
+    stopPolling();
+    modificationDialog.close();
+    modificationPrompt.value = '';
+    clearError();
+    render(snapshot);
+    pollTimer = setInterval(refresh, 1000);
+  } catch (error) {
+    modificationError.textContent = error.message;
+    modificationError.hidden = false;
+  } finally {
+    modificationSubmit.disabled = false;
+  }
 });
 
 approveButton.addEventListener('click', () => {
@@ -1323,7 +1365,7 @@ async function refresh() {
     const snapshot = await api(`/api/sessions/${refreshingSessionId}`);
     if (sessionId !== refreshingSessionId || generation !== pollGeneration) return;
     render(snapshot);
-    if (!snapshot.automaticCompletionPending && (isTerminal(snapshot.status) || snapshot.status === 'awaiting_approval')) stopPolling();
+    if (!snapshot.executionPending && !snapshot.automaticCompletionPending && (isTerminal(snapshot.status) || snapshot.status === 'awaiting_approval')) stopPolling();
   } catch (error) {
     if (sessionId !== refreshingSessionId || generation !== pollGeneration) return;
     showError(error.message);
@@ -1378,7 +1420,9 @@ function render(snapshot) {
 
   const awaiting = snapshot.status === 'awaiting_approval' && !snapshot.automaticCompletionPending;
   approveButton.hidden = !awaiting && snapshot.status !== 'completed';
-  rejectButton.hidden = !awaiting;
+  rejectButton.hidden = !awaiting && snapshot.status !== 'completed';
+  const requestChangesButton = document.querySelector('#request-changes-button');
+  if (requestChangesButton) requestChangesButton.hidden = !snapshot.canRequestChanges;
   approveButton.disabled = false;
   const canGeneratePullRequest = ['committed', 'pushed'].includes(snapshot.status) && !snapshot.pullRequest && !snapshot.automaticCompletionPending;
   generatePrButton.hidden = !canGeneratePullRequest;
@@ -1492,7 +1536,7 @@ function renderEvents(events) {
     element.className = `event ${entry.type}`;
     const header = document.createElement('header');
     const name = document.createElement('strong');
-    const labels = { handoff: 'Handoff', message: 'Agent response', tool: 'Tool activity', trace: 'Workflow trace', usage: 'Token usage', decision: 'Terminal decision', error: 'Error', build_warning: 'Build verification skipped', jira_problem: 'Jira product report', jira_scope_change: 'Product scope changes', clarification_requested: 'Clarification requested', clarification_answered: 'User clarification' };
+    const labels = { handoff: 'Handoff', message: 'Agent response', tool: 'Tool activity', trace: 'Workflow trace', usage: 'Token usage', decision: 'Terminal decision', error: 'Error', build_warning: 'Build verification skipped', jira_problem: 'Jira product report', jira_scope_change: 'Product scope changes', clarification_requested: 'Clarification requested', clarification_answered: 'User clarification', modification_requested: 'Changes requested' };
     name.textContent = entry.agent || labels[entry.type] || entry.type.replaceAll('_', ' ');
     const metadata = document.createElement('span');
     metadata.className = 'event-metadata';
@@ -1514,15 +1558,19 @@ function renderEvents(events) {
 
 function renderBuildWarning(events, status) {
   if (!buildWarningNotice) return;
-  const warning = events.find(event => event.type === 'build_warning');
+  const warning = events.filter(event => ['build_warning', 'build_result'].includes(event.type)).slice(-1)[0];
   buildWarningNotice.replaceChildren();
   buildWarningNotice.hidden = !warning;
   if (!warning) return;
+  buildWarningNotice.dataset.status = warning.status;
+  buildWarningNotice.setAttribute('role', warning.status === 'failed' ? 'alert' : 'status');
+  buildWarningNotice.setAttribute('aria-live', warning.status === 'failed' ? 'assertive' : 'polite');
   if (['completed', 'awaiting_approval', 'approving', 'committed', 'pushed', 'creating_pull_request', 'pull_request_created'].includes(status))
     finalUsageSummary.before(buildWarningNotice);
   else runErrorBox.after(buildWarningNotice);
   const title = document.createElement('h3');
-  title.textContent = 'Build verification skipped';
+  title.textContent = warning.status === 'failed' ? 'Build failed — please review the build errors'
+    : warning.status === 'passed' ? 'Build succeeded' : 'Build verification skipped';
   const message = document.createElement('p');
   message.textContent = warning.text || 'Compilation has not been verified for this run.';
   buildWarningNotice.append(title, message);
@@ -1685,10 +1733,12 @@ function parseUnifiedDiff(value) {
   let hunk = null;
   let oldLine = 0;
   let newLine = 0;
+  let hasNewFileHeader = false;
   const beginFile = (path, oldPath) => {
     current = { path, oldPath: oldPath || path, status: 'modified', additions: 0, deletions: 0, binary: false, hunks: [] };
     files.push(current);
     hunk = null;
+    hasNewFileHeader = false;
   };
   for (const line of text.split('\n')) {
     if (line.startsWith('diff --git ')) {
@@ -1711,11 +1761,19 @@ function parseUnifiedDiff(value) {
     if (line.startsWith('rename from ')) { current.status = 'renamed'; current.oldPath = line.slice('rename from '.length); continue; }
     if (line.startsWith('rename to ')) { current.path = line.slice('rename to '.length); continue; }
     if (line.startsWith('Binary files') || line.startsWith('GIT binary patch')) { current.binary = true; continue; }
+    // Older sessions emitted new-file contents without a unified-diff hunk header.
+    // Recover those additions so existing reviews remain readable after an upgrade.
+    if (!hunk && current.status === 'added' && hasNewFileHeader && line.startsWith('+')) {
+      hunk = { header: 'Added file', lines: [] };
+      current.hunks.push(hunk);
+      newLine = 1;
+    }
     if (!hunk) {
       if (line.startsWith('--- ')) {
         const candidate = line.slice(4).replace(/^a\//, '');
         if (candidate !== '/dev/null') current.oldPath = candidate;
       } else if (line.startsWith('+++ ')) {
+        hasNewFileHeader = true;
         const candidate = line.slice(4).replace(/^b\//, '');
         if (candidate !== '/dev/null') current.path = candidate;
       }
@@ -1808,13 +1866,15 @@ function renderDiffFileSection(file, index, mode) {
   const status = diffStatusLabel(file);
   const body = file.binary
     ? '<p class="diff-file-binary">Binary file — this change cannot be shown as text.</p>'
-    : (mode === 'split' ? renderSplitDiff(file) : renderInlineDiff(file));
+    : !file.hunks.length
+      ? '<p class="diff-file-binary">No text changes in this file.</p>'
+      : (mode === 'split' ? renderSplitDiff(file) : renderInlineDiff(file));
   return `<article class="diff-file${collapsed ? ' collapsed' : ''}" id="diff-file-${index}" data-diff-file="${index}">`
     + '<header class="diff-file-header">'
     + `<button class="diff-file-toggle" type="button" data-diff-toggle="${index}" aria-expanded="${collapsed ? 'false' : 'true'}">`
-    + `<span class="diff-file-chevron" aria-hidden="true">▾</span><span class="diff-file-path">${escapeHtml(file.path)}</span></button>`
+    + `<span class="diff-file-chevron" aria-hidden="true">▾</span><span class="diff-file-path">${escapeHtml(file.path)}</span>`
     + (status ? `<span class="diff-file-status diff-status-${file.status}">${status}</span>` : '')
-    + `<span class="diff-file-stats">${diffStatHtml(file)}</span></header>`
+    + `<span class="diff-file-stats">${diffStatHtml(file)}</span></button></header>`
     + `<div class="diff-file-body">${body}</div></article>`;
 }
 
@@ -1958,6 +2018,8 @@ function setActiveStep(active) {
   currentWorkflowStep = active;
   const restartActions = document.querySelector(active === 'review' || active === 'finish' ? '.review-actions' : '.run-meta');
   if (restartActions && restartRunButton.parentElement !== restartActions) restartActions.append(restartRunButton);
+  const requestChangesButton = document.querySelector('#request-changes-button');
+  if (restartActions && requestChangesButton && requestChangesButton.parentElement !== restartActions) restartActions.append(requestChangesButton);
   const order = [...setupStepOrder, 'running', 'review', 'finish'];
   const visibleStep = active === 'setup' ? currentSetupStep : active;
   workflowSteps.forEach(step => {
@@ -1994,6 +2056,8 @@ function resetOutput() {
   renderDiff('');
   approveButton.hidden = true;
   rejectButton.hidden = true;
+  document.querySelector('#request-changes-button').hidden = true;
+  modificationPrompt.value = '';
   generatePrButton.hidden = true;
   pullRequestLink.hidden = true;
   updateTeamMap([]);
@@ -2245,6 +2309,13 @@ async function refreshCodeGraphDatabase(showErrors = true) {
   try {
     const overview = await api(`/api/codegraph/database?dbPath=${encodeURIComponent(codeGraphDb.value.trim())}`);
     codeGraphOverview.hidden = false;
+    const freshness = document.querySelector('#codegraph-freshness');
+    freshness.replaceChildren(...(overview.freshness || []).map(check => {
+      const item = document.createElement('p');
+      item.textContent = `${check.state.toUpperCase()}: ${check.message}`;
+      item.title = `Current SHA-256: ${check.currentHash || 'unverified'}\nIndexed SHA-256: ${check.indexedHash || 'unverified'}`;
+      return item;
+    }));
     document.querySelector('#codegraph-db-meta').textContent = `${overview.databasePath} · ${formatBytes(overview.sizeBytes)}`;
     const counts = document.querySelector('#codegraph-counts');
     counts.replaceChildren(...Object.entries(overview.counts).map(([name, count]) => {

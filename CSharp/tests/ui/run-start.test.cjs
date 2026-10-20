@@ -41,9 +41,10 @@ function setup() {
     assert.equal(context.sessionId, null, 'A failed start must not retain the previous session');
     assert.ok(!state.polling);
   }
-  for (const failedUrl of ['/api/repositories/branches', '/api/sessions']) {
+  for (const failedUrl of ['/api/runs/preflight', '/api/repositories/branches', '/api/sessions']) {
     const { state, context } = setup();
     context.api = async url => {
+      state.calls.push(url);
       if (url === failedUrl) throw new Error('Request timed out');
       return {};
     };
@@ -51,6 +52,10 @@ function setup() {
     assert.equal(state.busy, false);
     assert.match(state.errors[0], /timed out/);
     assert.ok(!state.polling);
+    if (failedUrl === '/api/runs/preflight') {
+      assert.deepEqual(state.calls, ['/api/runs/preflight']);
+      assert.equal(state.setupStep, 'connection');
+    }
   }
   const { state, context } = setup();
   await state.run();
@@ -61,6 +66,7 @@ function setup() {
   assert.ok(state.stages.includes('Checking repository access…'));
   assert.ok(state.stages.includes('Creating agent session…'));
   assert.ok(state.calls.every(call => call.options.timeoutMs === 30_000));
+  assert.equal(state.calls[0].url, '/api/runs/preflight');
 
   // Exercise the actual request helper with both connection and response-body timeouts.
   for (const bodyTimeout of [false, true]) {

@@ -46,10 +46,8 @@ public sealed partial class RepositoryWorkspace
 
     public string BaseBranch { get; private set; }
 
-    /// <summary>Returns whether the cloned repository tracks at least one C# source file.</summary>
-    public bool ContainsCSharpSource() => ListFiles().Split(
-        '\n',
-        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    /// <summary>Returns whether the cloned repository contains at least one non-ignored C# source file.</summary>
+    public bool ContainsCSharpSource() => EnumerateSourceFiles()
         .Any(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
 
     public static async Task<RepositoryWorkspace> CloneAsync(
@@ -161,19 +159,29 @@ public sealed partial class RepositoryWorkspace
         };
     }
 
-    [Description("Lists tracked source files in the cloned repository. The optional pattern is a case-insensitive substring.")]
+    [Description("Lists tracked and untracked, non-ignored source files in the cloned repository, including newly written files. The optional pattern is a case-insensitive substring.")]
     public string ListFiles(string? pattern = null)
     {
-        GitResult result = RunGit(["ls-files"]);
-        IEnumerable<string> files = result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(path => path.Trim())
+        IEnumerable<string> files = EnumerateSourceFiles(pattern);
+        return Limit(string.Join('\n', files.Take(1_500)));
+    }
+
+    private IEnumerable<string> EnumerateSourceFiles(string? pattern = null)
+    {
+        GitResult result = RunGitAsync(RootPath,
+            ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], CancellationToken.None,
+            truncateOutput: false).GetAwaiter().GetResult();
+        if (result.ExitCode != 0)
+            throw new RepositoryException($"Unable to list repository files: {SanitizeGitError(result.StandardError)}");
+        IEnumerable<string> files = result.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
             .Where(IsAllowedSourceFile);
         if (!string.IsNullOrWhiteSpace(pattern))
         {
             files = files.Where(path => path.Contains(pattern, StringComparison.OrdinalIgnoreCase));
         }
 
-        return Limit(string.Join('\n', files.Take(1_500)));
+        return files.Where(path => File.Exists(ResolveSourcePath(path, mustExist: false)));
     }
 
     [Description("Reads one text source file. Paths must be relative to the repository and cannot access .git or secrets.")]
@@ -245,7 +253,7 @@ public sealed partial class RepositoryWorkspace
         return compact.ToString().TrimEnd('\n');
     }
 
-    [Description("Searches tracked text source files and returns matching file names, line numbers, and lines.")]
+    [Description("Searches tracked and untracked, non-ignored text source files, including newly written files, and returns matching file names, line numbers, and lines.")]
     public string Search(
         [Description("Literal case-insensitive text to find.")] string query,
         [Description("Optional file path substring filter.")] string? pathFilter = null)
@@ -256,7 +264,7 @@ public sealed partial class RepositoryWorkspace
         }
 
         List<string> matches = [];
-        foreach (string path in ListFiles(pathFilter).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (string path in EnumerateSourceFiles(pathFilter))
         {
             string fullPath = ResolveSourcePath(path, mustExist: true);
             if (new FileInfo(fullPath).Length > MaxFileBytes)
@@ -293,13 +301,19 @@ public sealed partial class RepositoryWorkspace
         }
 
         string fullPath = ResolveSourcePath(path, mustExist: false);
+        if (OperatingSystem.IsWindows()) fullPath = PreserveExistingPathCasing(fullPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         lock (_progressGate)
         {
+            if (File.Exists(fullPath) && new FileInfo(fullPath).Length == Encoding.UTF8.GetByteCount(content) &&
+                File.ReadAllBytes(fullPath).AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(content)))
+                return $"Unchanged {RepositoryRelativePath(fullPath)}; identical content already exists. Read it directly or inspect get_repository_diff instead of repeating this write.";
             File.WriteAllText(fullPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             _progressFingerprint = null;
         }
-        return $"Wrote {path} ({Encoding.UTF8.GetByteCount(content)} bytes).";
+        string actualPath = RepositoryRelativePath(fullPath);
+        string casingNote = path.Replace('\\', '/') == actualPath ? "" : " Existing path casing was preserved.";
+        return $"Wrote {actualPath} ({Encoding.UTF8.GetByteCount(content)} bytes).{casingNote}";
     }
 
     [Description("Replaces one unique text occurrence in an existing source file. Matching tolerates line-ending differences only; replacement preserves local line endings and all unrelated content.")]
@@ -393,9 +407,13 @@ public sealed partial class RepositoryWorkspace
     public string GetDiff()
     {
         GitResult tracked = RunGit(["diff", "--no-ext-diff", "--"]);
-        GitResult untracked = RunGit(["ls-files", "--others", "--exclude-standard"]);
+        GitResult untracked = RunGitAsync(RootPath,
+            ["ls-files", "--others", "--exclude-standard", "-z"], CancellationToken.None,
+            truncateOutput: false).GetAwaiter().GetResult();
+        if (untracked.ExitCode != 0)
+            throw new RepositoryException($"Unable to inspect new files: {SanitizeGitError(untracked.StandardError)}");
         StringBuilder diff = new(tracked.StandardOutput);
-        foreach (string path in untracked.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (string path in untracked.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
             if (!IsAllowedSourceFile(path))
             {
@@ -405,14 +423,21 @@ public sealed partial class RepositoryWorkspace
             string fullPath = ResolveSourcePath(path, mustExist: true);
             if (new FileInfo(fullPath).Length <= MaxFileBytes)
             {
-                diff.AppendLine($"diff --git a/{path} b/{path}");
-                diff.AppendLine("new file mode 100644");
-                diff.AppendLine("--- /dev/null");
-                diff.AppendLine($"+++ b/{path}");
-                foreach (string line in File.ReadLines(fullPath))
+                diff.Append($"diff --git a/{path} b/{path}\n");
+                diff.Append("new file mode 100644\n");
+                diff.Append("--- /dev/null\n");
+                diff.Append($"+++ b/{path}\n");
+                string content = File.ReadAllText(fullPath);
+                string[] lines = content.Length == 0 ? [] : content.Split('\n');
+                int lineCount = lines.Length - (content.EndsWith('\n') ? 1 : 0);
+                if (lineCount > 0)
+                    diff.Append($"@@ -0,0 +1,{lineCount} @@\n");
+                for (int index = 0; index < lineCount; index++)
                 {
-                    diff.Append('+').AppendLine(line);
+                    diff.Append('+').Append(lines[index]).Append('\n');
                 }
+                if (lineCount > 0 && !content.EndsWith('\n'))
+                    diff.Append("\\ No newline at end of file\n");
             }
         }
 
@@ -561,6 +586,29 @@ public sealed partial class RepositoryWorkspace
         return fullPath;
     }
 
+    private string RepositoryRelativePath(string fullPath) => Path.GetRelativePath(RootPath, fullPath).Replace('\\', '/');
+
+    private string PreserveExistingPathCasing(string fullPath)
+    {
+        string current = RootPath;
+        foreach (string segment in Path.GetRelativePath(RootPath, fullPath).Split(Path.DirectorySeparatorChar))
+        {
+            string[] matches = Directory.Exists(current)
+                ? Directory.EnumerateFileSystemEntries(current).Where(entry =>
+                    Path.GetFileName(entry).Equals(segment, StringComparison.OrdinalIgnoreCase)).ToArray()
+                : [];
+            string? existing = matches.FirstOrDefault(entry => Path.GetFileName(entry).Equals(segment, StringComparison.Ordinal));
+            if (existing is null && matches.Length > 1)
+                throw new RepositoryException($"Path casing is ambiguous: {segment}. Use the exact repository path.");
+            existing ??= matches.FirstOrDefault();
+            current = existing ?? Path.Combine(current, segment);
+            if ((File.Exists(current) || Directory.Exists(current)) &&
+                File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+                throw new RepositoryException("Symbolic links are not available to repository tools.");
+        }
+        return current;
+    }
+
     private void EnsureNoReparsePoints(string path)
     {
         string? current = Path.GetDirectoryName(path);
@@ -589,7 +637,7 @@ public sealed partial class RepositoryWorkspace
     }
 
     private static string MissingSourceFile(string path) =>
-        $"Source file does not exist: {path}. Use list_repository_files or search_repository to find the exact tracked path; no change was made.";
+        $"Source file does not exist: {path}. Use list_repository_files or search_repository to find the exact source path; no change was made.";
 
     private GitResult RunGit(IReadOnlyList<string> arguments) =>
         RunGitAsync(RootPath, arguments, CancellationToken.None).GetAwaiter().GetResult();
@@ -631,6 +679,8 @@ public sealed partial class RepositoryWorkspace
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false,
             CreateNoWindow = true,
         };

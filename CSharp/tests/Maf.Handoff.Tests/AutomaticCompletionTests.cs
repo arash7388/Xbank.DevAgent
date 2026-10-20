@@ -99,15 +99,15 @@ public sealed class AutomaticCompletionTests
     [InlineData(false, true, false)]
     [InlineData(false, false, true)]
     [InlineData(true, false, true)]
-    public void InvalidCompletionDependenciesAreRejected(bool commit, bool push, bool request)
+    public async Task InvalidCompletionDependenciesAreRejected(bool commit, bool push, bool request)
     {
         CreateSessionRequest input = new("https://github.com/example/repository", "main", "WEPOD-42",
             new Dictionary<string, AgentModelConfiguration>(), null,
             AutoCommit: commit, AutoPush: push, AutoCreatePullRequest: request);
-        var error = Assert.Throws<TargetInvocationException>(() => typeof(RepositorySessionService)
-            .GetMethod("Validate", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [input]));
-        Assert.IsType<ArgumentException>(error.InnerException);
-        Assert.Contains("requires", error.InnerException!.Message);
+        RepositorySessionService service = new(null!, null!, null!, null!, null!, null!, null!, null!,
+            new ConfigurationBuilder().Build());
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(input));
+        Assert.Contains("requires", error.Message);
     }
 
     private static async Task<string> Git(string directory, params string[] arguments)

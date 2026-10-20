@@ -67,8 +67,6 @@ public static class AgentTeamFactory
             StringComparer.Ordinal);
         if (workspace is not null)
         {
-            effectiveClients[AgentNames.Reviewer] = new ReviewerBuildGuardChatClient(
-                Get(effectiveClients, AgentNames.Reviewer), workspace.BuildAsync, workflowSettings.SkipBuildVerification);
             effectiveClients[AgentNames.Developer] = new DeveloperHandoffGuardChatClient(
                 Get(effectiveClients, AgentNames.Developer),
                 () => !string.IsNullOrWhiteSpace(workspace.GetDiff()));
@@ -226,7 +224,8 @@ public static class AgentTeamFactory
                 ? "\n\nRUN BUILD POLICY: The user selected Skip build verification. Do not run or request a build for this run. " +
                   "Continue independent code/security review and the release decision without requiring a successful build. " +
                   "Do not block solely because build verification is unavailable. Report it as skipped, never passed."
-                : ""),
+                : "\n\nRUN BUILD POLICY: The workflow runs the solution build after the agents finish applying and reviewing changes. " +
+                  "Report the build result to the user only; do not request build repair loops or claim compilation succeeded before the build runs."),
             Tools = tools,
         };
 

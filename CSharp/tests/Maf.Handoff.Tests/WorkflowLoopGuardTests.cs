@@ -7,6 +7,28 @@ namespace Maf.Handoff.Tests;
 public sealed class WorkflowLoopGuardTests
 {
     [Fact]
+    public void RecoveryExplainsSuccessfulWritesAndEmptySearchesThenStopsWithEvidence()
+    {
+        WorkflowLoopBudget budget = new(2);
+        ChatMessage[] history =
+        [new(ChatRole.Assistant, [new FunctionCallContent("write", "write_repository_file", new Dictionary<string, object?>())]),
+            new(ChatRole.Tool, [new FunctionResultContent("write", "Wrote src/NewFeature.cs (20 bytes).")]),
+            new(ChatRole.Assistant, [new FunctionCallContent("search", "search_repository", new Dictionary<string, object?>())]),
+            new(ChatRole.Tool, [new FunctionResultContent("search", "No matches.")])];
+        budget.Observe("developer", history, "unchanged");
+        string recovery = budget.Observe("developer", history, "unchanged").Recovery!;
+        Assert.Contains("read the written path directly", recovery);
+        Assert.Contains("get_repository_diff", recovery);
+        Assert.Contains("write_repository_file:", recovery);
+        Assert.Contains("src/NewFeature.cs", recovery);
+        Assert.Contains("No matches.", recovery);
+        Assert.Contains("Do not repeat identical writes or searches", recovery);
+        string stop = budget.Observe("developer", history, "unchanged").Stop!;
+        Assert.Contains("src/NewFeature.cs", stop);
+        Assert.Contains("No matches.", stop);
+    }
+
+    [Fact]
     public async Task WorkflowRunnerReportsLoopInsteadOfSpendingTheRemainingRequestBudget()
     {
         HandoffLoopClient provider = new();

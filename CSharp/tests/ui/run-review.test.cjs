@@ -23,7 +23,7 @@ for (const checked of [null, false, true]) {
     '#run-review-summary': summary,
     '#task': { value: 'Change the requested value' },
     '#agent-turn-limits': node(),
-    '#skip-build-verification': checked === null ? null : { checked },
+    '#build-project': checked === null ? null : { checked },
   };
   const context = {
     document: {
@@ -41,7 +41,7 @@ for (const checked of [null, false, true]) {
   assert.doesNotThrow(() => context.renderRunReview(), 'Review must work with current or older page markup');
   const buildCard = summary.children.find(card => all(card).some(item => item.tag === 'h3' && item.textContent === 'Build verification'));
   assert.ok(buildCard, 'Review must disclose the effective build setting');
-  assert.ok(all(buildCard).some(item => item.textContent === (checked ? 'Skipped — compilation will not be verified' : 'Required')));
+  assert.ok(all(buildCard).some(item => item.textContent === (checked ? 'Build after changes — report result' : 'Skipped — compilation will not be verified')));
   const edit = all(buildCard).find(item => item.tag === 'button');
   edit.handlers.click();
   assert.equal(editedStep, 'agents');

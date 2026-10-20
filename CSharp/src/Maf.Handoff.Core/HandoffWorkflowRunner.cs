@@ -265,6 +265,15 @@ public sealed class HandoffWorkflowRunner
                 "codegraph");
         }
 
+        if (_workspace is not null && !workflowSettings.SkipBuildVerification)
+        {
+            yield return RunEvent.Trace(null, "Building the solution after applying changes.", "build");
+            RepositoryBuildResult result = await _workspace.BuildAsync(cancellationToken).ConfigureAwait(false);
+            string buildStatus = !result.Succeeded ? "failed"
+                : result.Evidence.StartsWith("Build check skipped:", StringComparison.Ordinal) ? "skipped" : "passed";
+            yield return new RunEvent("build_result", Text: result.Evidence, Status: buildStatus, Category: "build");
+        }
+
         yield return RunEvent.Decision(
             status == "completed"
                 ? "Release manager approved the proposed change."

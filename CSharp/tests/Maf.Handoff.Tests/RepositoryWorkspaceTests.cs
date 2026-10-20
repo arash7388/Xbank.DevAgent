@@ -6,6 +6,74 @@ namespace Maf.Handoff.Tests;
 public sealed class RepositoryWorkspaceTests
 {
     [Theory]
+    [InlineData("first\nsecond\n", "@@ -0,0 +1,2 @@", false)]
+    [InlineData("first\r\nsecond\r\n", "@@ -0,0 +1,2 @@", false)]
+    [InlineData("class Added { }", "@@ -0,0 +1,1 @@", true)]
+    [InlineData("", null, false)]
+    public async Task NewFileDiffContainsValidHunksAndDoesNotStageFiles(
+        string content, string? expectedHunk, bool missingNewline)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-added-diff", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            await GitAsync(root, "init", "--quiet");
+            File.WriteAllText(Path.Combine(root, "Added.cs"), content);
+            RepositoryWorkspace workspace = CreateWorkspace(root);
+
+            string diff = workspace.GetDiff();
+
+            Assert.Contains("new file mode 100644", diff);
+            Assert.Contains("+++ b/Added.cs", diff);
+            if (expectedHunk is null) Assert.DoesNotContain("@@", diff);
+            else Assert.Contains(expectedHunk, diff);
+            Assert.Equal(missingNewline, diff.Contains("\\ No newline at end of file"));
+            Assert.Equal("?? Added.cs", await GitAsync(root, "status", "--porcelain"));
+            // Git itself must be able to match the emitted patch to the new file.
+            File.WriteAllText(Path.Combine(root, "review.patch"), diff);
+            await GitAsync(root, "apply", "--reverse", "--check", "--", "review.patch");
+        }
+        finally
+        {
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task WritesPreserveExistingWindowsCasingAndExposeNewFilesWithoutStaging()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string root = Path.Combine(Path.GetTempPath(), "maf-path-casing", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Xbank.Marketing", "Application"));
+        try
+        {
+            await GitAsync(root, "init", "--quiet");
+            RepositoryWorkspace workspace = CreateWorkspace(root);
+            string result = workspace.WriteFile("XBank.Marketing/application/NewFeature.cs", "class NewFeature { }");
+            const string actual = "Xbank.Marketing/Application/NewFeature.cs";
+            Assert.Contains(actual, result);
+            Assert.Contains("casing was preserved", result);
+            Assert.Equal(actual, workspace.ListFiles("newfeature"));
+            Assert.Contains(actual + ":1:", workspace.Search("NewFeature"));
+            Assert.Contains("NewFeature", workspace.ReadFile("XBANK.MARKETING/APPLICATION/NEWFEATURE.CS"));
+            Assert.Contains("?? Xbank.Marketing/", workspace.GetStatus());
+            string fingerprint = workspace.GetProgressFingerprint();
+            Assert.Contains("Unchanged " + actual, workspace.WriteFile(actual, "class NewFeature { }"));
+            Assert.Equal(fingerprint, workspace.GetProgressFingerprint());
+            await GitAsync(root, "add", ".");
+            Assert.Equal(actual, workspace.ListFiles("newfeature"));
+        }
+        finally
+        {
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
     [InlineData("updated")]
     [InlineData("diverged")]
     [InlineData("missing")]

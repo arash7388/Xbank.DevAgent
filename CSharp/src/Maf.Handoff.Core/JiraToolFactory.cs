@@ -9,16 +9,16 @@ internal static class JiraToolFactory
         List<AITool> tools =
         [
         AIFunctionFactory.Create(
-            (string issueKey, CancellationToken cancellationToken) => jira.GetIssueDetailsAsync(issueKey, cancellationToken),
+            (string issueKey, CancellationToken cancellationToken) => WithIssueKeyAsync(issueKey, key => jira.GetIssueDetailsAsync(key, cancellationToken)),
             name: AgentToolCatalog.GetJiraIssueDetails.Name, description: AgentToolCatalog.GetJiraIssueDetails.Description),
         AIFunctionFactory.Create(
-            (string issueKey, int startAt, int maxResults, CancellationToken cancellationToken) => jira.GetIssueCommentsAsync(issueKey, startAt, maxResults, cancellationToken),
+            (string issueKey, int startAt, int maxResults, CancellationToken cancellationToken) => WithIssueKeyAsync(issueKey, key => jira.GetIssueCommentsAsync(key, startAt, maxResults, cancellationToken)),
             name: AgentToolCatalog.GetJiraIssueComments.Name, description: AgentToolCatalog.GetJiraIssueComments.Description),
         AIFunctionFactory.Create(
-            (string issueKey, CancellationToken cancellationToken) => jira.GetAttachmentsAsync(issueKey, cancellationToken),
+            (string issueKey, CancellationToken cancellationToken) => WithIssueKeyAsync(issueKey, key => jira.GetAttachmentsAsync(key, cancellationToken)),
             name: AgentToolCatalog.ListJiraAttachments.Name, description: AgentToolCatalog.ListJiraAttachments.Description),
         AIFunctionFactory.Create(
-            (string issueKey, string attachmentId, int offset, CancellationToken cancellationToken) => jira.ReadAttachmentAsync(issueKey, attachmentId, offset, cancellationToken),
+            (string issueKey, string attachmentId, int offset, CancellationToken cancellationToken) => WithIssueKeyAsync(issueKey, key => jira.ReadAttachmentAsync(key, attachmentId, offset, cancellationToken)),
             name: AgentToolCatalog.ReadJiraAttachment.Name, description: AgentToolCatalog.ReadJiraAttachment.Description),
         AIFunctionFactory.Create(
             (string jql, int maxResults, CancellationToken cancellationToken) =>
@@ -27,7 +27,7 @@ internal static class JiraToolFactory
             description: AgentToolCatalog.SearchJiraIssues.Description),
         AIFunctionFactory.Create(
             (string issueKey, CancellationToken cancellationToken) =>
-                jira.GetIssueTitleByKeyAsync(issueKey, cancellationToken),
+                WithIssueKeyAsync(issueKey, key => jira.GetIssueTitleByKeyAsync(key, cancellationToken)),
             name: AgentToolCatalog.GetJiraIssueTitle.Name,
             description: AgentToolCatalog.GetJiraIssueTitle.Description),
         ];
@@ -40,5 +40,18 @@ internal static class JiraToolFactory
                 (string questionsInPersian, CancellationToken cancellationToken) => input.AskAsync(questionsInPersian, cancellationToken),
                 name: AgentToolCatalog.AskJiraClarification.Name, description: AgentToolCatalog.AskJiraClarification.Description));
         return tools;
+    }
+
+    private static async Task<object?> WithIssueKeyAsync<T>(string? issueKey, Func<string, Task<T>> read)
+    {
+        string key = issueKey?.Trim() ?? string.Empty;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(key, @"\A[A-Za-z][A-Za-z0-9_]*-[0-9]+\z"))
+            return new
+            {
+                error = "invalid_issue_key",
+                message = "Provide a full Jira issue key such as WEPOD-42, not a project key, number, title, or URL. Use search_jira_issues to find the key or ask the user for clarification. Do not guess a project prefix.",
+            };
+
+        return await read(key);
     }
 }

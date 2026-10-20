@@ -73,6 +73,12 @@ public sealed class DeepSeekPricingService(HttpClient httpClient, TimeProvider? 
             _cached = Parse(html, now);
             return _cached;
         }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // HttpClient timeouts are cancellations too; expose them as remote-service
+            // failures so the API returns its normal error response to the pricing UI.
+            throw new HttpRequestException("The DeepSeek pricing request timed out. Please try again later.", exception);
+        }
         finally
         {
             _refreshLock.Release();

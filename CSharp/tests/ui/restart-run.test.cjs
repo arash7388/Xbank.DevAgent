@@ -44,4 +44,12 @@ for (const status of ['cloning', 'running', 'awaiting_input', 'approving', 'crea
   context.render({ status });
   assert.equal(context.restartRunButton.hidden, true, `Restart must not abandon an active ${status} operation`);
 }
+for (const status of ['completed', 'awaiting_approval', 'no_changes']) {
+  context.render({ status, canRequestChanges: true });
+  assert.equal(element('#request-changes-button').hidden, false);
+  assert.equal(element('#request-changes-button').parentElement,
+    element(status === 'no_changes' ? '.run-meta' : '.review-actions'));
+  context.render({ status, canRequestChanges: false });
+  assert.equal(element('#request-changes-button').hidden, true, 'Archived or busy results cannot be revised');
+}
 console.log('Restart is available after stopped/finished runs and follows the visible panel.');

@@ -8,6 +8,34 @@ namespace Maf.Handoff.Tests;
 
 public sealed class AgentConversationScenarioTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task EnabledSecurityGateRequiresAnExplicitApproval(bool securityApproves)
+    {
+        List<string> activated = [];
+        string[] names = [.. AgentNames.Required, AgentNames.Security];
+        Dictionary<string, IChatClient> clients = names.ToDictionary(name => name,
+            name => (IChatClient)new ScriptedClient((_, options) =>
+            {
+                activated.Add(name);
+                if (name == AgentNames.ReleaseManager) return Text(HandoffTopology.CompletionMarker);
+                string evidence = name switch
+                {
+                    AgentNames.Reviewer => HandoffTopology.ReviewApprovalMarker,
+                    AgentNames.Security => securityApproves ? "SECURITY_APPROVED" : "Security assessment remains incomplete.",
+                    _ => "Implementation contract followed.",
+                };
+                return Handoff(Handoffs(options)[^1], evidence);
+            }));
+
+        ChatMessage[] transcript = await Run(clients);
+
+        Assert.Contains(AgentNames.Security, activated);
+        Assert.Equal(securityApproves,
+            HandoffTopology.GetTerminationStatus(transcript, new("https://example.test", "model", "key")) == "completed");
+    }
+
     public static IEnumerable<object[]> GateScenarios()
     {
         // Reviewer always runs; Security may be absent. Enabled gates approve or request remediation.

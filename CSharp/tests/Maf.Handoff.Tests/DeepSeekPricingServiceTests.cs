@@ -5,6 +5,49 @@ namespace Maf.Handoff.Tests;
 
 public sealed class DeepSeekPricingServiceTests
 {
+    [Fact]
+    public async Task HttpTimeoutIsReportedAsRemoteServiceFailureAndReleasesRefreshLock()
+    {
+        using HttpClient http = new(new WaitingHandler()) { Timeout = TimeSpan.FromMilliseconds(50) };
+        DeepSeekPricingService service = new(http);
+        using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(5));
+
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            HttpRequestException error = await Assert.ThrowsAsync<HttpRequestException>(
+                () => service.GetCurrentAsync(deadline.Token));
+            Assert.Contains("DeepSeek pricing request timed out", error.Message);
+            Assert.IsAssignableFrom<OperationCanceledException>(error.InnerException);
+        }
+    }
+
+    [Fact]
+    public async Task CallerCancellationRemainsCancellation()
+    {
+        WaitingHandler handler = new();
+        using HttpClient http = new(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        DeepSeekPricingService service = new(http);
+        using CancellationTokenSource cancellation = new();
+
+        Task<DeepSeekPricingSnapshot> request = service.GetCurrentAsync(cancellation.Token);
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+    }
+
+    private sealed class WaitingHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
     [Theory]
     [InlineData("2026-10-08T01:00:00Z", "peak", 0.3)]
     [InlineData("2026-10-08T04:00:00Z", "off-peak", 0.15)]

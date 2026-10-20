@@ -1,7 +1,9 @@
 using Maf.Handoff.Api;
 using Maf.Handoff.Core;
+using Maf.Handoff.Talk;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+builder.Services.AddTalkNotifications(builder.Configuration);
 builder.Services.AddHttpClient<GitHubPullRequestClient>(client =>
 {
     client.BaseAddress = new Uri("https://api.github.com/");
@@ -42,6 +44,8 @@ builder.Services.AddSingleton<SqliteLlmCheckpointStore>(_ =>
 builder.Services.AddSingleton<ILlmCheckpointStore>(services => services.GetRequiredService<SqliteLlmCheckpointStore>());
 builder.Services.AddSingleton<IWorkflowRunStore>(services => services.GetRequiredService<SqliteLlmCheckpointStore>());
 builder.Services.AddSingleton<RepositorySessionService>();
+builder.Services.AddHttpClient<RunConnectivityCheck>(client => client.Timeout = TimeSpan.FromSeconds(10))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<CodeGraphService>();
 
 WebApplication app = builder.Build();
@@ -69,6 +73,10 @@ app.Use(async (context, next) =>
     {
         await WriteErrorAsync(context, StatusCodes.Status409Conflict, exception.Message);
     }
+    catch (RunConnectivityException exception)
+    {
+        await WriteErrorAsync(context, StatusCodes.Status503ServiceUnavailable, exception.Message);
+    }
     catch (HttpRequestException exception)
     {
         await WriteErrorAsync(context, StatusCodes.Status503ServiceUnavailable,
@@ -77,7 +85,7 @@ app.Use(async (context, next) =>
 });
 
 app.UseDefaultFiles();
-app.UseStaticFiles(new StaticFileOptions
+StaticFileOptions workbenchFiles = new()
 {
     OnPrepareResponse = context =>
     {
@@ -85,7 +93,8 @@ app.UseStaticFiles(new StaticFileOptions
         context.Context.Response.Headers.Pragma = "no-cache";
         context.Context.Response.Headers.Expires = "0";
     },
-});
+};
+app.UseStaticFiles(workbenchFiles);
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", provider = "openai-compatible" }));
 
@@ -173,6 +182,9 @@ app.MapPost("/api/codegraph/index", (CodeGraphIndexRequest request, CodeGraphSer
 
 app.MapGet("/api/codegraph/index/status", (CodeGraphService codeGraph) => Results.Ok(codeGraph.GetIndexStatus()));
 
+app.MapGet("/api/codegraph/freshness", (string dbPath, string sourcePath, CodeGraphService codeGraph,
+    CancellationToken cancellationToken) => Results.Ok(codeGraph.GetFreshness(dbPath, sourcePath, cancellationToken)));
+
 app.MapGet("/api/codegraph/database", (string dbPath, CodeGraphService codeGraph) =>
     Results.Ok(codeGraph.GetDatabaseOverview(dbPath)));
 
@@ -220,9 +232,16 @@ app.MapPost("/api/reference-collections", async (
     return Results.Created($"/api/reference-collections/{collection.Id}", collection);
 });
 
-app.MapPost("/api/sessions", (CreateSessionRequest request, RepositorySessionService sessions) =>
+app.MapPost("/api/runs/preflight", async (Dictionary<string, AgentModelConfiguration> agents,
+    RepositorySessionService sessions, CancellationToken cancellationToken) =>
 {
-    SessionSnapshot snapshot = sessions.Create(request);
+    await sessions.PreflightAsync(agents, cancellationToken);
+    return Results.Ok(new { status = "ok" });
+});
+
+app.MapPost("/api/sessions", async (CreateSessionRequest request, RepositorySessionService sessions, CancellationToken cancellationToken) =>
+{
+    SessionSnapshot snapshot = await sessions.CreateAsync(request, cancellationToken);
     return Results.Accepted($"/api/sessions/{snapshot.Id}", snapshot);
 });
 
@@ -253,6 +272,9 @@ app.MapPost("/api/sessions/{id:guid}/cancel", (Guid id, RepositorySessionService
 app.MapPost("/api/sessions/{id:guid}/clarify", (Guid id, ClarifySessionRequest request, RepositorySessionService sessions) =>
     Results.Ok(sessions.Clarify(id, request)));
 
+app.MapPost("/api/sessions/{id:guid}/modify", (Guid id, ModifySessionRequest request, RepositorySessionService sessions) =>
+    Results.Accepted($"/api/sessions/{id}", sessions.RequestChanges(id, request)));
+
 app.MapPost("/api/sessions/{id:guid}/reject", (Guid id, RepositorySessionService sessions) =>
 {
     sessions.Reject(id);
@@ -272,7 +294,7 @@ app.MapPost("/api/sessions/{id:guid}/pull-request", async (
     CancellationToken cancellationToken) =>
     Results.Ok(await sessions.CreatePullRequestAsync(id, cancellationToken)));
 
-app.MapFallbackToFile("index.html");
+app.MapFallbackToFile("index.html", workbenchFiles);
 
 app.Run();
 

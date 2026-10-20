@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Maf.Handoff.Core/Maf.Handoff.Core.csproj" />
+    <PackageReference Include="POD_Chat" />
+  </ItemGroup>
+</Project>

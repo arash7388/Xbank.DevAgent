@@ -36,7 +36,6 @@ public sealed class AiRequestRetryHandlerTests
     [Theory]
     [InlineData(200)]
     [InlineData(400)]
-    [InlineData(401)]
     [InlineData(403)]
     [InlineData(404)]
     [InlineData(422)]
@@ -47,6 +46,40 @@ public sealed class AiRequestRetryHandlerTests
         using HttpResponseMessage response = await client.GetAsync("https://provider.test/chat");
 
         Assert.Equal(status, (int)response.StatusCode);
+        Assert.Equal(1, server.Calls);
+    }
+
+    [Fact]
+    public async Task InvalidCredentialIsActionableWithoutRetryingOrLeakingResponse()
+    {
+        TrackedContent body = new();
+        RecordingHandler server = new((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = body }));
+        using HttpClient client = new(new AiRequestRetryHandler(server));
+
+        ConfigurationException error = await Assert.ThrowsAsync<ConfigurationException>(
+            () => client.GetAsync("https://provider.test/chat?token=secret"));
+
+        Assert.Contains("provider.test", error.Message);
+        Assert.Contains("HTTP 401", error.Message);
+        Assert.DoesNotContain("secret", error.Message);
+        Assert.DoesNotContain("Error response", error.Message);
+        Assert.Equal(1, server.Calls);
+        Assert.True(body.Disposed);
+    }
+
+    [Fact]
+    public async Task StreamingClientPropagatesCredentialFailureAsConfigurationError()
+    {
+        RecordingHandler server = new((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)));
+        using Microsoft.Extensions.AI.IChatClient client = ModelChatClientFactory.Create(
+            new WorkflowSettings("https://provider.test/v1", "test-model", "invalid-token"), server);
+
+        await Assert.ThrowsAsync<ConfigurationException>(async () =>
+        {
+            await foreach (var update in client.GetStreamingResponseAsync(
+                [new Microsoft.Extensions.AI.ChatMessage(Microsoft.Extensions.AI.ChatRole.User, "hello")])) { }
+        });
         Assert.Equal(1, server.Calls);
     }
 

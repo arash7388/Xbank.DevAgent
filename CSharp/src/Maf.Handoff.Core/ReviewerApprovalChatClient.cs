@@ -35,8 +35,7 @@ internal sealed class ReviewerApprovalChatClient(IChatClient innerClient) : ICha
             ? value?.ToString() : null;
         if (reason?.Contains(HandoffTopology.ReviewApprovalMarker, StringComparison.Ordinal) is not true) return;
 
-        // Build verification has already run (or was explicitly skipped). Keep approval
-        // on the final reviewer message so appended build evidence cannot hide it.
+        // Keep approval on the final reviewer message so appended evidence cannot hide it.
         ChatMessage? last = response.Messages.LastOrDefault(message => message.Role == ChatRole.Assistant);
         if (last is not null && !last.Text.Contains(HandoffTopology.ReviewApprovalMarker, StringComparison.Ordinal))
             last.Contents.Add(new TextContent("\n" + HandoffTopology.ReviewApprovalMarker));

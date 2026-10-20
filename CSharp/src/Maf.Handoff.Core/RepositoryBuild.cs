@@ -20,7 +20,7 @@ public sealed partial class RepositoryWorkspace
         if (Directory.Exists(Path.Combine(RootPath, "CSharp")))
             files = files.Where(path => path.StartsWith("CSharp/", StringComparison.OrdinalIgnoreCase)).ToArray();
         string[] solutions = files.Where(path => Path.GetExtension(path) is ".sln" or ".slnx").ToArray();
-        string[] targets = solutions.Concat(files.Where(path => path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
+        string[] targets = (solutions.Length > 0 ? solutions : files.Where(path => path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
             .Where(path => File.Exists(Path.Combine(RootPath, path)))
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         if (targets.Length == 0)

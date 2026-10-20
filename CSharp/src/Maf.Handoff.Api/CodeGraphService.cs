@@ -17,11 +17,11 @@ public sealed record CodeGraphNeighborsRequest(string DatabasePath, string Id, i
 public sealed record CodeGraphContextRequest(string DatabasePath, string Query, int MaxNodes = 25, int TokenBudget = 5000);
 public sealed record CodeGraphContextByIdRequest(string DatabasePath, string Id, int MaxNodes = 25, int TokenBudget = 5000);
 
-public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphTools
+public sealed partial class CodeGraphService(IConfiguration configuration) : ICodeGraphTools
 {
     private static readonly HashSet<string> AllowedTables = new(StringComparer.OrdinalIgnoreCase)
     {
-        "codebases", "nodes", "edges", "files", "node_evidence", "edge_evidence"
+        "codebases", "nodes", "edges", "files", "node_evidence", "edge_evidence", "maf_source_fingerprints"
     };
 
     private readonly object _statusLock = new();
@@ -120,6 +120,11 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
     {
         try
         {
+            var before = CodeGraphSourceFingerprint.Capture(source);
+            bool verifiedUnchanged = File.Exists(database) && GetFreshness(database, source).IsFresh;
+            // Invalidate before any writes: failed, partial or interrupted indexing must never
+            // leave behind a fingerprint that claims the graph is verified.
+            InvalidateFingerprint(database, source);
             var repairIncompleteIndex = request.RestoreDependencies && HasMissingFallbackFolderReferences(source);
             var restoreFailed = false;
             if (request.RestoreDependencies)
@@ -138,18 +143,35 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
             if (repairIncompleteIndex)
                 AppendLog("Obsolete NuGet fallback-folder references were repaired; running a full reindex so previously skipped projects are rebuilt.");
 
+            if (request.Incremental && !verifiedUnchanged)
+                AppendLog("Source fingerprint changed or is unknown; performing a full reindex to refresh relationships in unchanged files too.");
+
             AppendLog("Starting CodeGraph indexer...");
             var indexArguments = new List<string>
             {
                 "run", "--project", project, "-c", "Release", "--no-launch-profile", "--",
                 "index", "--solution", source, "--db", database
             };
-            if (request.Incremental && !repairIncompleteIndex) indexArguments.Add("--incremental");
+            if (request.Incremental && verifiedUnchanged && !repairIncompleteIndex) indexArguments.Add("--incremental");
             if (request.IncludeExternal) indexArguments.Add("--include-external");
             var exitCode = await RunProcessAsync(_rootPath, indexArguments);
             bool hasWorkspaceFailures;
             lock (_statusLock) hasWorkspaceFailures = _sawWorkspaceFailure;
             var hasWarnings = restoreFailed || hasWorkspaceFailures;
+            if (exitCode == 0 && !hasWarnings)
+            {
+                var after = CodeGraphSourceFingerprint.Capture(source);
+                if (before.Hash == after.Hash)
+                {
+                    SaveFingerprint(database, source, after);
+                    AppendLog($"Verified source fingerprint (SHA-256): {after.Hash}");
+                }
+                else
+                {
+                    hasWarnings = true;
+                    AppendLog("Source changed during indexing. Freshness is unverified; reindex after source changes finish.");
+                }
+            }
             if (exitCode == 0 && hasWarnings)
                 AppendLog("Index completed with warnings. Some projects or package references could not be loaded; review the messages above.");
 
@@ -244,6 +266,10 @@ public sealed class CodeGraphService(IConfiguration configuration) : ICodeGraphT
             counts,
             codebases = available.Contains("codebases")
                 ? QueryRows(connection, "SELECT id, name, source_path, indexed_at FROM codebases ORDER BY indexed_at DESC LIMIT 20")
+                : [],
+            freshness = available.Contains("codebases")
+                ? QueryRows(connection, "SELECT source_path FROM codebases ORDER BY source_path")
+                    .Select(row => CheckFreshness(connection, (string)row["source_path"]!, null)).ToArray()
                 : [],
             nodeKinds = QueryRows(connection, "SELECT kind, COUNT(*) AS count FROM nodes GROUP BY kind ORDER BY count DESC"),
             edgeKinds = QueryRows(connection, "SELECT kind, COUNT(*) AS count, SUM(count) AS evidence_count FROM edges GROUP BY kind ORDER BY count DESC"),

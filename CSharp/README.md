@@ -1,5 +1,9 @@
 # Repository Change Workbench
 
+Optional Talk notifications for finished steps, human input requests and workflow
+outcomes are available through the separate `Maf.Handoff.Talk` project. See
+[Talk setup and delivery behavior](docs/talk-notifications.md). Notifications are disabled by default.
+
 Project scope: this C# application is the sole active project for requests and prompts. The sibling Python project is out of scope unless the user explicitly requests work on it. See `../AGENTS.md` and `AGENTS.md` for the mandatory agent instructions.
 
 A .NET 10 sample that connects Microsoft Agent Framework 1.19 handoff agents to a GitHub or GitLab
@@ -79,6 +83,16 @@ a fresh isolated clone and conversation; the stopped run remains in history and 
 After a run stops or finishes, **Restart Agent Run** returns to Connection with the existing form inputs
 and selected attachments retained. Edit any setup step, review the inputs, and confirm to start a new run.
 
+To revise a finished, uncommitted result, choose **Request changes**, enter a **Modification prompt**,
+and select **Revise result**. Agents work on the same isolated clone, keeping the original request,
+all prior modification prompts, and the existing patch. Each revision runs the normal review gates
+with the configured execution limits and AI budget applied again. You can request more changes or
+approve the updated diff; revisions never automatically commit, push, or create a PR/MR.
+This also works when the workflow finishes without changes. Modification prompts remain in the
+run report, and usage totals include all revisions. Revisions require a live session; archived runs
+after a server restart remain read-only. Attached references stay available until their configured
+collection lifetime expires; after expiry, start a new run with the references attached again.
+
 Jira and security are optional and start disabled. Every run uses Planner to produce a
 repository-backed implementation contract before Developer changes the repository. When Jira is enabled,
 it assesses task readiness before handing evidence to Planner: full issue details, discussion and decisions,
@@ -105,10 +119,11 @@ one full issue key. The UI immediately shows a Persian notice with the findings,
 including on saved runs. Blocking findings wait for an answer before implementation; confirmed non-blocking
 assumptions remain explicit. No comment is posted for a clean readiness assessment. Failed or uncertain writes are
 not retried automatically, and a missing task or posting failure is clearly reported in the UI.
-In the Agents step, **Skip build verification and continue** disables the automatic build for that run.
-It is off by default. The choice appears in run confirmation and saved configuration; a persistent
-notification records that compilation was not verified. Code review and release gates still run,
-and agents must not claim a skipped build passed. API clients can set `skipBuildVerification: true`.
+In the Agents step, **Build project** is checked by default. After agents finish applying and reviewing
+changes, the workflow builds the solution and displays its result. A failure appears in bold red text
+with build diagnostics, without starting another repair cycle. Uncheck it to skip the build; a persistent
+notification records that compilation was not verified. The choice appears in run confirmation and
+saved configuration. API clients can set `skipBuildVerification: true` to skip the build.
 
 Every workflow comment passes through `JiraCommentHandler`, which adds `[MAF-AI:v1]` and two sections:
 **محصول: مسائل و نیازمندی‌ها** for Product issues, requirements, acceptance criteria, and decisions;
@@ -253,12 +268,39 @@ dotnet run --project src/Maf.Handoff.Api --urls http://127.0.0.1:8080
 
 Open `http://127.0.0.1:8080`.
 
+For the full local quality check (Release build, C# tests with coverage, UI scripts, and CLI smoke tests), run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/run-quality-checks.ps1
+```
+
+Reports are written to `artifacts/quality-checks/`. The command returns a failing exit code when any
+check fails, including the regression tests documenting open defects. See the
+[test assessment and scenario matrix](docs/testing-assessment-2026-10-17.md) for results, reproducible
+findings, and the remaining live-service and browser validation work.
+
 Configure the protected graph database with `CodeGraph__DatabasePath`; it defaults to
 `E:\CodeGraph\codegraph.db`. The database must contain an up-to-date index for the C# repository the
 agents will inspect. `CodeGraph__RootPath` controls the local CodeGraph indexer used by the workbench.
 Set `CodeGraph__Enabled=false` to disable CodeGraph for every agent workflow. When the server setting is
 enabled (the default), each run can still opt out with the **Use CodeGraph for C# analysis** checkbox or
 the `codeGraphEnabled: false` session API field.
+
+Before agents start, the API compares the graph's saved SHA-256 source fingerprint with the actual
+cloned checkout. The fingerprint includes relative file paths, C# source, project/solution files,
+and build/dependency configuration under the repository root (or the source directory without Git).
+Build outputs and repository metadata are excluded. A mismatch, missing source, or an unknown baseline
+produces a CodeGraph warning in run activity and disables graph tools for that run; repository
+inspection continues. This is notification mode: task startup does not automatically reindex.
+
+Use the CodeGraph workbench to reindex a stale or unverified codebase. A changed or unknown fingerprint
+forces a full refresh, even when incremental indexing is selected, because changes can affect
+relationships in otherwise unchanged files. The baseline is saved in `maf_source_fingerprints` in the
+graph database only after indexing finishes without restore/workspace failures and the source has
+remained unchanged. Existing databases need one workbench reindex to establish that baseline. Direct
+indexer runs invalidate verification when their `indexed_at` marker changes. The database overview
+shows each codebase's freshness; hash values appear in its tooltip. The same check is available at
+`GET /api/codegraph/freshness?dbPath=...&sourcePath=...`.
 
 The LLM checkpoint and tool-call database defaults to `data/llm-checkpoints.db` under the API content root. Override
 it with `Checkpointing__DatabasePath`. Prompts, conversation history, tool results, and model responses

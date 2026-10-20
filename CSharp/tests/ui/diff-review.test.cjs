@@ -23,6 +23,8 @@ function element() {
     innerHTML: '', textContent: '', hidden: false,
     classList: classList(),
     attributes: {},
+    listeners: {},
+    addEventListener(name, handler) { this.listeners[name] = handler; },
     setAttribute(name, value) { this.attributes[name] = String(value); },
     replaceChildren() {},
   };
@@ -119,6 +121,26 @@ assert.equal(files[3].oldPath, 'lib/moved.js');
 assert.equal(files[4].binary, true);
 assert.equal(files[4].hunks.length, 0);
 
+// Reproduce the backend output from existing sessions: added files had no @@ header.
+const legacyAdded = [
+  'diff --git a/Added.cs b/Added.cs', 'new file mode 100644',
+  '--- /dev/null', '+++ b/Added.cs', '+class Added {', '+}', '',
+].join('\n');
+const legacyFile = context.parseUnifiedDiff(legacyAdded)[0];
+assert.equal(legacyFile.status, 'added');
+assert.equal(legacyFile.additions, 2);
+assert.equal(legacyFile.hunks[0].lines[0].newNumber, 1);
+assert.equal(legacyFile.hunks[0].lines[1].newNumber, 2);
+assert.match(context.renderInlineDiff(legacyFile), /class Added/);
+assert.match(context.renderSplitDiff(legacyFile), /class Added/);
+const legacyPlus = context.parseUnifiedDiff(legacyAdded.replace('+class Added {', '+++ content'))[0];
+assert.equal(legacyPlus.hunks[0].lines[0].text, '++ content');
+assert.equal(legacyPlus.path, 'Added.cs');
+assert.match(context.renderDiffFileSection(files[3], 3, 'inline'), /No text changes/);
+assert.match(context.renderDiffFileSection(files[4], 4, 'split'), /Binary file/);
+assert.match(context.renderDiffFileSection(legacyFile, 0, 'inline'),
+  /<button[^>]+data-diff-toggle="0"[^>]*>[\s\S]*diff-file-status[\s\S]*diff-file-stats[\s\S]*<\/button>/);
+
 const tree = context.buildDiffTree(files);
 assert.deepEqual([...tree.children].map(child => child.name), ['assets', 'docs', 'lib', 'src']);
 assert.deepEqual([...tree.children[3].children].map(child => child.name), ['app.js', 'new-file.js']);
@@ -200,5 +222,43 @@ assert.equal(context.diffEmpty.textContent, 'No diff available.');
 context.renderDiff(sample);
 assert.equal(context.diffToolbar.hidden, false);
 assert.equal(context.diffEmpty.hidden, true);
+
+// Exercise the actual delegated click handlers, including the Added badge and tree navigation.
+const controlsStart = source.indexOf("diffViewInline.addEventListener('click'");
+const controlsEnd = source.indexOf("approvalForm.addEventListener", controlsStart);
+vm.runInContext(source.slice(controlsStart, controlsEnd), context);
+const section = element();
+const toggle = element();
+toggle.dataset = { diffToggle: '1' };
+section.querySelector = () => toggle;
+section.scrollIntoView = options => { section.scrolled = options.block; };
+context.diffFiles.querySelector = () => section;
+const clickAdded = () => context.diffFiles.listeners.click({ target: { closest: () => toggle } });
+clickAdded();
+assert.equal(isCollapsed(1), true);
+assert.equal(section.classList.contains('collapsed'), true);
+assert.equal(toggle.attributes['aria-expanded'], 'false');
+context.renderDiff(sample); // Status polling must preserve the user's choice.
+assert.equal(isCollapsed(1), true);
+clickAdded();
+assert.equal(isCollapsed(1), false);
+assert.equal(section.classList.contains('collapsed'), false);
+assert.equal(toggle.attributes['aria-expanded'], 'true');
+context.diffCollapseAll.listeners.click();
+assert.equal(context.diffCollapseAll.textContent, 'Expand all');
+assert.equal(isCollapsed(1), true);
+context.diffCollapseAll.listeners.click();
+assert.equal(context.diffCollapseAll.textContent, 'Collapse all');
+assert.equal(isCollapsed(1), false);
+clickAdded();
+const treeButton = element();
+treeButton.dataset = { diffIndex: '1' };
+context.document = { getElementById: () => section };
+context.diffTree.querySelectorAll = () => [];
+context.diffTree.listeners.click({ target: { closest: () => treeButton } });
+assert.equal(isCollapsed(1), false);
+assert.equal(toggle.attributes['aria-expanded'], 'true');
+assert.equal(section.scrolled, 'start');
+assert.equal(treeButton.classList.contains('active'), true);
 
 console.log('diff-review.test.cjs passed');

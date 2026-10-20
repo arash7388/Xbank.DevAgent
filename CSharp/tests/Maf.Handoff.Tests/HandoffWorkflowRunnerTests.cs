@@ -7,6 +7,52 @@ namespace Maf.Handoff.Tests;
 public sealed class HandoffWorkflowRunnerTests
 {
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task BuildsAfterAgentChangesAndReportsWithoutAnotherAgentTurn(bool validCode, bool skipBuild)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-final-build", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using System.Diagnostics.Process git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git")
+            {
+                WorkingDirectory = root, ArgumentList = { "init", "--quiet" },
+                UseShellExecute = false, CreateNoWindow = true,
+            })!;
+            await git.WaitForExitAsync();
+            Assert.Equal(0, git.ExitCode);
+            File.WriteAllText(Path.Combine(root, ".gitignore"), "bin/\nobj/\n");
+            File.WriteAllText(Path.Combine(root, "Example.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(root, "Example.cs"), validCode ? "public class Example { }" : "public class Example { invalid syntax }");
+            RepositoryWorkspace workspace = (RepositoryWorkspace)typeof(RepositoryWorkspace)
+                .GetConstructors(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Single()
+                .Invoke([root, "https://github.com/example/repo", "main", null]);
+            SummaryHandoffChatClient client = new();
+            WorkflowSettings settings = new("https://example.test", "test-model", "test-key") { SkipBuildVerification = skipBuild };
+            HandoffWorkflowRunner runner = new(settings, workspace, client);
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(60));
+            List<RunEvent> events = [];
+            await foreach (RunEvent item in runner.RunAsync("Apply the change", timeout.Token)) events.Add(item);
+
+            Assert.DoesNotContain(events, item => item.Type == "error");
+            Assert.Equal(4, client.CallCount);
+            Assert.Contains(events, item => item.Type == "run_finished" && item.Status == "completed");
+            if (skipBuild) Assert.DoesNotContain(events, item => item.Type == "build_result");
+            else
+            {
+                RunEvent result = Assert.Single(events, item => item.Type == "build_result");
+                Assert.Equal(validCode ? "passed" : "failed", result.Status);
+                Assert.Contains(validCode ? "BUILD_PASSED" : "error CS", result.Text);
+                Assert.True(events.IndexOf(result) > events.FindLastIndex(item => item.Type == "agent_summary" && item.Status == "provided"));
+            }
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task EmitsSummariesAndOptionalBuildNotificationWithoutExtraModelCalls(bool skipBuild)

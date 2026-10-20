@@ -43,9 +43,7 @@ assert.ok(html.includes('/autonomy.js?'));
 const context = { connection: {}, agents: {}, referenceCollectionId: null, cognia: null, changeRequestSource: 'manual',
   values: new Map([['branch', 'main'], ['task', 'TASK-42 Update behavior'], ['maxAiCalls', '30'], ['maxBudgetUsd', '0.1']]) };
 vm.createContext(context);
-const start = source.indexOf('  const request = {\n    sourceControl: connection.sourceControl');
-const end = source.indexOf('\n\n  try {', start);
-const code = source.slice(start, end).replace('const request =', 'globalThis.request =');
+const code = require('./request-payload.cjs')(source);
 vm.runInContext(code, context);
 assert.equal(context.request.autonomyLevel, 100);
 assert.equal(context.request.autoCommit, false);

@@ -38,9 +38,18 @@ internal sealed class AiRequestRetryHandler : DelegatingHandler
         if (request.Content is not null)
             await request.Content.LoadIntoBufferAsync(cancellationToken).ConfigureAwait(false);
 
-        return await _pipeline.ExecuteAsync(
+        HttpResponseMessage response = await _pipeline.ExecuteAsync(
             token => new ValueTask<HttpResponseMessage>(base.SendAsync(request, token)), cancellationToken)
             .ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            response.Dispose();
+            // Do not include response bodies, headers, or full URLs: they may contain credentials.
+            throw new ConfigurationException(
+                $"The model provider at {request.RequestUri?.Host} rejected the API key or token (HTTP 401). " +
+                "Update the credential for this provider in the UI or server configuration, verify that it is active and matches the endpoint, then start a new run.");
+        }
+        return response;
     }
 
     private static bool IsTransient(HttpStatusCode status) =>
