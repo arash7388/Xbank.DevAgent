@@ -6,6 +6,63 @@ namespace Maf.Handoff.Tests;
 
 public sealed class AgentTeamFactoryTests
 {
+    [Fact]
+    public async Task SharesReadCacheAcrossAgentsSeparatesCompactReadsAndPersistsHits()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-tool-cache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using (var git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git")
+            {
+                WorkingDirectory = root, ArgumentList = { "init", "--quiet" }, UseShellExecute = false, CreateNoWindow = true,
+            })!) { await git.WaitForExitAsync(); Assert.Equal(0, git.ExitCode); }
+            File.WriteAllText(Path.Combine(root, "settings.json"), "{ \"name\": \"before\" }");
+            RepositoryWorkspace workspace = (RepositoryWorkspace)Activator.CreateInstance(typeof(RepositoryWorkspace),
+                BindingFlags.Instance | BindingFlags.NonPublic, null, [root, "https://github.com/example/repo", "main", null], null)!;
+            SqliteLlmCheckpointStore store = new(Path.Combine(root, ".git", "audit.db"));
+            Guid run = Guid.NewGuid();
+            store.Create(run, "test", "{}", DateTimeOffset.UtcNow);
+            var clients = AgentNames.Required.ToDictionary(name => name, _ => new RecordingChatClient());
+            WorkflowSettings settings = new("https://example.test", "model", "key");
+            AgentTeam team = AgentTeamFactory.Create(clients.ToDictionary(p => p.Key, p => (IChatClient)p.Value),
+                AgentNames.Required.ToDictionary(name => name, _ => settings), workspace,
+                toolCallStore: store, workflowId: run.ToString("D"));
+            await team.Planner.RunAsync("Inspect");
+            await team.Developer.RunAsync("Inspect");
+            await team.Reviewer.RunAsync("Inspect");
+            AIFunction Tool(string agent, string name) => clients[agent].Options!.Tools!.OfType<AIFunction>().Single(t => t.Name == name);
+            AIFunctionArguments readArgs = new() { ["path"] = "settings.json" };
+            string? compact = (await Tool(AgentNames.Planner, "read_repository_file").InvokeAsync(readArgs))?.ToString();
+            string? full = (await Tool(AgentNames.Developer, "read_repository_file").InvokeAsync(readArgs))?.ToString();
+            Assert.NotEqual(compact, full);
+            Assert.Equal(full, (await Tool(AgentNames.Reviewer, "read_repository_file").InvokeAsync(readArgs))?.ToString());
+            AIFunctionArguments search = new() { ["query"] = "before", ["pathFilter"] = null };
+            await Tool(AgentNames.Planner, "search_repository").InvokeAsync(search);
+            await Tool(AgentNames.Reviewer, "search_repository").InvokeAsync(search);
+            WorkflowRunLog log = store.GetLog(run);
+            Assert.Equal(3, log.ToolCalls.Count);
+            Assert.Equal(2, log.ToolCacheHits!.Count);
+            Assert.All(log.ToolCacheHits, hit => Assert.Equal(AgentNames.Reviewer, hit.Agent));
+
+            // Agent writes invalidate earlier reads even if query arguments are unchanged.
+            await Tool(AgentNames.Developer, "write_repository_file").InvokeAsync(new AIFunctionArguments
+                { ["path"] = "settings.json", ["content"] = "{ \"name\": \"after\" }" });
+            Assert.Equal("No matches.", (await Tool(AgentNames.Reviewer, "search_repository").InvokeAsync(search))?.ToString());
+            Assert.Contains("after", (await Tool(AgentNames.Reviewer, "read_repository_file").InvokeAsync(readArgs))?.ToString());
+
+            // External edits are also observed instead of blindly reusing the run's revision.
+            File.WriteAllText(Path.Combine(root, "settings.json"), "{ \"name\": \"external\" }");
+            Assert.Contains("external", (await Tool(AgentNames.Reviewer, "read_repository_file").InvokeAsync(readArgs))?.ToString());
+            AIFunctionArguments external = new() { ["query"] = "external", ["pathFilter"] = null };
+            Assert.Contains("external", (await Tool(AgentNames.Reviewer, "search_repository").InvokeAsync(external))?.ToString());
+            File.WriteAllText(Path.Combine(root, "Added.cs"), "class External { }");
+            Assert.Contains("Added.cs", (await Tool(AgentNames.Reviewer, "list_repository_files").InvokeAsync(new AIFunctionArguments { ["pattern"] = null }))?.ToString());
+            Assert.Equal(2, new SqliteLlmCheckpointStore(Path.Combine(root, ".git", "audit.db")).GetLog(run).ToolCacheHits!.Count);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Theory]
     [InlineData(50)]
     [InlineData(100)]

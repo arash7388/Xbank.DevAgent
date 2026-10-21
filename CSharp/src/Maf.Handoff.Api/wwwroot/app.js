@@ -1465,6 +1465,7 @@ function renderRunReport(report) {
   const log = report.database || {};
   const agentRuns = log.agentRuns || [];
   const toolCalls = log.toolCalls || [];
+  const toolCacheHits = log.toolCacheHits || [];
   reportSummary.textContent = `${formatNumber(agentRuns.length)} agent runs · ${formatNumber(toolCalls.length)} tool calls · SQLite workflow records`;
   const entries = [
     { kind: 'Session', title: report.session?.id || 'Current run', status: report.session?.status,
@@ -1475,7 +1476,12 @@ function renderRunReport(report) {
       startedAt: log.run?.createdAt, inputJson: JSON.stringify(log.run), errorJson: log.run?.error },
     ...agentRuns.map(entry => ({ ...entry, kind: 'Agent run', title: `${entry.agent} · ${entry.model}`, startedAt: entry.startedAt })),
     ...toolCalls.map(entry => ({ ...entry, kind: 'Tool call', title: `${entry.agent} · ${entry.tool}`, startedAt: entry.startedAt })),
+    ...toolCacheHits.map(entry => ({ ...entry, kind: 'Tool cache hit', status: 'reused',
+      title: `${entry.agent} · ${entry.tool}`, startedAt: entry.occurredAt,
+      responseJson: JSON.stringify({ cacheKey: entry.cacheKey }) })),
   ].sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+
+  reportSummary.textContent += ` · ${formatNumber(toolCacheHits.length)} tool cache hits`;
 
   if (!entries.length) {
     reportContent.replaceChildren(Object.assign(document.createElement('p'), { className: 'run-log-empty', textContent: 'No related records were found for this run.' }));

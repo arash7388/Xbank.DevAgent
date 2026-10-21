@@ -12,6 +12,52 @@ namespace Maf.Handoff.Tests;
 public sealed class DeepSeekUsagePreservingChatClientTests
 {
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task FinalResponseWithoutToolsStillProtectsEarlierToolCallHistory(bool streaming, bool emptyTools)
+    {
+        ValidatingReasoningHttpHandler handler = new();
+        using HttpClient http = new(handler);
+        using DeepSeekUsagePreservingChatClient client = new(CreateNativeClient(http));
+        ChatOptions options = ToolOptions();
+        // FunctionInvokingChatClient removes available tools when asking for its final response.
+        options.Tools = emptyTools ? [] : null;
+        ChatMessage[] history =
+        [
+            new(ChatRole.User, "Summarize the file evidence"),
+            new(ChatRole.Assistant, [new FunctionCallContent("legacy-call", "read_file", new Dictionary<string, object?>())]),
+            new(ChatRole.Tool, [new FunctionResultContent("legacy-call", "file evidence")]),
+        ];
+
+        await RespondAsync(client, history, options, streaming);
+
+        using JsonDocument request = JsonDocument.Parse(Assert.Single(handler.Requests));
+        Assert.Equal("disabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+        Assert.Equal("legacy-call", request.RootElement.GetProperty("messages")[1].GetProperty("tool_calls")[0].GetProperty("id").GetString());
+        Assert.Contains("file evidence", request.RootElement.GetProperty("messages")[2].GetProperty("content").GetString());
+        Assert.NotNull(options.Reasoning);
+    }
+
+    [Fact]
+    public async Task MissingOptionsStillProtectEarlierToolCallHistory()
+    {
+        ValidatingReasoningHttpHandler handler = new();
+        using HttpClient http = new(handler);
+        using DeepSeekUsagePreservingChatClient client = new(CreateNativeClient(http));
+
+        await client.GetResponseAsync(
+        [
+            new(ChatRole.Assistant, [new FunctionCallContent("legacy-call", "read_file", new Dictionary<string, object?>())]),
+            new(ChatRole.Tool, [new FunctionResultContent("legacy-call", "file evidence")]),
+        ]);
+
+        using JsonDocument request = JsonDocument.Parse(Assert.Single(handler.Requests));
+        Assert.Equal("disabled", request.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+    }
+
+    [Theory]
     [InlineData(false, false, false)]
     [InlineData(false, true, true)]
     [InlineData(true, false, true)]
@@ -181,7 +227,9 @@ public sealed class DeepSeekUsagePreservingChatClientTests
             using JsonDocument json = JsonDocument.Parse(body);
             bool thinkingDisabled = json.RootElement.TryGetProperty("thinking", out JsonElement thinking) &&
                 thinking.GetProperty("type").GetString() == "disabled";
-            if (!thinkingDisabled && json.RootElement.TryGetProperty("tools", out _))
+            bool hasToolHistory = json.RootElement.GetProperty("messages").EnumerateArray()
+                .Any(message => message.TryGetProperty("tool_calls", out JsonElement calls) && calls.GetArrayLength() > 0);
+            if (!thinkingDisabled && (json.RootElement.TryGetProperty("tools", out _) || hasToolHistory))
             {
                 foreach (JsonElement message in json.RootElement.GetProperty("messages").EnumerateArray())
                 {

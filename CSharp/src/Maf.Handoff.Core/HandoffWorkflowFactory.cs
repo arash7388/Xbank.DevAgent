@@ -16,7 +16,8 @@ public static class HandoffWorkflowFactory
         IToolCallStore? toolCallStore = null,
         string? workflowId = null,
         IJiraIssueSearch? jira = null,
-        IWorkflowUserInput? userInput = null)
+        IWorkflowUserInput? userInput = null,
+        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
     {
         AgentTeam team = AgentTeamFactory.Create(
             chatClient,
@@ -28,7 +29,8 @@ public static class HandoffWorkflowFactory
             toolCallStore,
             workflowId,
             jira,
-            userInput);
+            userInput,
+            jiraIntakeCheckpoint);
         return Create(team, settings);
     }
 
@@ -42,7 +44,8 @@ public static class HandoffWorkflowFactory
         IToolCallStore? toolCallStore = null,
         string? workflowId = null,
         IJiraIssueSearch? jira = null,
-        IWorkflowUserInput? userInput = null)
+        IWorkflowUserInput? userInput = null,
+        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
     {
         AgentTeam team = AgentTeamFactory.Create(
             clients,
@@ -54,7 +57,8 @@ public static class HandoffWorkflowFactory
             toolCallStore,
             workflowId,
             jira,
-            userInput);
+            userInput,
+            jiraIntakeCheckpoint);
         WorkflowSettings workflowSettings = settingsByAgent.TryGetValue(AgentNames.Developer, out WorkflowSettings? value)
             ? value
             : throw new ConfigurationException("Model configuration for agent 'developer' is required.");

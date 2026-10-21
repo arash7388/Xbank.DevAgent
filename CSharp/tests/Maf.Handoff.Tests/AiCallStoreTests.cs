@@ -10,6 +10,57 @@ namespace Maf.Handoff.Tests;
 
 public sealed class AiCallStoreTests
 {
+    [Fact]
+    public void UsageMetricsExcludePayloadsWhileFullAuditRemainsAvailable()
+    {
+        using DatabaseFixture db = new();
+        Guid run = Guid.NewGuid();
+        db.Store.Create(run, "test", "{}", DateTimeOffset.UtcNow);
+        string input = new('x', 1_000_000);
+        string id = db.Store.StartAiCall(run.ToString("D"), AgentNames.Developer, Settings, input, false);
+        db.Store.FinishAiCall(id, new(new ChatMessage(ChatRole.Assistant, "full response")),
+            new() { InputTokenCount = 120, OutputTokenCount = 30, TotalTokenCount = 150 }, null);
+
+        using SqliteConnection connection = new($"Data Source={db.Path};Pooling=False");
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT metrics_json FROM ai_calls WHERE id=$id";
+        command.Parameters.AddWithValue("$id", id);
+        string metrics = (string)command.ExecuteScalar()!;
+        Assert.True(metrics.Length < 10_000);
+        using JsonDocument document = JsonDocument.Parse(metrics);
+        Assert.Equal("", document.RootElement.GetProperty("inputJson").GetString());
+        Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("responseJson").ValueKind);
+        WorkflowRunLog log = new SqliteLlmCheckpointStore(db.Path).GetLog(run);
+        Assert.Equal(input, Assert.Single(log.AiCalls!).InputJson);
+        Assert.Contains("full response", log.AiCalls![0].ResponseJson);
+        Assert.Equal(150, log.Usage!.TotalTokens);
+    }
+
+    [Fact]
+    public void MigratesLegacyAuditSchemaAndAggregatesOldAndNewCalls()
+    {
+        using DatabaseFixture db = new();
+        Guid run = Guid.NewGuid();
+        db.Store.Create(run, "test", "{}", DateTimeOffset.UtcNow);
+        string old = db.Store.StartAiCall(run.ToString("D"), AgentNames.Developer, Settings, "legacy input", false);
+        db.Store.FinishAiCall(old, null, new() { InputTokenCount = 10, OutputTokenCount = 5, TotalTokenCount = 15 }, null);
+        using (SqliteConnection connection = new($"Data Source={db.Path};Pooling=False"))
+        {
+            connection.Open();
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "ALTER TABLE ai_calls DROP COLUMN metrics_json";
+            command.ExecuteNonQuery();
+        }
+        SqliteLlmCheckpointStore reopened = new(db.Path);
+        string next = reopened.StartAiCall(run.ToString("D"), AgentNames.Developer, Settings, "new input", false);
+        reopened.FinishAiCall(next, null, new() { InputTokenCount = 20, OutputTokenCount = 10, TotalTokenCount = 30 }, null);
+        WorkflowRunLog log = reopened.GetLog(run);
+        Assert.Equal(2, log.AiCalls!.Count);
+        Assert.Equal(45, log.Usage!.TotalTokens);
+        Assert.Equal(2, log.Usage.CompletedCalls);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

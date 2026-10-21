@@ -18,11 +18,12 @@ public static class AgentTeamFactory
         IToolCallStore? toolCallStore = null,
         string? workflowId = null,
         IJiraIssueSearch? jira = null,
-        IWorkflowUserInput? userInput = null)
+        IWorkflowUserInput? userInput = null,
+        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
     {
         Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(name => name, _ => chatClient);
         Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => settings);
-        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId, jira, userInput);
+        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId, jira, userInput, jiraIntakeCheckpoint);
     }
 
     public static AgentTeam Create(
@@ -35,7 +36,8 @@ public static class AgentTeamFactory
         IToolCallStore? toolCallStore = null,
         string? workflowId = null,
         IJiraIssueSearch? jira = null,
-        IWorkflowUserInput? userInput = null)
+        IWorkflowUserInput? userInput = null,
+        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
     {
         WorkflowSettings workflowSettings = Get(settingsByAgent, AgentNames.Developer);
         userInput ??= jira as IWorkflowUserInput;
@@ -60,6 +62,7 @@ public static class AgentTeamFactory
         }
 
         codeGraphAudit ??= new CodeGraphAudit();
+        ToolResultCache readCache = new();
 
         Dictionary<string, IChatClient> effectiveClients = clients.ToDictionary(
             pair => pair.Key,
@@ -102,6 +105,8 @@ public static class AgentTeamFactory
 
         IChatClient CreateEffectiveClient(string agentName, IChatClient client)
         {
+            if (agentName == AgentNames.Jira && jiraIntakeCheckpoint is not null)
+                client = jiraIntakeCheckpoint.Wrap(client);
             if (agentName == AgentNames.Jira && jira is IJiraProblemReporter reporter)
                 client = new JiraProblemReportingChatClient(client, reporter);
             if (agentName == AgentNames.Developer && jira is IJiraScopeChangeReporter changes)
@@ -159,11 +164,55 @@ public static class AgentTeamFactory
         }
 
         IList<AITool> AuditTools(IList<AITool> tools, string agentName) =>
-            toolCallStore is null || string.IsNullOrWhiteSpace(workflowId)
-                ? tools
-                : [.. tools.Select(tool => tool is AIFunction function
-                    ? (AITool)new ToolCallAuditingAIFunction(function, toolCallStore, workflowId, agentName)
-                    : tool)];
+            [.. tools.Select(tool => tool is AIFunction function ? WrapTool(function, agentName) : tool)];
+
+        AITool WrapTool(AIFunction function, string agentName)
+        {
+            string name = function.Name;
+            // Auditing stays inside caching: tool_calls measures actual executions only.
+            AIFunction audited = toolCallStore is not null && !string.IsNullOrWhiteSpace(workflowId)
+                ? new ToolCallAuditingAIFunction(function, toolCallStore, workflowId, agentName) : function;
+            Func<AIFunctionArguments, string?>? version = null;
+            TimeSpan lifetime = TimeSpan.FromHours(1);
+            string scope = name;
+            if (workspace is not null && name is "read_repository_file" or "list_repository_files" or
+                "search_repository" or "get_repository_status" or "get_repository_diff")
+            {
+                if (name == "read_repository_file")
+                {
+                    scope += agentName is AgentNames.Planner or AgentNames.Jira ? ":compact" : ":full";
+                    version = args => args.TryGetValue("path", out object? path) && path is not null
+                        ? workspace.GetReadCacheVersion(path.ToString()) : null;
+                }
+                else version = _ => workspace.GetReadCacheVersion();
+            }
+            else if (codeGraphTools is not null && name is "find_symbol" or "get_neighbors" or "get_context" or "get_context_by_id")
+                version = _ => codeGraphTools.GetCacheVersion();
+            else if (name is "get_jira_issue_details" or "get_jira_issue_comments" or "list_jira_attachments" or
+                "read_jira_attachment" or "search_jira_issues" or "get_jira_issue_title")
+            {
+                lifetime = TimeSpan.FromSeconds(30);
+                version = _ => readCache.JiraVersion;
+            }
+            if (name is "report_jira_problem" or "report_jira_scope_change" or "ask_jira_clarification" or "ask_user_decision")
+                return new JiraCacheInvalidatingAIFunction(audited, readCache);
+            return version is null ? audited : new CachedReadAIFunction(audited, readCache, version, scope, lifetime,
+                async (key, args, result, token) =>
+                {
+                    if (CodeGraphToolFactory.IsRelationshipTool(name))
+                    {
+                        object? subject = args.GetValueOrDefault(name == "get_context" ? "query" : "id");
+                        CodeGraphToolFactory.RecordCached(codeGraphAudit, agentName, name, subject?.ToString() ?? "", result?.ToString() ?? "");
+                    }
+                    if (toolCallStore is null || string.IsNullOrWhiteSpace(workflowId)) return;
+                    try
+                    {
+                        await toolCallStore.RecordToolCacheHitAsync(workflowId, agentName, name, key,
+                            System.Text.Json.JsonSerializer.Serialize(args), token).ConfigureAwait(false);
+                    }
+                    catch { /* Diagnostics must not change a cached tool result. */ }
+                });
+        }
     }
 
     private static ChatClientAgent? CreateOptionalAgent(

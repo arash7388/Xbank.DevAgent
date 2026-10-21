@@ -68,6 +68,18 @@ public sealed partial class SqliteLlmCheckpointStore : IAiCallStore
             CREATE INDEX IF NOT EXISTS ix_run_status_history_run ON run_status_history(run_id,sequence);
             """;
         command.ExecuteNonQuery();
+
+        // Existing audit payloads can be very large. Keep the data needed to aggregate
+        // usage separately so every model round does not deserialize the run's histories.
+        command.CommandText = "PRAGMA table_info(ai_calls)";
+        bool hasMetrics = false;
+        using (SqliteDataReader reader = command.ExecuteReader())
+            while (reader.Read()) hasMetrics |= reader.GetString(1) == "metrics_json";
+        if (!hasMetrics)
+        {
+            command.CommandText = "ALTER TABLE ai_calls ADD COLUMN metrics_json TEXT";
+            command.ExecuteNonQuery();
+        }
     }
 
     public string StartAiCall(string runId, string agent, WorkflowSettings settings, string inputJson, bool streaming)
@@ -141,10 +153,13 @@ public sealed partial class SqliteLlmCheckpointStore : IAiCallStore
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO ai_calls VALUES ($id,$run,$agent,$model,$status,$start,$end,$input,$cached,$miss,$output,$reasoning,$total,$cost,$json)
+            INSERT INTO ai_calls (id,run_id,agent,model,status,started_at,finished_at,
+                input_tokens,cached_input_tokens,uncached_input_tokens,output_tokens,reasoning_tokens,
+                total_tokens,estimated_cost_usd,record_json,metrics_json)
+            VALUES ($id,$run,$agent,$model,$status,$start,$end,$input,$cached,$miss,$output,$reasoning,$total,$cost,$json,$metrics)
             ON CONFLICT(id) DO UPDATE SET status=$status,finished_at=$end,input_tokens=$input,cached_input_tokens=$cached,
                 uncached_input_tokens=$miss,output_tokens=$output,reasoning_tokens=$reasoning,total_tokens=$total,
-                estimated_cost_usd=$cost,record_json=$json;
+                estimated_cost_usd=$cost,record_json=$json,metrics_json=$metrics;
             """;
         void Add(string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
         Add("$id", call.Id); Add("$run", call.RunId); Add("$agent", call.Agent); Add("$model", call.Model);
@@ -153,14 +168,17 @@ public sealed partial class SqliteLlmCheckpointStore : IAiCallStore
         Add("$miss", call.Usage?.CachedInputTokenCount is long hit && call.Usage.InputTokenCount is long input ? Math.Max(0, input - hit) : null);
         Add("$output", call.Usage?.OutputTokenCount); Add("$reasoning", call.Usage?.ReasoningTokenCount); Add("$total", call.Usage?.TotalTokenCount);
         Add("$cost", call.EstimatedCostUsd?.ToString(CultureInfo.InvariantCulture)); Add("$json", JsonSerializer.Serialize(call, AuditJson));
+        Add("$metrics", JsonSerializer.Serialize(call with { InputJson = "", ResponseJson = null, ErrorJson = null }, AuditJson));
         command.ExecuteNonQuery();
     }
 
-    private static List<T> ReadAuditRows<T>(SqliteConnection connection, SqliteTransaction? transaction, string table, string runId)
+    private static List<T> ReadAuditRows<T>(SqliteConnection connection, SqliteTransaction? transaction, string table, string runId,
+        bool metricsOnly = false)
     {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"SELECT record_json FROM {table} WHERE run_id=$run ORDER BY rowid";
+        string projection = metricsOnly ? "COALESCE(metrics_json, record_json)" : "record_json";
+        command.CommandText = $"SELECT {projection} FROM {table} WHERE run_id=$run ORDER BY rowid";
         command.Parameters.AddWithValue("$run", runId);
         using SqliteDataReader reader = command.ExecuteReader();
         List<T> rows = [];
@@ -170,7 +188,7 @@ public sealed partial class SqliteLlmCheckpointStore : IAiCallStore
 
     private static void SaveRunUsage(SqliteConnection connection, SqliteTransaction transaction, string runId)
     {
-        List<AiCallLogEntry> calls = ReadAuditRows<AiCallLogEntry>(connection, transaction, "ai_calls", runId);
+        List<AiCallLogEntry> calls = ReadAuditRows<AiCallLogEntry>(connection, transaction, "ai_calls", runId, metricsOnly: true);
         List<CheckpointHitLogEntry> hits = ReadAuditRows<CheckpointHitLogEntry>(connection, transaction, "checkpoint_hits", runId);
         RunUsageMetrics summary = SummarizeCalls(calls, hits.Count);
         summary = summary with { TokenUsage = summary.TokenUsage.WithCheckpoints(hits) };

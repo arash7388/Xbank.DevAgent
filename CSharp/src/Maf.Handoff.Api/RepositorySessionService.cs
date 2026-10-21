@@ -373,7 +373,17 @@ public sealed class RepositorySessionService(
                 workflowCodeGraph,
                 checkpointStore,
                 workflowJira,
-                decisions);
+                decisions,
+                jiraCacheScope: System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    jiraServer = configuration["Jira:BaseUrl"],
+                    jiraUser = configuration["Jira:User"],
+                    request.RepositoryUrl,
+                    request.BaseBranch,
+                    request.ReferenceCollectionId,
+                    request.JiraIncludeComments,
+                    attachments = (request.JiraAttachmentIds ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
+                }));
             string? terminalStatus = null;
 
             await foreach (RunEvent runEvent in runner.RunAsync(

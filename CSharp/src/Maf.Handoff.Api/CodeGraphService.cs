@@ -45,6 +45,20 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
 
     public bool IsWorkflowEnabled => _workflowEnabled;
 
+    public string? GetCacheVersion()
+    {
+        lock (_statusLock) if (_status.State == "running") return null;
+        try
+        {
+            FileInfo database = new(_agentDatabasePath);
+            if (!database.Exists) return null;
+            FileInfo wal = new(_agentDatabasePath + "-wal");
+            return $"{database.Length}:{database.LastWriteTimeUtc.Ticks}:{database.CreationTimeUtc.Ticks}:" +
+                (wal.Exists ? $"{wal.Length}:{wal.LastWriteTimeUtc.Ticks}:{wal.CreationTimeUtc.Ticks}" : "no-wal");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     public void EnsureAvailable(string repositoryUrl)
     {
         using SqliteConnection connection = Open(_agentDatabasePath);
@@ -199,8 +213,16 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             CreateNoWindow = true
         };
+        // Redirected, windowless processes can otherwise encode Persian messages as '?'
+        // before we read them. Apply UTF-8 inside dotnet and its managed child processes.
+        string hook = Maf.CodeGraph.ConsoleSupport.Utf8ConsoleHook.AssemblyPath;
+        start.Environment.TryGetValue("DOTNET_STARTUP_HOOKS", out string? existingHooks);
+        start.Environment["DOTNET_STARTUP_HOOKS"] = string.IsNullOrEmpty(existingHooks)
+            ? hook : hook + Path.PathSeparator + existingHooks;
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
 
         using var process = new Process { StartInfo = start, EnableRaisingEvents = true };

@@ -9,6 +9,9 @@ namespace Maf.Handoff.Core;
 /// </summary>
 public interface ICodeGraphTools
 {
+    // Null disables caching for providers that cannot verify their index version.
+    string? GetCacheVersion() => null;
+
     void EnsureAvailable(string repositoryUrl);
 
     string FindSymbol(string name, int limit = 15);
@@ -152,12 +155,14 @@ internal static class CodeGraphToolFactory
         Func<string> operation)
     {
         string result = operation();
-        if (!IsMissingResult(result))
-        {
-            audit.Record(agentName, toolName, subject);
-        }
+        RecordCached(audit, agentName, toolName, subject, result);
 
         return result;
+    }
+
+    internal static void RecordCached(CodeGraphAudit audit, string agentName, string toolName, string subject, string result)
+    {
+        if (!IsMissingResult(result)) audit.Record(agentName, toolName, subject);
     }
 
     private static bool IsMissingResult(string result) =>

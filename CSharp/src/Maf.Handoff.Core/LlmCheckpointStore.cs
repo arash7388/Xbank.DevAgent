@@ -253,6 +253,7 @@ public sealed partial class SqliteLlmCheckpointStore : ILlmCheckpointStore, IToo
         InitializeToolCallSchema(connection);
         InitializeWorkflowSchema(connection);
         InitializeAiCallSchema(connection);
+        InitializeJiraIntakeSchema(connection);
     }
 
     private SqliteConnection Open()
@@ -739,7 +740,7 @@ internal static class CheckpointSerialization
         return safe is null ? null : JsonSerializer.SerializeToElement(safe, safe.GetType(), JsonOptions);
     }
 
-    private static string Canonicalize(JsonElement element)
+    internal static string Canonicalize(JsonElement element)
     {
         using MemoryStream stream = new();
         using (Utf8JsonWriter writer = new(stream))

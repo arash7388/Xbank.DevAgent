@@ -91,7 +91,9 @@ internal sealed class DeepSeekUsagePreservingChatClient(
 
     private static ChatOptions? OptionsForHistory(IReadOnlyList<ChatMessage> history, ChatOptions? options)
     {
-        if (options?.Tools is not { Count: > 0 } ||
+        bool hasToolCalls = history.Any(message => message.Role == ChatRole.Assistant &&
+            message.Contents.OfType<FunctionCallContent>().Any());
+        if ((options?.Tools is not { Count: > 0 } && !hasToolCalls) ||
             !history.Any(message => message.Role == ChatRole.Assistant && GetReasoning(message) is null))
         {
             return options;
@@ -99,11 +101,13 @@ internal sealed class DeepSeekUsagePreservingChatClient(
 
         // Thinking is enabled by default on current DeepSeek models. Missing reasoning from
         // synthetic messages, other providers, or old checkpoints cannot be reconstructed.
+        // Final-response requests may remove available tools while retaining earlier tool calls;
+        // DeepSeek still validates the reasoning associated with that history.
         // Preserve the complete conversation and tool evidence, but use non-thinking mode
         // for this request rather than inventing reasoning or submitting invalid history.
-        ChatOptions projected = options.Clone();
+        ChatOptions projected = options?.Clone() ?? new();
         projected.Reasoning = null;
-        projected.AdditionalProperties = options.AdditionalProperties is { } properties ? new(properties) : [];
+        projected.AdditionalProperties = options?.AdditionalProperties is { } properties ? new(properties) : [];
         projected.AdditionalProperties[DeepSeekChatOptionKeys.Thinking] = false;
         return projected;
     }

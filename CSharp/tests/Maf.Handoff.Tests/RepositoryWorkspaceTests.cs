@@ -5,6 +5,30 @@ namespace Maf.Handoff.Tests;
 
 public sealed class RepositoryWorkspaceTests
 {
+    [Fact]
+    public async Task CancellingGitTerminatesTheProcessAndItsChildren()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-git-cancellation", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using CancellationTokenSource cancellation = new();
+            RepositoryWorkspace workspace = CreateWorkspace(root);
+            MethodInfo runGit = typeof(RepositoryWorkspace).GetMethod("RunGitAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            Task operation = (Task)runGit.Invoke(workspace,
+                [root, new string[] { "-c", "alias.maf-wait=!echo started > maf-started; sleep 30", "maf-wait" }, cancellation.Token, true])!;
+            using CancellationTokenSource setup = new(TimeSpan.FromSeconds(10));
+            while (!File.Exists(Path.Combine(root, "maf-started")))
+            {
+                setup.Token.ThrowIfCancellationRequested();
+                await Task.Delay(25, setup.Token);
+            }
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Theory]
     [InlineData("first\nsecond\n", "@@ -0,0 +1,2 @@", false)]
     [InlineData("first\r\nsecond\r\n", "@@ -0,0 +1,2 @@", false)]

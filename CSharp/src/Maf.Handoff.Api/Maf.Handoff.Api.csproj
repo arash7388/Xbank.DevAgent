@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
+    <ProjectReference Include="..\Maf.CodeGraph.Console\Maf.CodeGraph.Console.csproj" />
     <ProjectReference Include="..\Maf.Handoff.Core\Maf.Handoff.Core.csproj" />
     <ProjectReference Include="..\Maf.Handoff.Talk\Maf.Handoff.Talk.csproj" />
     <PackageReference Include="DocumentFormat.OpenXml" />

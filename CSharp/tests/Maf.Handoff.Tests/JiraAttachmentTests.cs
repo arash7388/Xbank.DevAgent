@@ -18,6 +18,7 @@ public sealed class JiraAttachmentTests
         var result = await jira.ReadAttachmentAsync("TEST-1", "123");
         Assert.Equal("epfs-binary", result.ContentFormat);
         Assert.Equal(bytes.Length, result.SourceBytes);
+        Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(), result.ContentSha256);
         Assert.Empty(result.Text);
         Assert.Equal(0, result.TotalCharacters);
         Assert.False(result.HasMore);
@@ -80,6 +81,8 @@ public sealed class JiraAttachmentTests
         Assert.Equal(text.Length, first.TotalCharacters);
         Assert.True(first.HasMore);
         Assert.False(second.HasMore);
+        Assert.Equal(first.ContentSha256, second.ContentSha256);
+        Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.Unicode.GetBytes(text))).ToLowerInvariant(), first.ContentSha256);
     }
 
     [Theory]

@@ -15,6 +15,7 @@ public sealed class HandoffWorkflowRunner
     private readonly IJiraIssueSearch? _jira;
     private readonly IWorkflowUserInput? _userInput;
     private readonly ILlmCheckpointStore? _checkpointStore;
+    private readonly string? _jiraCacheScope;
 
     public HandoffWorkflowRunner(
         WorkflowSettings settings,
@@ -24,7 +25,8 @@ public sealed class HandoffWorkflowRunner
         ICodeGraphTools? codeGraphTools = null,
         ILlmCheckpointStore? checkpointStore = null,
         IJiraIssueSearch? jira = null,
-        IWorkflowUserInput? userInput = null)
+        IWorkflowUserInput? userInput = null,
+        string? jiraCacheScope = null)
     {
         _settings = settings;
         _workspace = workspace;
@@ -34,6 +36,7 @@ public sealed class HandoffWorkflowRunner
         _jira = jira;
         _userInput = userInput;
         _checkpointStore = checkpointStore;
+        _jiraCacheScope = jiraCacheScope;
     }
 
     public HandoffWorkflowRunner(
@@ -43,7 +46,8 @@ public sealed class HandoffWorkflowRunner
         ICodeGraphTools? codeGraphTools = null,
         ILlmCheckpointStore? checkpointStore = null,
         IJiraIssueSearch? jira = null,
-        IWorkflowUserInput? userInput = null)
+        IWorkflowUserInput? userInput = null,
+        string? jiraCacheScope = null)
     {
         _settingsByAgent = settingsByAgent;
         _workspace = workspace;
@@ -52,9 +56,16 @@ public sealed class HandoffWorkflowRunner
         _jira = jira;
         _userInput = userInput;
         _checkpointStore = checkpointStore;
+        _jiraCacheScope = jiraCacheScope;
     }
 
-    public async IAsyncEnumerable<RunEvent> RunAsync(
+    public IAsyncEnumerable<RunEvent> RunAsync(
+        string task,
+        CancellationToken cancellationToken = default,
+        string? workflowId = null) =>
+        RunEventCoalescer.CoalesceAsync(RunCoreAsync(task, cancellationToken, workflowId), cancellationToken: cancellationToken);
+
+    private async IAsyncEnumerable<RunEvent> RunCoreAsync(
         string task,
         [EnumeratorCancellation] CancellationToken cancellationToken = default,
         string? workflowId = null)
@@ -107,7 +118,8 @@ public sealed class HandoffWorkflowRunner
                 _checkpointStore as IToolCallStore,
                 workflowId,
                 _jira,
-                _userInput);
+                _userInput,
+                CreateJiraIntakeCheckpoint(task, settingsByAgent, workflowId, checkpointMetrics, usageCollector));
         }
         else
         {
@@ -134,7 +146,8 @@ public sealed class HandoffWorkflowRunner
                 _checkpointStore as IToolCallStore,
                 workflowId,
                 _jira,
-                _userInput);
+                _userInput,
+                CreateJiraIntakeCheckpoint(task, settingsByAgent, workflowId, checkpointMetrics, usageCollector));
         }
         string status = "stopped_without_release_approval";
         string? activeAgent = null;
@@ -290,6 +303,19 @@ public sealed class HandoffWorkflowRunner
         {
             await run.CancelRunAsync().ConfigureAwait(false);
         }
+    }
+
+    private JiraIntakeCheckpoint? CreateJiraIntakeCheckpoint(string task,
+        IReadOnlyDictionary<string, WorkflowSettings> settings, string workflowId,
+        LlmCheckpointMetrics metrics, TokenUsageCollector usage)
+    {
+        if (_checkpointStore is not IJiraIntakeCheckpointStore || _jira is null || _jiraCacheScope is null ||
+            !settings.TryGetValue(AgentNames.Jira, out WorkflowSettings? jiraSettings)) return null;
+        System.Text.RegularExpressions.Match selected = System.Text.RegularExpressions.Regex.Match(task,
+            @"\ASelected Jira issue: ([A-Za-z][A-Za-z0-9_]*-\d+)\r?\n");
+        return selected.Success
+            ? new(_checkpointStore, _jira, selected.Groups[1].Value, _jiraCacheScope, jiraSettings, workflowId, metrics, usage)
+            : null;
     }
 
     private IChatClient WithTelemetryAndCheckpoints(

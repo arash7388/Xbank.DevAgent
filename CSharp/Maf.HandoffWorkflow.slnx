@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Maf.CodeGraph.Console/Maf.CodeGraph.Console.csproj" />
     <Project Path="src/Maf.Handoff.Api/Maf.Handoff.Api.csproj" />
     <Project Path="src/Maf.Handoff.Cli/Maf.Handoff.Cli.csproj" />
     <Project Path="src/Maf.Handoff.Core/Maf.Handoff.Core.csproj" />

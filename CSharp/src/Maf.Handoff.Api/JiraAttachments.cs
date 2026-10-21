@@ -43,6 +43,8 @@ public sealed partial class JiraService
             if (data.Length + count > AttachmentByteLimit) throw new ArgumentException("Attachment exceeds the 5 MB limit.");
             await data.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
         }
+        string contentSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            data.GetBuffer().AsSpan(0, (int)data.Length))).ToLowerInvariant();
         ReadOnlySpan<byte> header = data.GetBuffer().AsSpan(0, (int)Math.Min(data.Length, 16));
         if (header.StartsWith("EPFS"u8) && header.Contains((byte)0))
         {
@@ -50,13 +52,13 @@ public sealed partial class JiraService
             return new(issueKey, attachmentId, fileName, string.Empty, 0, 0, false, false,
                 ContentFormat: "epfs-binary",
                 ExtractionNotice: "Attachment accepted as EPFS binary content. No document text was extracted. Reading its contents requires a decoder for the originating file format.",
-                SourceBytes: data.Length);
+                SourceBytes: data.Length, ContentSha256: contentSha256);
         }
         data.Position = 0;
         string text = await ReferenceDocumentService.ExtractTextAsync(new FormFile(data, 0, data.Length, "attachment", fileName), cancellationToken);
         if (offset > text.Length) throw new ArgumentException("Offset exceeds the attachment text length.");
         string excerpt = text.Substring(offset, Math.Min(12000, text.Length - offset));
-        return new(issueKey, attachmentId, fileName, excerpt, offset, text.Length, offset + excerpt.Length < text.Length, text.Length >= 400000, SourceBytes: data.Length);
+        return new(issueKey, attachmentId, fileName, excerpt, offset, text.Length, offset + excerpt.Length < text.Length, text.Length >= 400000, SourceBytes: data.Length, ContentSha256: contentSha256);
     }
 
     private Task<JsonDocument> GetAttachmentDocumentAsync(string issueKey, CancellationToken cancellationToken)

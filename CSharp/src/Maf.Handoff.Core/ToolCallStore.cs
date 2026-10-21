@@ -8,6 +8,9 @@ namespace Maf.Handoff.Core;
 /// <summary>Durably records actual local tool executions for workflow diagnostics.</summary>
 public interface IToolCallStore
 {
+    Task RecordToolCacheHitAsync(string workflowId, string agent, string toolName, string cacheKey,
+        string inputJson, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     Task<string> StartToolCallAsync(
         string workflowId,
         string agent,
@@ -30,6 +33,25 @@ public interface IToolCallStore
 
 public sealed partial class SqliteLlmCheckpointStore
 {
+    public async Task RecordToolCacheHitAsync(string workflowId, string agent, string toolName, string cacheKey,
+        string inputJson, CancellationToken cancellationToken = default)
+    {
+        await using SqliteConnection connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO tool_cache_hits (id, workflow_id, agent_name, tool_name, cache_key, input_json, occurred_at)
+            VALUES ($id, $workflow, $agent, $tool, $key, $input, $time);
+            """;
+        command.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+        command.Parameters.AddWithValue("$workflow", workflowId);
+        command.Parameters.AddWithValue("$agent", agent);
+        command.Parameters.AddWithValue("$tool", toolName);
+        command.Parameters.AddWithValue("$key", cacheKey);
+        command.Parameters.AddWithValue("$input", inputJson);
+        command.Parameters.AddWithValue("$time", DateTimeOffset.UtcNow.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<string> StartToolCallAsync(
         string workflowId,
         string agent,
@@ -131,6 +153,13 @@ public sealed partial class SqliteLlmCheckpointStore
 
             CREATE INDEX IF NOT EXISTS ix_tool_calls_agent_tool
             ON tool_calls(agent_name, tool_name, started_at);
+
+            CREATE TABLE IF NOT EXISTS tool_cache_hits (
+                id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, agent_name TEXT NOT NULL,
+                tool_name TEXT NOT NULL, cache_key TEXT NOT NULL, input_json TEXT NOT NULL,
+                occurred_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_tool_cache_hits_workflow ON tool_cache_hits(workflow_id, occurred_at);
             """;
         command.ExecuteNonQuery();
     }

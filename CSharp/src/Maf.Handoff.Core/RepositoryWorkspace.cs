@@ -167,6 +167,9 @@ public sealed partial class RepositoryWorkspace
     }
 
     private IEnumerable<string> EnumerateSourceFiles(string? pattern = null)
+        => EnumerateSourcePaths(pattern).Select(file => file.RelativePath);
+
+    private IEnumerable<(string RelativePath, string FullPath)> EnumerateSourcePaths(string? pattern = null)
     {
         GitResult result = RunGitAsync(RootPath,
             ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], CancellationToken.None,
@@ -181,7 +184,8 @@ public sealed partial class RepositoryWorkspace
             files = files.Where(path => path.Contains(pattern, StringComparison.OrdinalIgnoreCase));
         }
 
-        return files.Where(path => File.Exists(ResolveSourcePath(path, mustExist: false)));
+        return files.Select(path => (RelativePath: path, FullPath: ResolveSourcePath(path, mustExist: false)))
+            .Where(file => File.Exists(file.FullPath));
     }
 
     [Description("Reads one text source file. Paths must be relative to the repository and cannot access .git or secrets.")]
@@ -264,9 +268,8 @@ public sealed partial class RepositoryWorkspace
         }
 
         List<string> matches = [];
-        foreach (string path in EnumerateSourceFiles(pathFilter))
+        foreach ((string path, string fullPath) in EnumerateSourcePaths(pathFilter))
         {
-            string fullPath = ResolveSourcePath(path, mustExist: true);
             if (new FileInfo(fullPath).Length > MaxFileBytes)
             {
                 continue;
@@ -308,7 +311,9 @@ public sealed partial class RepositoryWorkspace
             if (File.Exists(fullPath) && new FileInfo(fullPath).Length == Encoding.UTF8.GetByteCount(content) &&
                 File.ReadAllBytes(fullPath).AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(content)))
                 return $"Unchanged {RepositoryRelativePath(fullPath)}; identical content already exists. Read it directly or inspect get_repository_diff instead of repeating this write.";
-            File.WriteAllText(fullPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            Interlocked.Increment(ref _readCacheRevision);
+            try { File.WriteAllText(fullPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)); }
+            finally { Interlocked.Increment(ref _readCacheRevision); }
             _progressFingerprint = null;
         }
         string actualPath = RepositoryRelativePath(fullPath);
@@ -367,7 +372,9 @@ public sealed partial class RepositoryWorkspace
 
         lock (_progressGate)
         {
-            File.WriteAllText(fullPath, updated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: hasUtf8Bom));
+            Interlocked.Increment(ref _readCacheRevision);
+            try { File.WriteAllText(fullPath, updated, new UTF8Encoding(encoderShouldEmitUTF8Identifier: hasUtf8Bom)); }
+            finally { Interlocked.Increment(ref _readCacheRevision); }
             _progressFingerprint = null;
         }
         return $"Replaced one exact occurrence in {path}.";
@@ -659,11 +666,30 @@ public sealed partial class RepositoryWorkspace
         CancellationToken cancellationToken,
         bool truncateOutput = true)
     {
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bool remote = arguments.Count > 0 && arguments[0] is "clone" or "pull" or "push" or "ls-remote";
+        TimeSpan limit = remote ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(30);
+        timeout.CancelAfter(limit);
+        timeout.Token.ThrowIfCancellationRequested();
         ProcessStartInfo startInfo = CreateGitStartInfo(workingDirectory, arguments, _provider, _accessToken);
         using Process process = Process.Start(startInfo) ?? throw new RepositoryException("Unable to start Git.");
-        Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
+        // Drain both pipes while the process runs. Cancellation must terminate Git as
+        // well as our wait; otherwise network children can outlive cancelled runs.
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); }
+            catch (InvalidOperationException) when (process.HasExited) { }
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            await Task.WhenAll(outputTask, errorTask).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new RepositoryException($"Git operation timed out after {limit.TotalSeconds:0} seconds.");
+        }
         string output = await outputTask;
         return new(process.ExitCode, truncateOutput ? Limit(output) : output, Limit(await errorTask));
     }

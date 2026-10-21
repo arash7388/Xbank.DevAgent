@@ -12,7 +12,7 @@ public sealed record JiraIssueInfo(
 
 public sealed record JiraAttachmentInfo(string Id, string FileName, string MimeType, long Size);
 public sealed record JiraAttachmentText(string IssueKey, string AttachmentId, string FileName, string Text, int Offset, int TotalCharacters, bool HasMore, bool ExtractionLimitReached,
-    string ContentFormat = "text", string? ExtractionNotice = null, long? SourceBytes = null);
+    string ContentFormat = "text", string? ExtractionNotice = null, long? SourceBytes = null, string? ContentSha256 = null);
 
 public interface IJiraIssueSearch
 {

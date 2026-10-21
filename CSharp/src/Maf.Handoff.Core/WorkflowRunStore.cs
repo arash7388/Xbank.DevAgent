@@ -26,7 +26,10 @@ public sealed record WorkflowRunLog(
     IReadOnlyList<CheckpointHitLogEntry>? CheckpointHits = null,
     RunUsageMetrics? Usage = null,
     IReadOnlyList<RunEvent>? Events = null,
-    IReadOnlyList<RunStatusLogEntry>? StatusHistory = null);
+    IReadOnlyList<RunStatusLogEntry>? StatusHistory = null,
+    IReadOnlyList<ToolCacheHitLogEntry>? ToolCacheHits = null);
+
+public sealed record ToolCacheHitLogEntry(string Agent, string Tool, string CacheKey, string InputJson, DateTimeOffset OccurredAt);
 
 public sealed record RunStatusLogEntry(string Status, string? Error, DateTimeOffset OccurredAt);
 
@@ -246,7 +249,16 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read()) history.Add(new(reader.GetString(0), ReadNullableString(reader, 1), DateTimeOffset.Parse(reader.GetString(2))));
         }
-        return new(workflow, run, agentRuns, toolCalls, calls, hits, usage, ReadEvents(connection, workflowId, transaction), history);
+        List<ToolCacheHitLogEntry> toolHits = [];
+        using (SqliteCommand command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT agent_name,tool_name,cache_key,input_json,occurred_at FROM tool_cache_hits WHERE workflow_id=$run ORDER BY occurred_at";
+            command.Parameters.AddWithValue("$run", workflowId);
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read()) toolHits.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), DateTimeOffset.Parse(reader.GetString(4))));
+        }
+        return new(workflow, run, agentRuns, toolCalls, calls, hits, usage, ReadEvents(connection, workflowId, transaction), history, toolHits);
     }
 
     public void SaveSnapshot(Guid runId, string snapshotJson)

@@ -40,7 +40,8 @@ SDK base endpoint. DeepSeek agents preserve the selected reasoning level without
 Reasoning metadata travels with assistant content across handoffs and is restored before subsequent tool
 requests. If history from another provider, a workflow supervisor, or an older checkpoint lacks recoverable
 reasoning, that request uses non-thinking mode while retaining its tool calls and results. This prevents
-DeepSeek's missing `reasoning_content` error; requests with complete history keep the configured reasoning.
+DeepSeek's missing `reasoning_content` error, including final-response requests that remove available tools
+but retain earlier tool calls. Requests with complete history keep the configured reasoning.
 OpenAI reasoning values are passed through its Chat Completions options. Tool calling is mandatory
 for this handoff topology.
 
@@ -209,10 +210,36 @@ instructions, tool definitions, model options, and complete conversation input a
 allows a restarted workflow to skip calls completed before an exception. Running and failed calls are
 retained for diagnosis but never reused; only fully saved responses are cache hits. The activity stream
 reports checkpoint hits and actual provider calls, and token usage counts only calls sent to a provider.
+
+Repository runs with a selected Jira issue also index completed Jira intake handoffs in
+`jira_intake_checkpoints`. SHA-256 fingerprints cover the title, description, all included comment pages
+(including authors and timestamps), and selected attachments' full source bytes. The cache also matches
+the issue's remaining fields, task input, Jira server/user, repository, reference collection, selection,
+model, instructions, tools, and model options. Before reusing the intake assessment, its recorded
+read-only repository, document and Jira tool results are re-read and compared. A hit restores the
+assessment and evidence for Planner, skips the Jira model rounds, and counts as one local checkpoint
+hit with no new provider tokens. Clarification/decision calls, problem reports, unknown tools, incomplete
+snapshots and failed or partial responses cannot become reusable intake checkpoints. Jira reads still
+run to verify freshness; excluded comments and attachments are not read for this check.
+
 Each checkpoint row includes a `workflow_id`, allowing all provider-call attempts from the same workflow run
 to be queried together. Actual local tool executions are stored separately in `tool_calls`, including the
 caller agent, tool name, input JSON, response or error JSON, status, duration, timestamps, and the same
 `workflow_id`. Framework handoffs are not tool executions and are therefore not inserted into this table.
+
+Read-only tool results are cached in memory within each team/run and shared across its agents.
+The cache keys include the tool, canonical JSON arguments, output representation, and source version;
+Planner/Jira compact file reads never substitute for Developer/Reviewer full reads. Concurrent identical
+successful reads share one execution. File reads verify a content hash; repository searches, lists,
+status and diffs verify the Git file inventory, file metadata, Git state and agent-write revision.
+Jira reads expire after 30 seconds and are invalidated by Jira reporting tools and user-decision tools.
+CodeGraph reads verify database/WAL file metadata; custom providers returning no cache version bypass caching.
+Writes, decisions, unknown tools, exceptions, cancellation and error responses are not retained.
+The cache holds at most 128 completed entries and 8 MiB of serialized result payloads; oversized results
+are not retained. Repository/graph entries also expire after one hour. Cache state is never reused by another run.
+Cache hits are recorded separately in `tool_cache_hits` and exposed as `toolCacheHits` in run reports,
+including the consuming agent, tool, input, cache key and timestamp. The report distinguishes these
+reuses from actual executions in `tool_calls`.
 
 The same database also keeps an audit record for every repository workflow. `workflows` contains the
 immutable, versioned input/configuration snapshot, while `workflow_runs` contains execution status and
