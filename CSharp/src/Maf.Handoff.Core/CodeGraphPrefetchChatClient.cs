@@ -23,6 +23,7 @@ internal sealed class CodeGraphPrefetchChatClient(IChatClient innerClient) : ICh
         @"\b(?<name>[A-Z][A-Za-z0-9_]*(?:Client|Service|Controller|Manager|Repository|Handler|Factory|Provider|Options|Settings|Model))\b",
         RegexOptions.CultureInvariant);
     private int _prefetchAttempted;
+    private string? _prefetchedContext;
 
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
@@ -88,39 +89,27 @@ internal sealed class CodeGraphPrefetchChatClient(IChatClient innerClient) : ICh
             try
             {
                 object? result = await getContext!.InvokeAsync(arguments, cancellationToken).ConfigureAwait(false);
-                materialized =
-                [
-                    .. materialized,
-                    new ChatMessage(
-                        ChatRole.User,
-                        $"Read-only CodeGraph context prefetched locally for symbol '{symbol}':\n{result}"),
-                ];
+                _prefetchedContext = $"Read-only CodeGraph context prefetched locally for symbol '{symbol}':\n{result}";
             }
-            catch
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                // CodeGraph is an optimization. Existing repository tools remain the source-of-truth fallback.
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _prefetchedContext = $"Automatic CodeGraph prefetch for symbol '{symbol}' failed: {exception.Message}. " +
+                    "Graph tools remain available for a targeted lookup; use repository inspection if graph data is unavailable.";
             }
         }
 
-        return Volatile.Read(ref _prefetchAttempted) == 0
-            ? (materialized, options)
-            : (materialized, WithoutCodeGraphTools(options));
-    }
-
-    private static ChatOptions? WithoutCodeGraphTools(ChatOptions? options)
-    {
-        if (options?.Tools is null)
+        // The injected context is not part of the caller's conversation history. Replay it on
+        // subsequent requests, and retain the graph tools for disambiguation and relationship queries.
+        if (_prefetchedContext is { } context && !materialized.Any(message => message.Text == context))
         {
-            return options;
+            materialized = [.. materialized, new ChatMessage(ChatRole.User, context)];
         }
 
-        ChatOptions projected = options.Clone();
-        projected.Tools =
-        [
-            .. options.Tools.Where(tool => tool is not AIFunction function ||
-                !IsCodeGraphTool(function.Name)),
-        ];
-        return projected;
+        return (materialized, options);
     }
 
     private static bool HasCodeGraphCall(IEnumerable<ChatMessage> messages) =>
@@ -177,6 +166,9 @@ internal sealed class CodeGraphPrefetchChatClient(IChatClient innerClient) : ICh
     {
         foreach (ChatMessage message in messages)
         {
+            // General role instructions mention C# even when the task has no source evidence.
+            if (message.Role == ChatRole.System) continue;
+
             if (!string.IsNullOrWhiteSpace(message.Text))
             {
                 yield return message.Text;

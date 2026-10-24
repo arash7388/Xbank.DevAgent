@@ -169,6 +169,8 @@ function initializeSetupSteps() {
   if (autonomySettings) agentsSettings.append(autonomySettings);
   const buildSettings = document.querySelector('#build-verification-settings');
   if (buildSettings) agentsSettings.append(buildSettings);
+  const retrySettings = document.querySelector('#workflow-retry-settings');
+  if (retrySettings) agentsSettings.append(retrySettings);
   agentsSettings.append(document.querySelector('#agent-turn-limits'), agentSettings);
   runSettings.append(instructionSettings, referenceSettings);
   const confirmationSettings = document.createElement('section');
@@ -294,6 +296,7 @@ function renderRunReview() {
       const label = control.labels?.[0]?.textContent.trim()
         || control.getAttribute('aria-label') || control.dataset.field || control.id;
       let value = control.value.trim();
+      if (control.id === 'task-complexity') value = document.querySelector('#task-complexity-label').textContent;
       if (control.type === 'password') {
         value = value ? 'Provided for this run' : configuredProviderKeys.has(control.dataset.providerKey)
           ? 'Configured on server' : /^(github|gitlab)-token$/.test(control.id)
@@ -319,6 +322,8 @@ function renderRunReview() {
   });
 
   controls(section('Agentic turn limits', 'agents'), document.querySelector('#agent-turn-limits'));
+  const retrySettings = document.querySelector('#workflow-retry-settings');
+  if (retrySettings) controls(section('Workflow retry', 'agents'), retrySettings);
   const autonomySettings = document.querySelector('#autonomy-settings');
   if (autonomySettings) controls(section('Autonomy and completion', 'agents'), autonomySettings);
   row(section('Build verification', 'agents'), 'Build verification',
@@ -583,8 +588,25 @@ function createAgentModelCard(agent) {
   promptInput.placeholder = 'Added below the protected server-owned role and CodeGraph policies; cannot override them.';
   promptInput.setAttribute('aria-label', `${agent.name} additional guidance`);
 
+  const turnLabel = document.createElement('label');
+  turnLabel.textContent = 'Maximum model turns';
+  const turnInput = document.createElement('input');
+  turnInput.id = `agent-max-turns-${agent.id}`;
+  turnLabel.htmlFor = turnInput.id;
+  turnInput.type = 'number';
+  turnInput.min = '1';
+  turnInput.max = '2147483647';
+  turnInput.step = '1';
+  turnInput.required = true;
+  turnInput.value = agent.id === 'developer' ? '120' : '60';
+  turnInput.dataset.field = 'max-agent-turns';
+  turnInput.dataset.configField = '';
+  const turnGuide = document.createElement('p');
+  turnGuide.className = 'field-guide';
+  turnGuide.textContent = 'Counts model requests across all tool rounds and handoffs for this agent. The run-wide AI call and USD budget limits also apply.';
+
   controls.append(providerGroup, effortGroup);
-  body.append(enabledLabel, description, tools, controls, modelLabel, modelSelect, promptLabel, promptInput);
+  body.append(enabledLabel, description, tools, controls, modelLabel, modelSelect, turnLabel, turnInput, turnGuide, promptLabel, promptInput);
   card.append(header, body);
   header.addEventListener('click', () => {
     const expanded = header.getAttribute('aria-expanded') === 'true';
@@ -733,6 +755,34 @@ if (providerCatalog[requestedProvider]) {
 }
 agentCatalog.forEach(createAgentModelCard);
 agentCatalog.forEach(createUsagePricingCard);
+initializeTaskComplexity();
+
+function initializeTaskComplexity() {
+  const slider = document.querySelector('#task-complexity');
+  const label = document.querySelector('#task-complexity-label');
+  const presets = [
+    { name: 'Simple', multiplier: 0.5 },
+    { name: 'Normal', multiplier: 1 },
+    { name: 'Hard', multiplier: 3 },
+  ];
+  const limits = [...document.querySelectorAll('#max-ai-calls, #max-budget-usd, [data-field="max-agent-turns"]')];
+  const baselines = new Map(limits.map(input => [input, Number(input.value)]));
+  let multiplier = 1;
+  limits.forEach(input => input.addEventListener('input', () => {
+    if (input.value && input.validity.valid) baselines.set(input, Number(input.value) / multiplier);
+  }));
+  slider.addEventListener('input', () => {
+    const preset = presets[Number(slider.value)];
+    multiplier = preset.multiplier;
+    label.textContent = `${preset.name} — ${multiplier}×`;
+    slider.setAttribute('aria-valuetext', label.textContent);
+    limits.forEach(input => {
+      const scaled = baselines.get(input) * multiplier;
+      const rounded = input.id === 'max-budget-usd' ? Number(scaled.toFixed(2)) : Math.round(scaled);
+      input.value = String(Math.min(Number(input.max), Math.max(Number(input.min), rounded)));
+    });
+  });
+}
 runButton.disabled = true;
 
 async function loadDefaultPrompts() {
@@ -1075,7 +1125,12 @@ async function startAgentRun() {
     agents,
     maxAiCalls: Number(values.get('maxAiCalls')),
     maxBudgetUsd: Number(values.get('maxBudgetUsd')),
+    retryOnWorkflowAgent: values.get('retryOnWorkflowAgent') === 'on',
+    numberOfRetries: Number(values.get('numberOfRetries') ?? 2),
+    taskComplexity: ['simple', 'normal', 'hard'][Number(values.get('taskComplexity') ?? 1)],
     skipBuildVerification: values.get('buildProject') !== 'on',
+    jiraValidationEnabled: values.get('jiraValidationEnabled') === 'on',
+    releaseManagerValidationEnabled: values.get('releaseManagerValidationEnabled') === 'on',
     autonomyLevel: Number(values.get('autonomyLevel') ?? 100),
     autoCommit: values.get('autoCommit') === 'on',
     autoPush: values.get('autoPush') === 'on',
@@ -1113,6 +1168,10 @@ function readAgentConfigurations() {
     const model = card.querySelector('[data-field="model"]').value;
     const effort = card.querySelector('[data-field="effort"]');
     const prompt = card.querySelector('[data-field="prompt"]').value.trim();
+    const maxAgentTurns = Number(card.querySelector('[data-field="max-agent-turns"]').value);
+    if (!Number.isInteger(maxAgentTurns) || maxAgentTurns < 1 || maxAgentTurns > 2147483647) {
+      throw new Error(`${card.dataset.agent} maximum model turns must be an integer between 1 and 2147483647.`);
+    }
     const priceCard = agentModels.querySelector(`[data-usage-agent="${card.dataset.agent}"]`);
     const inputCostPerMillionTokens = providerId === 'aifa' ? 0 : readTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), `${card.dataset.agent} input price`);
     const cachedInputCostPerMillionTokens = providerId === 'aifa' ? 0 : readTokenPrice(priceCard.querySelector('[data-field="cached-input-cost"]'), `${card.dataset.agent} cached input price`);
@@ -1125,6 +1184,7 @@ function readAgentConfigurations() {
     return [card.dataset.agent, {
       apiKey,
       prompt: prompt || null,
+      maxAgentTurns,
       provider: {
         id: model,
         name: preset.name,
@@ -2209,6 +2269,8 @@ const codeGraphIndexBadge = document.querySelector('#codegraph-index-badge');
 const codeGraphIndexLog = document.querySelector('#codegraph-index-log');
 const codeGraphError = document.querySelector('#codegraph-error');
 const codeGraphOverview = document.querySelector('#codegraph-overview');
+const codeGraphCodebase = document.querySelector('#codegraph-codebase');
+const codeGraphCheckSource = document.querySelector('#codegraph-check-source');
 const codeGraphToolForm = document.querySelector('#codegraph-tool-form');
 const codeGraphToolResult = document.querySelector('#codegraph-tool-result');
 const codeGraphQuery = document.querySelector('#codegraph-query');
@@ -2221,6 +2283,7 @@ let activeCodeGraphTool = 'find_symbol';
 let codeGraphIndexPoll = null;
 let codeGraphTableOffset = 0;
 let codeGraphTableRowCount = 0;
+let codeGraphDatabaseRequest = 0;
 
 document.querySelectorAll('[data-app-mode]').forEach(button => button.addEventListener('click', () => {
   const graphMode = button.dataset.appMode === 'codegraph';
@@ -2284,6 +2347,11 @@ codeGraphIndexForm.addEventListener('submit', async event => {
 });
 
 document.querySelector('#codegraph-refresh').addEventListener('click', () => refreshCodeGraphDatabase(true));
+codeGraphCheckSource.addEventListener('click', () => refreshCodeGraphDatabase(true));
+codeGraphCodebase.addEventListener('change', () => {
+  codeGraphSource.value = codeGraphCodebase.value;
+  refreshCodeGraphDatabase(true);
+});
 
 function startCodeGraphIndexPolling() {
   if (codeGraphIndexPoll) clearInterval(codeGraphIndexPoll);
@@ -2312,36 +2380,128 @@ function renderCodeGraphIndexStatus(status) {
 }
 
 async function refreshCodeGraphDatabase(showErrors = true) {
+  const request = ++codeGraphDatabaseRequest;
+  codeGraphCheckSource.disabled = true;
+  document.querySelector('#codegraph-source-checked').textContent = 'Checking current source files against the saved index...';
+  document.querySelector('#codegraph-freshness-summary').textContent = 'Checking...';
+  document.querySelector('#codegraph-freshness').replaceChildren();
   try {
     const overview = await api(`/api/codegraph/database?dbPath=${encodeURIComponent(codeGraphDb.value.trim())}`);
+    if (request !== codeGraphDatabaseRequest) return;
     codeGraphOverview.hidden = false;
-    const freshness = document.querySelector('#codegraph-freshness');
-    freshness.replaceChildren(...(overview.freshness || []).map(check => {
-      const item = document.createElement('p');
-      item.textContent = `${check.state.toUpperCase()}: ${check.message}`;
-      item.title = `Current SHA-256: ${check.currentHash || 'unverified'}\nIndexed SHA-256: ${check.indexedHash || 'unverified'}`;
-      return item;
-    }));
+    const checks = overview.freshness || [];
+    const selected = codeGraphCodebase.value || codeGraphSource.value.trim();
+    codeGraphCodebase.replaceChildren(...checks.map(check => new Option(check.sourcePath, check.sourcePath)));
+    if (checks.some(check => check.sourcePath === selected)) codeGraphCodebase.value = selected;
+    codeGraphCodebase.disabled = checks.length === 0;
+    renderCodeGraphFreshness(checks.filter(check => check.sourcePath === codeGraphCodebase.value));
+    document.querySelector('#codegraph-source-checked').textContent = `Checked ${new Date().toLocaleString()}. Compares the selected codebase's local source files with its saved database fingerprint.`;
     document.querySelector('#codegraph-db-meta').textContent = `${overview.databasePath} · ${formatBytes(overview.sizeBytes)}`;
     const counts = document.querySelector('#codegraph-counts');
     counts.replaceChildren(...Object.entries(overview.counts).map(([name, count]) => {
       const card = document.createElement('div'); card.className = 'codegraph-count';
+      const metric = {
+        codebases: ['Codebases', 'database', 'blue'], nodes: ['Nodes', 'nodes', 'purple'],
+        edges: ['Edges', 'edges', 'blue'], files: ['Files', 'file', 'teal'],
+        node_evidence: ['Node evidence', 'file', 'purple'], edge_evidence: ['Edge evidence', 'edges', 'teal'],
+        maf_source_fingerprints: ['Fingerprints', 'shield', 'blue'],
+      }[name] || [name.replaceAll('_', ' '), 'database', 'blue'];
+      card.dataset.tone = metric[2];
+      card.title = name;
+      const icon = codeGraphIcon(metric[1]);
+      const value = document.createElement('div'); value.className = 'codegraph-count-value';
       const number = document.createElement('strong'); number.textContent = formatNumber(count);
-      const label = document.createElement('span'); label.textContent = name;
-      card.append(number, label); return card;
+      const label = document.createElement('span'); label.textContent = metric[0];
+      value.append(number, label);
+      card.append(icon, value); return card;
     }));
     renderKindList('#codegraph-node-kinds', overview.nodeKinds, 'kind', 'count');
     renderKindList('#codegraph-edge-kinds', overview.edgeKinds, 'kind', 'count');
     showCodeGraphError();
   } catch (error) {
+    if (request !== codeGraphDatabaseRequest) return;
     codeGraphOverview.hidden = true;
     if (showErrors) showCodeGraphError(error.message);
+  } finally {
+    if (request === codeGraphDatabaseRequest) codeGraphCheckSource.disabled = false;
   }
+}
+
+function codeGraphIcon(name) {
+  const paths = {
+    database: 'M4 6c0-4 16-4 16 0s-16 4-16 0Zm0 0v12c0 4 16 4 16 0V6M4 12c0 4 16 4 16 0',
+    nodes: 'M9 12h6M6 9V6h12v3M6 15v3h12v-3M3 9h6v6H3ZM15 9h6v6h-6Z',
+    edges: 'M5 5h5v5H5ZM14 14h5v5h-5ZM10 7h7v7M7 10v7h7',
+    file: 'M14 3H5v18h14V8ZM14 3v6h5M8 13h8M8 17h5',
+    shield: 'M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6ZM8 12l3 3 5-6',
+    fresh: 'M8 12l3 3 5-6M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+    stale: 'M12 8v5M12 16v.1M10 4 2 18a1 1 0 0 0 1 2h18a1 1 0 0 0 1-2L14 4a2 2 0 0 0-4 0',
+    unknown: 'M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 2M12 16v.1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+    unavailable: 'm9 9 6 6m0-6-6 6M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  };
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.6');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', paths[name] || paths.unknown);
+  svg.append(path);
+  return svg;
+}
+
+function renderCodeGraphFreshness(checks) {
+  document.querySelector('#codegraph-freshness-summary').textContent = checks.length
+    ? 'Selected codebase' : 'No indexed sources';
+  const rows = checks.map(check => {
+    const state = ['fresh', 'stale', 'unknown', 'unavailable'].includes(check.state) ? check.state : 'unknown';
+    const row = document.createElement('div'); row.className = 'codegraph-freshness-row'; row.dataset.state = state;
+    const icon = document.createElement('div'); icon.className = 'codegraph-freshness-icon'; icon.append(codeGraphIcon(state));
+    const body = document.createElement('div'); body.className = 'codegraph-freshness-body';
+    const heading = document.createElement('div'); heading.className = 'codegraph-source-heading';
+    const name = document.createElement('strong'); name.textContent = check.sourcePath?.split(/[\\/]/).pop() || 'Source verification';
+    const badge = document.createElement('span'); badge.className = 'codegraph-freshness-badge';
+    badge.textContent = { fresh: 'Source matches index', stale: 'Source differs from index', unknown: 'Match unverified', unavailable: 'Source unavailable' }[state];
+    heading.append(name, badge);
+    const source = document.createElement('p'); source.className = 'codegraph-source-path'; source.textContent = check.sourcePath || 'Source path unavailable';
+    const message = document.createElement('p'); message.className = 'codegraph-freshness-message';
+    message.textContent = state === 'fresh'
+      ? 'The current local source fingerprint equals the fingerprint saved when this codebase was indexed.'
+      : state === 'stale'
+        ? 'The local source has changed since this codebase was indexed. Reindex this source to update its graph.'
+        : check.message || 'The source and index could not be compared.';
+    const details = document.createElement('details'); details.className = 'codegraph-verification-details';
+    details.open = true;
+    const summary = document.createElement('summary'); summary.textContent = 'Source and database fingerprints';
+    const hashes = document.createElement('p');
+    hashes.textContent = `Local source SHA-256: ${check.currentHash || 'unverified'}\nDatabase index SHA-256: ${check.indexedHash || 'unverified'}`;
+    details.append(summary, hashes);
+    body.append(heading, source, message, details);
+    row.append(icon, body);
+    return row;
+  });
+  if (!rows.length) {
+    const empty = document.createElement('p'); empty.className = 'codegraph-freshness-empty';
+    empty.textContent = 'Index a solution or project to verify source freshness.';
+    rows.push(empty);
+  }
+  document.querySelector('#codegraph-freshness').replaceChildren(...rows);
 }
 
 function renderKindList(selector, rows, nameField, countField) {
   const list = document.createElement('div'); list.className = 'codegraph-kind-list';
-  rows.forEach(row => { const item = document.createElement('span'); item.textContent = `${row[nameField]} · ${formatNumber(row[countField])}`; list.append(item); });
+  const maximum = Math.max(1, ...rows.map(row => Number(row[countField]) || 0));
+  rows.forEach(row => {
+    const item = document.createElement('div'); item.className = 'codegraph-kind-row';
+    const name = document.createElement('span'); name.textContent = row[nameField];
+    const count = document.createElement('strong'); count.textContent = formatNumber(row[countField]);
+    const track = document.createElement('div'); track.className = 'codegraph-kind-track';
+    const bar = document.createElement('div'); bar.style.width = `${Math.max(0, Number(row[countField]) || 0) / maximum * 100}%`;
+    track.append(bar); item.append(name, count, track); list.append(item);
+  });
   document.querySelector(selector).replaceChildren(list);
 }
 

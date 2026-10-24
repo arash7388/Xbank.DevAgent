@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using Maf.Handoff.Core;
+using Microsoft.Extensions.AI;
 
 namespace Maf.Handoff.Tests;
 
@@ -92,6 +93,32 @@ public sealed class RepositoryScenarioTests : IDisposable
         Assert.Contains("src/Allowed.cs", results);
         Assert.DoesNotContain("Generated", results);
         Assert.DoesNotContain("secret.env", results);
+    }
+
+    [Theory]
+    [InlineData("../outside.txt")]
+    [InlineData("secrets.env")]
+    [InlineData(".git/config")]
+    public async Task AgentToolsReturnRecoverableErrorsForRejectedPaths(string path)
+    {
+        foreach (bool compact in new[] { false, true })
+        {
+            AIFunction read = RepositoryToolFactory.CreateReadTools(_workspace, compactFileReads: compact)
+                .OfType<AIFunction>().Single(tool => tool.Name == "read_repository_file");
+            string result = Assert.IsType<string>(await read.InvokeAsync(new() { ["path"] = path }));
+            Assert.Contains("Repository tool request failed", result);
+            Assert.Contains("list_repository_files", result);
+        }
+        foreach (AIFunction tool in RepositoryToolFactory.CreateDeveloperTools(_workspace).OfType<AIFunction>()
+            .Where(tool => tool.Name is "write_repository_file" or "replace_repository_text"))
+        {
+            string result = Assert.IsType<string>(await tool.InvokeAsync(new()
+            {
+                ["path"] = path, ["content"] = "blocked", ["oldText"] = "old", ["newText"] = "new",
+            }));
+            Assert.Contains("Repository tool request failed", result);
+        }
+        Assert.Equal("", _workspace.GetStatus());
     }
 
     [Theory]

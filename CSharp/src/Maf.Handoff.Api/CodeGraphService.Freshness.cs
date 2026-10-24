@@ -70,9 +70,17 @@ public sealed partial class CodeGraphService
             }
             var current = CodeGraphSourceFingerprint.Capture(currentSource, cancellationToken);
             bool fresh = current.Hash == indexedHash;
+            string message = checkoutRoot is null
+                ? fresh
+                    ? $"CodeGraph is up to date for the indexed folder at '{source}'. Runs verify their own checkout separately; a different branch or newer revision may require reindexing."
+                    : $"CodeGraph is stale for '{source}': C# source or build inputs changed since the last verified index. Reindex in the CodeGraph workbench."
+                : fresh
+                    ? $"CodeGraph matches the run checkout at '{currentSource}' (indexed from '{source}')."
+                    : $"CodeGraph does not match the run checkout at '{currentSource}': C# source or build inputs differ from the verified index built from '{source}'. " +
+                        "The workbench checks the indexed folder, which can still be up to date for its local files. " +
+                        "Update that folder to the run's branch/revision and reindex in the CodeGraph workbench.";
             return new(source, fresh ? "fresh" : "stale", current.Hash, indexedHash,
-                fresh ? $"CodeGraph is up to date for '{source}'." :
-                    $"CodeGraph is stale for '{source}': C# source or build inputs changed since the last verified index. Reindex in the CodeGraph workbench.");
+                message);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {

@@ -6,6 +6,23 @@ namespace Maf.Handoff.Tests;
 public sealed class JiraCommentHandlerTests
 {
     [Theory]
+    [InlineData(false, 2000, 2000)]
+    [InlineData(true, 2000, 2000)]
+    [InlineData(false, 2000, 20)]
+    [InlineData(true, 20, 2000)]
+    public void CapsFinalCommentIncludingSignatureAndBothSections(bool scopeChange, int productLength, int technicalLength)
+    {
+        string text = $"{JiraCommentHandler.ProductHeading}\ncritical product: {new string('p', productLength)}\n\n{JiraCommentHandler.TechnicalHeading}\ncritical technical: {new string('t', technicalLength)}";
+        string formatted = JiraCommentHandler.Format(text, scopeChange);
+
+        Assert.True(formatted.Length <= JiraCommentHandler.MaxCommentLength);
+        Assert.StartsWith(JiraCommentHandler.Signature + "\n", formatted);
+        Assert.Contains(JiraCommentHandler.ProductHeading + "\ncritical product:", formatted);
+        Assert.Contains(JiraCommentHandler.TechnicalHeading + "\ncritical technical:", formatted);
+        Assert.Equal(formatted, JiraCommentHandler.Format(formatted, scopeChange));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void FormatsBothSectionsOnceWithoutMixingTheirContent(bool scopeChange)
@@ -18,6 +35,20 @@ public sealed class JiraCommentHandlerTests
         Assert.Contains(JiraCommentHandler.TechnicalHeading + "\n- پکیج داخلی در دسترس نیست.", formatted);
         Assert.Equal(formatted, JiraCommentHandler.Format(formatted, scopeChange));
         Assert.Equal(formatted, JiraCommentHandler.Format(formatted.Replace("\n", "\r\n"), scopeChange));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReservesSpaceForReporterMentionWithoutTruncatingIt(bool scopeChange)
+    {
+        const string mention = "[~accountid:abc:123]";
+        string text = JiraCommentHandler.ProductHeading + "\n" + new string('p', 2000)
+            + "\n\n" + JiraCommentHandler.TechnicalHeading + "\n" + new string('t', 2000);
+        string formatted = JiraCommentHandler.Format(text, scopeChange, mention);
+        Assert.True(formatted.Length <= JiraCommentHandler.MaxCommentLength);
+        Assert.EndsWith("\n\n" + mention, formatted);
+        Assert.Equal(formatted, JiraCommentHandler.Format(formatted, scopeChange, mention));
     }
 
     [Fact]

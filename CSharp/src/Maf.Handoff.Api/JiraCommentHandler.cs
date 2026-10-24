@@ -7,19 +7,39 @@ namespace Maf.Handoff.Api;
 // All workflow comments pass through this formatter, including automatic fallbacks.
 public static class JiraCommentHandler
 {
+    public const int MaxCommentLength = 1000;
     public const string Signature = "[MAF-AI:v1]";
     public const string ProductHeading = "محصول: مسائل و نیازمندی‌ها";
     public const string TechnicalHeading = "ملاحظات فنی";
     private const string EmptySection = "موردی گزارش نشده است.";
 
-    public static string Format(string text, bool scopeChange)
+    public static string Format(string text, bool scopeChange, string? reporterMention = null)
     {
         text = text.Replace("\r\n", "\n", StringComparison.Ordinal);
+        string suffix = string.IsNullOrWhiteSpace(reporterMention) ? "" : "\n\n" + reporterMention;
+        if (suffix.Length > 0 && text.EndsWith(suffix, StringComparison.Ordinal))
+            text = text[..^suffix.Length];
         if (text.StartsWith(Signature + "\n", StringComparison.Ordinal) && text.IndexOf("\n\n", StringComparison.Ordinal) is int end && end >= 0)
             text = text[(end + 2)..];
         (string product, string technical) = Sections(text);
         string sender = scopeChange ? "عامل پیاده‌سازی MAF — تغییر دامنهٔ محصول" : "عامل Jira در MAF — بررسی محصول";
-        return $"{Signature}\n{sender}\n\n{ProductHeading}\n{product}\n\n{TechnicalHeading}\n{technical}";
+        string prefix = $"{Signature}\n{sender}\n\n{ProductHeading}\n";
+        string separator = $"\n\n{TechnicalHeading}\n";
+        int budget = MaxCommentLength - prefix.Length - separator.Length - suffix.Length;
+        // Preserve both sections, sharing space only when both need it.
+        int productBudget = Math.Clamp(budget - technical.Length, budget / 2, budget);
+        productBudget = Math.Min(product.Length, productBudget);
+        product = Limit(product, productBudget);
+        technical = Limit(technical, budget - product.Length);
+        return prefix + product + separator + technical + suffix;
+    }
+
+    private static string Limit(string text, int length)
+    {
+        if (text.Length <= length) return text;
+        int end = length - 1;
+        if (end > 0 && char.IsHighSurrogate(text[end - 1])) end--;
+        return text[..end].TrimEnd() + "…";
     }
 
     private static (string Product, string Technical) Sections(string text)

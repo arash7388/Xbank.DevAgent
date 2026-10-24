@@ -5,7 +5,8 @@ namespace Maf.Handoff.Core;
 
 // Counts model turns outside checkpointing and tool invocation. Framework autonomous-turn
 // counters alone do not cover tool rounds or repeated handoff activations.
-internal sealed class WorkflowExecutionBudget(WorkflowSettings settings)
+internal sealed class WorkflowExecutionBudget(WorkflowSettings settings,
+    IReadOnlyDictionary<string, WorkflowSettings>? settingsByAgent = null)
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, int> _turns = new(StringComparer.Ordinal);
@@ -24,10 +25,12 @@ internal sealed class WorkflowExecutionBudget(WorkflowSettings settings)
             }
 
             int turns = _turns.GetValueOrDefault(agent);
-            if (turns >= settings.MaxAgentTurns)
+            int turnLimit = settingsByAgent is not null && settingsByAgent.TryGetValue(agent, out WorkflowSettings? agentSettings)
+                ? agentSettings.MaxAgentTurns : settings.MaxAgentTurns;
+            if (turns >= turnLimit)
             {
                 return _stopMessage = $"{HandoffTopology.AgentTurnLimitMarker} Agent '{agent}' reached " +
-                    $"its limit of {settings.MaxAgentTurns} model turns across all activations and tool rounds.";
+                    $"its limit of {turnLimit} model turns across all activations and tool rounds.";
             }
 
             _requests++;

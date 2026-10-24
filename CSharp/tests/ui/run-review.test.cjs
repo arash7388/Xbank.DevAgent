@@ -49,16 +49,17 @@ for (const checked of [null, false, true]) {
 
 // Exercise the setup placement with both current and older page markup.
 for (const present of [false, true]) {
-  const build = node(), autonomy = node(), limits = node(), models = node(), team = node(), agents = node();
+  const build = node(), autonomy = node(), retry = node(), limits = node(), models = node(), team = node(), agents = node();
   const context = {
     agentsSettings: agents, teamMapSection: team, agentSettings: models,
     document: { querySelector: selector => selector === '#build-verification-settings' ? (present ? build : null)
-      : selector === '#autonomy-settings' ? (present ? autonomy : null) : limits },
+      : selector === '#autonomy-settings' ? (present ? autonomy : null)
+      : selector === '#workflow-retry-settings' ? (present ? retry : null) : limits },
   };
   vm.createContext(context);
   const start = source.indexOf('  agentsSettings.append(teamMapSection);');
   const end = source.indexOf('  runSettings.append(', start);
   vm.runInContext(source.slice(start, end), context);
-  assert.deepEqual(agents.children, present ? [team, autonomy, build, limits, models] : [team, limits, models]);
+  assert.deepEqual(agents.children, present ? [team, autonomy, build, retry, limits, models] : [team, limits, models]);
 }
 console.log('Run review handles missing build controls and places current controls in the Agents step.');

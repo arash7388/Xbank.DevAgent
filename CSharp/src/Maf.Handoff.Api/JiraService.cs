@@ -108,7 +108,7 @@ public sealed partial class JiraService(HttpClient httpClient, IConfiguration co
         CancellationToken cancellationToken = default)
     {
         ValidateIssueKey(issueKey);
-        string fields = "summary,description,status,assignee,created,updated,comment,attachment,issuetype,priority,resolution,components,labels,fixVersions,versions,parent,subtasks,issuelinks";
+        string fields = "summary,description,status,assignee,created,updated,comment,attachment,issuetype,priority,resolution,components,labels,fixVersions,versions,parent,subtasks,issuelinks,reporter";
         string? acceptanceField = _configuration["Jira:AcceptanceCriteriaField"];
         if (!string.IsNullOrWhiteSpace(acceptanceField))
         {
@@ -120,6 +120,22 @@ public sealed partial class JiraService(HttpClient httpClient, IConfiguration co
             $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}?fields={fields}&expand=names",
             cancellationToken);
         return document.RootElement.Clone();
+    }
+
+    public async Task<string?> GetReporterMentionAsync(string issueKey, CancellationToken cancellationToken = default)
+    {
+        ValidateIssueKey(issueKey);
+        using JsonDocument document = await GetJsonAsync(
+            $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}?fields=reporter", cancellationToken);
+        if (!document.RootElement.TryGetProperty("fields", out JsonElement fields) ||
+            !fields.TryGetProperty("reporter", out JsonElement reporter) || reporter.ValueKind != JsonValueKind.Object)
+            return null;
+
+        string accountId = ReadString(reporter, "accountId");
+        string id = string.IsNullOrWhiteSpace(accountId) ? ReadString(reporter, "name") : accountId;
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 256 || id.IndexOfAny(['[', ']', '\r', '\n']) >= 0)
+            return null;
+        return string.IsNullOrWhiteSpace(accountId) ? $"[~{id}]" : $"[~accountid:{id}]";
     }
 
     public async Task<JsonElement> GetIssueCommentsAsync(

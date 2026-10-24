@@ -40,6 +40,9 @@ public static class AgentTeamFactory
         JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
     {
         WorkflowSettings workflowSettings = Get(settingsByAgent, AgentNames.Developer);
+        bool jiraValidation = settingsByAgent.TryGetValue(AgentNames.Jira, out WorkflowSettings? jiraSettings)
+            ? jiraSettings.JiraValidationEnabled : workflowSettings.JiraValidationEnabled;
+        bool releaseValidation = Get(settingsByAgent, AgentNames.ReleaseManager).ReleaseManagerValidationEnabled;
         userInput ??= jira as IWorkflowUserInput;
         if (userInput is not null && userInput is not AutonomyUserInput)
             userInput = new AutonomyUserInput(workflowSettings.AutonomyLevel, userInput);
@@ -80,7 +83,9 @@ public static class AgentTeamFactory
 
         ReviewerRemediationBudget remediationBudget = new(
             workflowSettings.MaxReviewerRemediationCycles);
-        WorkflowExecutionBudget executionBudget = new(workflowSettings);
+        foreach (WorkflowSettings agentSettings in settingsByAgent.Values)
+            agentSettings.Validate();
+        WorkflowExecutionBudget executionBudget = new(workflowSettings, settingsByAgent);
         WorkflowLoopBudget loopBudget = new(workflowSettings.MaxRepeatedWorkflowStates);
         effectiveClients = effectiveClients.ToDictionary(
             pair => pair.Key,
@@ -90,24 +95,31 @@ public static class AgentTeamFactory
             StringComparer.Ordinal);
 
         // Clarification retries must pass through the same execution and request budgets.
-        if (effectiveClients.TryGetValue(AgentNames.Jira, out IChatClient? intake) &&
+        if (jiraValidation && effectiveClients.TryGetValue(AgentNames.Jira, out IChatClient? intake) &&
             userInput is { IsAvailable: true } input)
             effectiveClients[AgentNames.Jira] = new JiraClarificationChatClient(intake, input);
 
         return new(
-            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira, "Task readiness, requirements validation, and integration reconnaissance.", AgentPrompts.Jira,
+            CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira,
+                jiraValidation ? "Task readiness, requirements validation, and integration reconnaissance." : "Gather Jira task input for Planner without validation.",
+                jiraValidation ? AgentPrompts.Jira : AgentPrompts.JiraGatherOnly,
                 CreateTools(AgentNames.Jira, false), codeGraphAvailable),
-            CreateAgent(Get(effectiveClients, AgentNames.Planner), Get(settingsByAgent, AgentNames.Planner), AgentNames.Planner, "Architecture and acceptance criteria.", AgentPrompts.Planner, CreateTools(AgentNames.Planner, false), codeGraphAvailable),
+            CreateAgent(Get(effectiveClients, AgentNames.Planner), Get(settingsByAgent, AgentNames.Planner), AgentNames.Planner, "Architecture and acceptance criteria.",
+                jiraValidation ? AgentPrompts.Planner : AgentPrompts.PlannerWithUnvalidatedJira,
+                CreateTools(AgentNames.Planner, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Developer), Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, CreateTools(AgentNames.Developer, true), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.Reviewer), Get(settingsByAgent, AgentNames.Reviewer), AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, false), codeGraphAvailable),
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Security, "Threat modeling and security review.", AgentPrompts.Security, CreateTools(AgentNames.Security, false), codeGraphAvailable),
-            CreateAgent(Get(effectiveClients, AgentNames.ReleaseManager), Get(settingsByAgent, AgentNames.ReleaseManager), AgentNames.ReleaseManager, "Final evidence gate.", AgentPrompts.ReleaseManager, CreateTools(AgentNames.ReleaseManager, false), codeGraphAvailable));
+            CreateAgent(Get(effectiveClients, AgentNames.ReleaseManager), Get(settingsByAgent, AgentNames.ReleaseManager), AgentNames.ReleaseManager,
+                releaseValidation ? "Final evidence gate." : "Minimal finalization using prior approvals.",
+                releaseValidation ? AgentPrompts.ReleaseManager : AgentPrompts.ReleaseManagerFinalizeOnly,
+                releaseValidation ? CreateTools(AgentNames.ReleaseManager, false) : null, false));
 
         IChatClient CreateEffectiveClient(string agentName, IChatClient client)
         {
             if (agentName == AgentNames.Jira && jiraIntakeCheckpoint is not null)
                 client = jiraIntakeCheckpoint.Wrap(client);
-            if (agentName == AgentNames.Jira && jira is IJiraProblemReporter reporter)
+            if (agentName == AgentNames.Jira && jiraValidation && jira is IJiraProblemReporter reporter)
                 client = new JiraProblemReportingChatClient(client, reporter);
             if (agentName == AgentNames.Developer && jira is IJiraScopeChangeReporter changes)
                 client = new JiraScopeChangeReportingChatClient(client, changes);
@@ -125,7 +137,7 @@ public static class AgentTeamFactory
         IList<AITool>? CreateTools(string agentName, bool developer)
         {
             List<AITool> tools;
-            if (workspace is null)
+            if (workspace is null || (agentName == AgentNames.Jira && !jiraValidation))
             {
                 tools = referenceDocuments is null
                     ? []
@@ -144,9 +156,9 @@ public static class AgentTeamFactory
 
             if (agentName == AgentNames.Jira && jira is not null)
             {
-                tools.AddRange(JiraToolFactory.Create(jira, userInput));
+                tools.AddRange(JiraToolFactory.Create(jira, userInput, jiraValidation));
             }
-            if (userInput is { IsAvailable: true } decisions)
+            if ((agentName != AgentNames.Jira || jiraValidation) && userInput is { IsAvailable: true } decisions)
                 tools.Add(AIFunctionFactory.Create(
                     (string questions, CancellationToken cancellationToken) => decisions.AskAsync(questions, cancellationToken),
                     name: "ask_user_decision", description: "Ask the user for a decision required by the selected autonomy policy. At 100% returns delegated decision guidance immediately."));

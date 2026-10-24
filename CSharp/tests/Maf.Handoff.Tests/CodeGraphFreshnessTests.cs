@@ -7,6 +7,7 @@ namespace Maf.Handoff.Tests;
 public sealed class CodeGraphFreshnessTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "maf-graph-freshness-" + Guid.NewGuid().ToString("N"));
+    private readonly string _checkoutRoot = Path.Combine(Path.GetTempPath(), "maf-graph-checkout-" + Guid.NewGuid().ToString("N"));
     private string Source => Path.Combine(_root, "sample", "Sample.csproj");
     private string Database => Path.Combine(_root, "graph.db");
     private CodeGraphService Service => new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -80,6 +81,45 @@ public sealed class CodeGraphFreshnessTests : IDisposable
         Assert.Contains("Reindex", result.Message);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task IndexingVerifiesAuditWarningsButRejectsProjectLoadFailures(bool auditOnly)
+    {
+        SeedDatabase();
+        string indexerRoot = Path.Combine(_root, "indexer");
+        string projectDirectory = Path.Combine(indexerRoot, "CodeGraph");
+        Directory.CreateDirectory(projectDirectory);
+        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "CodeGraph.csproj"), """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+            </Project>
+            """);
+        string diagnostic = $"[msbuild] Msbuild failed when processing the file '{Source}' with message: " +
+            (auditOnly
+                ? "Package 'RestSharp' 106.11.3 has a known high severity vulnerability, https://github.com/advisories/GHSA-9pq7-rcxv-47vq"
+                : "The reference assemblies for .NETFramework,Version=v4.8 were not found.");
+        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "Program.cs"),
+            "System.Console.Error.WriteLine(" + System.Text.Json.JsonSerializer.Serialize(diagnostic) + ");");
+        var service = new CodeGraphService(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["CodeGraph:RootPath"] = indexerRoot,
+            ["CodeGraph:DatabasePath"] = Database,
+        }).Build());
+
+        service.StartIndex(new(Source, Database, Incremental: false, RestoreDependencies: false));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        while (service.GetIndexStatus().State == "running")
+            await Task.Delay(100, deadline.Token);
+
+        var status = service.GetIndexStatus();
+        Assert.True(status.State == "completed_with_warnings", string.Join(Environment.NewLine, status.Log) + status.Error);
+        Assert.Equal(auditOnly, Service.GetFreshness(Database, Source).IsFresh);
+        Assert.Equal(auditOnly, status.Log.Any(line => line.StartsWith("Verified source fingerprint")));
+        Assert.Contains(status.Log, line => line.Contains(auditOnly
+            ? "[msbuild warning] Package security advisory" : "[msbuild] Msbuild failed"));
+    }
+
     [Fact]
     public void PersistedFingerprintSurvivesServiceRestartAndBecomesStaleOnSourceChange()
     {
@@ -87,6 +127,8 @@ public sealed class CodeGraphFreshnessTests : IDisposable
         CodeGraphFreshness fresh = Service.GetFreshness(Database, Source);
         Assert.True(fresh.IsFresh);
         Assert.Equal(fresh.IndexedHash, fresh.CurrentHash);
+        Assert.Contains("indexed folder", fresh.Message);
+        Assert.Contains("Runs verify their own checkout separately", fresh.Message);
         File.AppendAllText(Path.Combine(_root, "sample", "Service.cs"), "// changed");
         CodeGraphFreshness stale = Service.GetFreshness(Database, Source);
         Assert.Equal("stale", stale.State);
@@ -105,20 +147,51 @@ public sealed class CodeGraphFreshnessTests : IDisposable
         Assert.Equal("unknown", Service.GetFreshness(Database, Source).State);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CompletedReadsReleaseWalLocksBeforeReindexing(bool checkFreshness)
+    {
+        SeedDatabase();
+        using SqliteConnection indexer = OpenDatabase();
+        using SqliteCommand command = indexer.CreateCommand();
+        command.CommandTimeout = 1;
+        command.CommandText = "PRAGMA journal_mode = WAL";
+        Assert.Equal("wal", command.ExecuteScalar());
+
+        if (checkFreshness)
+            Assert.True(Service.GetFreshness(Database, Source).IsFresh);
+        else
+            Service.GetTable(Database, "codebases", 10, 0, null);
+
+        // An indexer needs exclusive access when configuring its journal mode.
+        // Disposed workbench reads must not leave pooled WAL connections open.
+        command.CommandText = "PRAGMA journal_mode = DELETE";
+        Assert.Equal("delete", command.ExecuteScalar());
+    }
+
     [Fact]
     public void WorkflowChecksTheActualCheckoutInsteadOfTheOriginalSource()
     {
         SeedDatabase();
         // A separate checkout has matching relative paths but different source bytes.
-        string checkout = Path.Combine(_root, "checkout");
+        string checkout = _checkoutRoot;
         Directory.CreateDirectory(Path.Combine(checkout, ".git"));
         Directory.CreateDirectory(Path.Combine(checkout, "sample"));
         File.Copy(Source, Path.Combine(checkout, "sample", "Sample.csproj"));
         File.Copy(Path.Combine(_root, "sample", "Service.cs"), Path.Combine(checkout, "sample", "Service.cs"));
         const string repository = "https://example.test/Sample.git";
-        Assert.True(Assert.Single(Service.CheckWorkflowFreshness(repository, checkout)).IsFresh);
+        var matching = Assert.Single(Service.CheckWorkflowFreshness(repository, checkout));
+        Assert.True(matching.IsFresh);
+        Assert.Contains(Path.Combine(checkout, "sample", "Sample.csproj"), matching.Message);
         File.WriteAllText(Path.Combine(checkout, "sample", "Service.cs"), "class Different { }");
-        Assert.Equal("stale", Assert.Single(Service.CheckWorkflowFreshness(repository, checkout)).State);
+        var stale = Assert.Single(Service.CheckWorkflowFreshness(repository, checkout));
+        Assert.Equal("stale", stale.State);
+        Assert.Contains(Path.Combine(checkout, "sample", "Sample.csproj"), stale.Message);
+        Assert.Contains(Source, stale.Message);
+        Assert.Contains("run's branch/revision", stale.Message);
+        // The indexed folder still matches its baseline even when the run uses newer source.
+        Assert.True(Service.GetFreshness(Database, Source).IsFresh);
     }
 
     [Fact]
@@ -174,5 +247,6 @@ public sealed class CodeGraphFreshnessTests : IDisposable
     {
         SqliteConnection.ClearAllPools();
         Directory.Delete(_root, recursive: true);
+        if (Directory.Exists(_checkoutRoot)) Directory.Delete(_checkoutRoot, recursive: true);
     }
 }

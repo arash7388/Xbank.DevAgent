@@ -1,0 +1,22 @@
+const assert = require('assert').strict;
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/wwwroot/app.js'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/wwwroot/index.html'), 'utf8');
+assert.match(html, /name="retryOnWorkflowAgent" type="checkbox"><span>Retry on workflow agent/);
+assert.match(html, /id="number-of-retries" name="numberOfRetries" type="number" min="1" max="10" step="1" value="2"/);
+assert.match(source, /agentsSettings\.append\(retrySettings\)/);
+const context = { connection: {}, agents: {}, referenceCollectionId: null, cognia: null, changeRequestSource: 'manual',
+  values: new Map([['branch', 'main'], ['task', 'Change'], ['maxAiCalls', '200'], ['maxBudgetUsd', '0.1']]) };
+vm.createContext(context);
+const payload = require('./request-payload.cjs')(source);
+vm.runInContext(payload, context);
+assert.equal(context.request.retryOnWorkflowAgent, false);
+assert.equal(context.request.numberOfRetries, 2);
+context.values.set('retryOnWorkflowAgent', 'on');
+context.values.set('numberOfRetries', '3');
+vm.runInContext(payload, context);
+assert.equal(context.request.retryOnWorkflowAgent, true);
+assert.equal(context.request.numberOfRetries, 3);
+console.log('Workflow retry controls, defaults, and request payload passed.');

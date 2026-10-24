@@ -6,6 +6,22 @@ namespace Maf.Handoff.Tests;
 
 public sealed class AgentTeamFactoryTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReleaseValidationSelectsRoleAndTools(bool enabled)
+    {
+        RecordingChatClient client = new();
+        WorkflowSettings settings = new("https://example.test", "model", "key")
+            { ReleaseManagerValidationEnabled = enabled };
+        AgentTeam team = AgentTeamFactory.Create(client, settings, userInput: new DecisionInput());
+        await team.ReleaseManager.RunAsync("Finalize the approved change");
+        Assert.Contains(enabled ? "Inspect the final Git diff" : "validation is disabled", client.Options!.Instructions);
+        if (enabled)
+            Assert.Contains(client.Options.Tools!, tool => tool.Name == "ask_user_decision");
+        else
+            Assert.True(client.Options.Tools is null || client.Options.Tools.Count == 0);
+    }
     [Fact]
     public async Task SharesReadCacheAcrossAgentsSeparatesCompactReadsAndPersistsHits()
     {
@@ -69,7 +85,7 @@ public sealed class AgentTeamFactoryTests
     public async Task EveryRequiredAgentCanRequestDecisionsWithoutJira(int level)
     {
         RecordingChatClient client = new();
-        WorkflowSettings settings = new("https://example.test", "model", "key") { AutonomyLevel = level };
+        WorkflowSettings settings = new("https://example.test", "model", "key") { AutonomyLevel = level, ReleaseManagerValidationEnabled = true };
         DecisionInput input = new();
         AgentTeam team = AgentTeamFactory.Create(client, settings, userInput: input);
         foreach (var agent in team.All)

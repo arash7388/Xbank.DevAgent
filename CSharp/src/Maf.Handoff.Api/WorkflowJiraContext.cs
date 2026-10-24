@@ -39,12 +39,13 @@ public sealed partial class WorkflowJiraContext(
                 return Publish(missing, scopeChange);
             }
 
-            string body = JiraCommentHandler.Format(problem, scopeChange);
             string? url = null;
             JiraProblemReport report;
             try
             {
                 url = writer.GetIssueUrl(issueKey);
+                string? reporterMention = await writer.GetReporterMentionAsync(issueKey, cancellationToken);
+                string body = JiraCommentHandler.Format(problem, scopeChange, reporterMention);
                 JsonElement comment = await writer.PostCommentAsync(issueKey, body, cancellationToken);
                 string? id = comment.TryGetProperty("id", out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
                 string title = scopeChange ? "گزارش تغییر دامنهٔ محصول" : "گزارش محصول و ملاحظات فنی";

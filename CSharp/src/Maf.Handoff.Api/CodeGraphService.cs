@@ -32,6 +32,7 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
         Path.Combine(configuration["CodeGraph:RootPath"] ?? @"C:\\Users\\a.masir\\source\\repos\\CodeGraph\\CodeGraph", "codegraph.db"));
     private CodeGraphIndexStatus _status = new("idle", null, null, null, null, null, []);
     private bool _sawWorkspaceFailure;
+    private bool _sawPackageAuditWarning;
 
     public object GetConfiguration() => new
     {
@@ -119,6 +120,7 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
             if (_status.State == "running") throw new InvalidOperationException("A CodeGraph indexing job is already running.");
             Directory.CreateDirectory(Path.GetDirectoryName(database)!);
             _sawWorkspaceFailure = false;
+            _sawPackageAuditWarning = false;
             _status = new("running", source, database, DateTimeOffset.UtcNow, null, null, []);
             _ = Task.Run(() => RunIndexerAsync(project, source, database, request));
             return _status;
@@ -170,9 +172,16 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
             if (request.IncludeExternal) indexArguments.Add("--include-external");
             var exitCode = await RunProcessAsync(_rootPath, indexArguments);
             bool hasWorkspaceFailures;
-            lock (_statusLock) hasWorkspaceFailures = _sawWorkspaceFailure;
-            var hasWarnings = restoreFailed || hasWorkspaceFailures;
-            if (exitCode == 0 && !hasWarnings)
+            bool hasPackageAuditWarnings;
+            lock (_statusLock)
+            {
+                hasWorkspaceFailures = _sawWorkspaceFailure;
+                hasPackageAuditWarnings = _sawPackageAuditWarning;
+            }
+            var hasWarnings = restoreFailed || hasWorkspaceFailures || hasPackageAuditWarnings;
+            // Package audit warnings describe security advisories, not missing
+            // projects or references. Keep them visible without rejecting freshness.
+            if (exitCode == 0 && !restoreFailed && !hasWorkspaceFailures)
             {
                 var after = CodeGraphSourceFingerprint.Capture(source);
                 if (before.Hash == after.Hash)
@@ -187,7 +196,7 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
                 }
             }
             if (exitCode == 0 && hasWarnings)
-                AppendLog("Index completed with warnings. Some projects or package references could not be loaded; review the messages above.");
+                AppendLog("Index completed with warnings; review the messages above. Freshness is verified only when a source fingerprint was recorded.");
 
             lock (_statusLock)
                 _status = _status with
@@ -256,17 +265,26 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
     {
         if (string.IsNullOrWhiteSpace(line)) return;
         var isPackageApproximation = IsPackageApproximationWarning(line);
+        var isPackageAudit = IsPackageAuditWarning(line);
         if (isPackageApproximation)
             line = line.Replace("[msbuild] Msbuild failed when processing", "[msbuild warning] Package version substituted while processing", StringComparison.OrdinalIgnoreCase);
+        if (isPackageAudit)
+            line = line.Replace("[msbuild] Msbuild failed when processing", "[msbuild warning] Package security advisory while processing", StringComparison.OrdinalIgnoreCase);
         lock (_statusLock)
         {
-            if (!isPackageApproximation && line.StartsWith("[msbuild]", StringComparison.OrdinalIgnoreCase)) _sawWorkspaceFailure = true;
+            if (isPackageAudit) _sawPackageAuditWarning = true;
+            if (!isPackageApproximation && !isPackageAudit && line.StartsWith("[msbuild]", StringComparison.OrdinalIgnoreCase)) _sawWorkspaceFailure = true;
             var log = _status.Log.ToList();
             log.Add(line);
             if (log.Count > 200) log.RemoveRange(0, log.Count - 200);
             _status = _status with { Log = log };
         }
     }
+
+    private static bool IsPackageAuditWarning(string line) =>
+        System.Text.RegularExpressions.Regex.IsMatch(line,
+            @"^\[msbuild\] Msbuild failed when processing the file '[^'\r\n]+' with message: (?:warning NU190[1-4]: )?Package '[^'\r\n]+' [^ \r\n]+ has a known (?:low|moderate|high|critical) severity vulnerability, https://github\.com/advisories/GHSA-[a-z0-9-]+$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     private static bool IsPackageApproximationWarning(string line) =>
         line.StartsWith("[msbuild]", StringComparison.OrdinalIgnoreCase)
@@ -454,7 +472,15 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
     private static SqliteConnection Open(string dbPath)
     {
         var path = RequireDatabasePath(dbPath, mustExist: true);
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Cache = SqliteCacheMode.Shared }.ToString());
+        // The indexer runs in another process and may need exclusive access to
+        // configure SQLite. Pooled readers retain WAL locks after disposal.
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadOnly,
+            Cache = SqliteCacheMode.Private,
+            Pooling = false,
+        }.ToString());
         connection.Open();
         return connection;
     }

@@ -53,6 +53,15 @@ to avoid stacking policies. Retries happen before a response is returned, so int
 bodies or partially delivered streams are not replayed. These transport attempts belong to one logical
 AI call in the existing request-budget and audit counters; checkpoint replays make no HTTP requests.
 
+In **Agents**, enable **Retry on workflow agent** and set **Number of retries** (1–10, default 2)
+to restart a failed workflow automatically. This option is off by default. Each retry waits two seconds,
+clones the base branch again, starts a fresh agent conversation, and includes the previous error as
+diagnostic context. Partial patches are not carried forward. Retry events and all attempts remain in
+the same session report, and AI calls and estimated cost share the original run limits. Cancellation,
+input requests, release rejection, unavailable build prerequisites, and configured workflow limits stop
+the run without retries. Commit, push, and PR/MR failures do not restart the workflow.
+The API accepts `retryOnWorkflowAgent` and `numberOfRetries` on session creation.
+
 For repositories containing tracked C# source, planner, developer, reviewer, and security agents can
 also receive the read-only `find_symbol`, `get_context`, `get_context_by_id`, and `get_neighbors` tools.
 CodeGraph is complementary: agents use a focused query when it can make analysis faster or cheaper,
@@ -95,7 +104,14 @@ after a server restart remain read-only. Attached references stay available unti
 collection lifetime expires; after expiry, start a new run with the references attached again.
 
 Jira and security are optional and start disabled. Every run uses Planner to produce a
-repository-backed implementation contract before Developer changes the repository. When Jira is enabled,
+repository-backed implementation contract before Developer changes the repository. In the Agents step,
+**Validate requirements in the Jira agent** is checked by default. Uncheck it to make Jira gather only
+issue details, included comments, and selected attachments, then hand the unvalidated input to Planner.
+In this mode Jira has no repository inspection, clarification, or problem-reporting tools and no automatic
+problem reporting. Planner validates requirements before planning; later agents retain their own checks.
+The choice appears in run confirmation and saved configuration. API clients can set
+`jiraValidationEnabled: false`; omitted values retain validation. The choice applies when Jira is enabled.
+With Jira validation enabled,
 it assesses task readiness before handing evidence to Planner: full issue details, discussion and decisions,
 acceptance criteria, selected attachments, a targeted code/test/documentation inspection, dependencies, and
 integration risks. Its read-only repository and document tools support that assessment. It reports READY,
@@ -107,7 +123,7 @@ the agent-run screen to resume the same Jira agent with its context and reposito
 timeout is 50 minutes and pauses while waiting; cancellation remains available. Answering a clarification
 restarts the 50-minute timeout. Follow-up questions use the same run.
 Non-blocking gaps are handled according to the selected autonomy policy.
-Planner, Developer, Reviewer, and Release Manager are required.
+Planner, Developer, Reviewer, and Release Manager are required. Release Manager validation is off by default: it finalizes from prior approvals with a brief summary and no inspection tools. Enable **Release Manager validation** in the UI (API: `releaseManagerValidationEnabled: true`) to restore final diff and evidence checks. Both modes require Reviewer approval and, when assigned, Security approval in the Release Manager instructions; the existing workflow approval checks remain unchanged.
 
 The Jira task preview has an **Include Jira comments in the AI context** checkbox, enabled by default.
 Uncheck it to exclude comments from the run; the backend filters comments from issue details and blocks
@@ -126,7 +142,7 @@ with build diagnostics, without starting another repair cycle. Uncheck it to ski
 notification records that compilation was not verified. The choice appears in run confirmation and
 saved configuration. API clients can set `skipBuildVerification: true` to skip the build.
 
-Every workflow comment passes through `JiraCommentHandler`, which adds `[MAF-AI:v1]` and two sections:
+Workflow comments focus on critical points, with at most three short bullets. The final posted text is capped at 1,000 characters, including signature and headings; excess section content is truncated, preserving both sections. Every workflow comment passes through `JiraCommentHandler`, which adds `[MAF-AI:v1]` and two sections:
 **محصول: مسائل و نیازمندی‌ها** for Product issues, requirements, acceptance criteria, and decisions;
 **ملاحظات فنی** for technical considerations and validation blockers. Reporting instructions limit the
 combined content to three short bullets and 800 characters, keeping detailed evidence in the run log.
@@ -158,10 +174,23 @@ these attempts. Each build has a five-minute timeout and bounded diagnostic outp
 stops its process tree. Repositories without .NET build targets record an explicit skip. The host
 must have a suitable .NET SDK and access to required package feeds; the Docker image includes the SDK.
 Enable Security when the work's
-context or risk needs it. The web app allows 60 model turns per agent by default. Set
-`Workflow:MaxAgentTurns` in `appsettings.json` or the `Workflow__MaxAgentTurns` environment variable
-to a positive integer to change this limit. The run's Maximum AI calls and USD budget still apply.
-The saved run configuration records the effective turn limit.
+context or risk needs it. In Agent settings, each agent has an editable Maximum model turns value:
+120 for Developer and 60 for the other agents. A turn includes tool rounds and later handoffs back
+to that agent. API callers can set `agents.<name>.maxAgentTurns` to a positive integer.
+When omitted, the server uses `Workflow:MaxAgentTurns` (or `Workflow__MaxAgentTurns`, default 60),
+with a minimum default of 120 for Developer. Explicit agent settings override that default.
+The run's Maximum AI calls (default 200 across all agents) and USD budget still apply.
+The saved run configuration records each agent's effective turn limit.
+The Agents step also includes a Task complexity slider: Simple uses 0.5× limits, Normal uses 1×
+(the default), and Hard uses 3×. It updates total AI calls, the USD budget, and all agent turn limits;
+individual limits remain editable. The server scales the conversation message limit by the same
+factor. API requests can set `taskComplexity` to `simple`, `normal`, or `hard`; explicit
+`maxAiCalls`, `maxBudgetUsd`, and agent turn values are effective limits and are not scaled again.
+Omitted agent turn limits use the server defaults scaled by complexity.
+The API also limits total conversation messages, including tool calls and results, using
+`Workflow:MaxTotalMessages` (or `Workflow__MaxTotalMessages`, default 2000). This is separate
+from model turns and AI calls: one model request can add multiple tool messages. The effective
+message limit is saved with each run. Reaching it preserves the patch without approving release.
 For CLI and direct factory use, a run allows at most 25 model
 requests by default (`MAF_MAX_LLM_REQUESTS`), including checkpoint replays. Each agent also has a hard
 limit of 25 model turns (`MAF_MAX_AGENT_TURNS`), counting its initial request, tool rounds, continuations,
@@ -313,6 +342,11 @@ Set `CodeGraph__Enabled=false` to disable CodeGraph for every agent workflow. Wh
 enabled (the default), each run can still opt out with the **Use CodeGraph for C# analysis** checkbox or
 the `codeGraphEnabled: false` session API field.
 
+For supported agents, the workflow prefetches one focused graph context when C# involvement becomes
+visible and retains it on later model requests. Graph tools remain available for symbol resolution
+and relationship queries, including when the initial prefetch finds no symbol. An empty lookup does
+not disable the index; agents can use a better symbol identified from repository evidence.
+
 Before agents start, the API compares the graph's saved SHA-256 source fingerprint with the actual
 cloned checkout. The fingerprint includes relative file paths, C# source, project/solution files,
 and build/dependency configuration under the repository root (or the source directory without Git).
@@ -324,9 +358,13 @@ Use the CodeGraph workbench to reindex a stale or unverified codebase. A changed
 forces a full refresh, even when incremental indexing is selected, because changes can affect
 relationships in otherwise unchanged files. The baseline is saved in `maf_source_fingerprints` in the
 graph database only after indexing finishes without restore/workspace failures and the source has
-remained unchanged. Existing databases need one workbench reindex to establish that baseline. Direct
+remained unchanged. NuGet package security advisories remain visible as warnings but do not prevent
+verification when projects load successfully. Existing databases need one workbench reindex to establish that baseline. Direct
 indexer runs invalidate verification when their `indexed_at` marker changes. The database overview
-shows each codebase's freshness; hash values appear in its tooltip. The same check is available at
+shows each codebase's freshness against its original indexed folder, with hashes under **Verification details**.
+A local folder can be up to date while a run's checkout differs because it uses a newer revision or
+another branch. Run messages identify both paths; update the indexed folder to the run's branch/revision
+and reindex before starting a new run. The same local-folder check is available at
 `GET /api/codegraph/freshness?dbPath=...&sourcePath=...`.
 
 The LLM checkpoint and tool-call database defaults to `data/llm-checkpoints.db` under the API content root. Override

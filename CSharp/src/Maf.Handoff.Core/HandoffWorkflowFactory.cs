@@ -62,10 +62,10 @@ public static class HandoffWorkflowFactory
         WorkflowSettings workflowSettings = settingsByAgent.TryGetValue(AgentNames.Developer, out WorkflowSettings? value)
             ? value
             : throw new ConfigurationException("Model configuration for agent 'developer' is required.");
-        return Create(team, workflowSettings);
+        return Create(team, workflowSettings, settingsByAgent.Values.Max(settings => settings.MaxAgentTurns));
     }
 
-    private static WorkflowBundle Create(AgentTeam team, WorkflowSettings settings)
+    private static WorkflowBundle Create(AgentTeam team, WorkflowSettings settings, int? autonomousTurnLimit = null)
     {
         AIAgent nextAfterReviewer = team.Security ?? team.ReleaseManager;
 
@@ -98,7 +98,7 @@ public static class HandoffWorkflowFactory
 
         Workflow workflow = builder
             .WithAutonomousMode(
-                turnLimit: settings.MaxAgentTurns,
+                turnLimit: autonomousTurnLimit ?? settings.MaxAgentTurns,
                 continuationPrompt: "Continue the assigned work and hand off when your role is complete.")
             .EmitAgentResponseEvents(true)
             .EmitAgentResponseUpdateEvents(true)

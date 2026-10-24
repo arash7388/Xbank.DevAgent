@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20261016-1">
+  <link rel="stylesheet" href="/styles.css?v=20261021-2">
 </head>
 <body>
   <header class="app-header">
@@ -199,9 +199,20 @@
         </section>
 
         <section id="codegraph-overview" class="codegraph-card" hidden>
-          <div class="card-heading"><div><h3>Database overview</h3><p id="codegraph-db-meta"></p></div></div>
-          <div id="codegraph-freshness" role="status" aria-live="polite"></div>
-          <div id="codegraph-counts" class="codegraph-counts"></div>
+          <div class="card-heading codegraph-overview-heading"><div><h3>Database overview</h3><p id="codegraph-db-meta"></p></div><span class="codegraph-storage-badge">SQLite</span></div>
+          <div id="codegraph-counts" class="codegraph-counts" aria-label="Database metrics"></div>
+          <div class="codegraph-freshness-heading"><h4>Source compared with database index</h4><span id="codegraph-freshness-summary"></span></div>
+          <div class="codegraph-paths">
+            <div>
+              <label for="codegraph-codebase">Indexed codebase</label>
+              <select id="codegraph-codebase"></select>
+            </div>
+            <div>
+              <button id="codegraph-check-source" class="secondary" type="button">Check source against index</button>
+              <p id="codegraph-source-checked" class="codegraph-freshness-message"></p>
+            </div>
+          </div>
+          <div id="codegraph-freshness" class="codegraph-freshness-list" role="status" aria-live="polite"></div>
           <div class="codegraph-summary-grid">
             <div><h4>Node kinds</h4><div id="codegraph-node-kinds"></div></div>
             <div><h4>Edge kinds</h4><div id="codegraph-edge-kinds"></div></div>
@@ -360,6 +371,14 @@
           <div id="agent-models" class="agent-model-grid"></div>
         </fieldset>
 
+        <fieldset id="workflow-retry-settings">
+          <legend>Workflow retry</legend>
+          <label class="check-row" for="retry-on-workflow-agent"><input id="retry-on-workflow-agent" name="retryOnWorkflowAgent" type="checkbox"><span>Retry on workflow agent</span></label>
+          <label for="number-of-retries">Number of retries</label>
+          <input id="number-of-retries" name="numberOfRetries" type="number" min="1" max="10" step="1" value="2" aria-describedby="workflow-retry-description">
+          <p id="workflow-retry-description" class="field-guide">After a workflow error, start again from a fresh clone and agent conversation, with the previous error as context. Retries are additional attempts after the first run and share its AI call and USD budget. Cancellation, input requests, validation rejections, unavailable build prerequisites, and configured limits stop the run.</p>
+        </fieldset>
+
         <fieldset id="build-verification-settings">
           <legend>Build verification</legend>
           <label class="check-row" for="build-project"><input id="build-project" name="buildProject" type="checkbox" checked><span>Build project</span></label>
@@ -368,9 +387,15 @@
 
         <fieldset id="agent-turn-limits">
           <legend>Agentic turn limits</legend>
+          <label for="task-complexity">Task complexity</label>
+          <output id="task-complexity-label" for="task-complexity" aria-live="polite">Normal — 1×</output>
+          <input id="task-complexity" name="taskComplexity" type="range" min="0" max="2" step="1" value="1" list="complexity-stops" aria-describedby="task-complexity-description" aria-valuetext="Normal — 1×">
+          <datalist id="complexity-stops"><option value="0" label="Simple"></option><option value="1" label="Normal"></option><option value="2" label="Hard"></option></datalist>
+          <div class="autonomy-scale" aria-hidden="true"><span>Simple · 0.5×</span><span>Normal · 1×</span><span>Hard · 3×</span></div>
+          <p id="task-complexity-description" class="field-guide">Scale total AI calls, USD budget, conversation messages, and every agent's model turns. Normal keeps the current limits; Simple halves them (60 turns becomes 30), and Hard triples them. You can adjust individual limits afterward.</p>
           <p class="field-guide">Limits apply across all agents for this run. Further AI calls stop when either limit is reached. Budget uses reported tokens and configured model prices; a call in progress can exceed the budget, and unpriced usage cannot be counted.</p>
           <label for="max-ai-calls">Maximum AI calls allowed</label>
-          <input id="max-ai-calls" name="maxAiCalls" type="number" min="1" max="2147483647" step="1" value="30" required>
+          <input id="max-ai-calls" name="maxAiCalls" type="number" min="1" max="2147483647" step="1" value="200" required>
           <label for="max-budget-usd">Maximum budget allowed (USD)</label>
           <input id="max-budget-usd" name="maxBudgetUsd" type="number" min="0.01" max="1000000" step="0.01" value="0.10" required>
         </fieldset>
@@ -400,6 +425,10 @@
 
         <fieldset id="autonomy-settings">
           <legend>Autonomy and completion</legend>
+          <label class="check-row"><input id="release-manager-validation-enabled" name="releaseManagerValidationEnabled" type="checkbox" aria-describedby="release-manager-validation-description"><span>Enable Release Manager validation</span></label>
+          <p id="release-manager-validation-description" class="field-guide">Off by default for faster finalization. Release Manager relies on prior approvals and gives a brief final summary. Enable to inspect the final diff and validate release evidence again.</p>
+          <label class="check-row"><input id="jira-validation-enabled" name="jiraValidationEnabled" type="checkbox" checked aria-describedby="jira-validation-description"><span>Validate requirements in the Jira agent</span></label>
+          <p id="jira-validation-description" class="field-guide">When unchecked, Jira only gathers task input. Planner and later agents validate requirements. Applies when the Jira agent is enabled.</p>
           <label for="autonomy-level">Agent autonomy</label>
           <div class="autonomy-heading"><output id="autonomy-label" for="autonomy-level" aria-live="polite">100% — Fully autonomous</output></div>
           <input id="autonomy-level" name="autonomyLevel" type="range" min="0" max="100" step="25" value="100" list="autonomy-stops" aria-describedby="autonomy-description">
@@ -633,6 +662,6 @@
 
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>
   <script src="/autonomy.js?v=20261016-1" defer></script>
-  <script src="/app.js?v=20261016-1" defer></script>
+  <script src="/app.js?v=20261022-1" defer></script>
 </body>
 </html>

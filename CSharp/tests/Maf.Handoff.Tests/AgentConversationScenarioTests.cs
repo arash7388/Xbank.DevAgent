@@ -444,6 +444,34 @@ public sealed class AgentConversationScenarioTests
         Assert.Equal("agent_turn_limit_reached", HandoffTopology.GetTerminationStatus(transcript, settings));
     }
 
+    [Theory]
+    [InlineData(AgentNames.Developer, 4, 1)]
+    [InlineData(AgentNames.Reviewer, 2, 4)]
+    public async Task IndividualAgentTurnLimitAppliesAcrossToolRounds(string loopingAgent, int limit, int otherLimit)
+    {
+        int calls = 0;
+        Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(name => name,
+            name => (IChatClient)new ScriptedClient((_, options) =>
+            {
+                if (name != loopingAgent) return Handoff(Handoffs(options)[^1], "Evidence reviewed.");
+                calls++;
+                return new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                    [new FunctionCallContent(Guid.NewGuid().ToString("N"), AgentToolCatalog.SearchDocuments.Name,
+                        new Dictionary<string, object?> { ["query"] = "requirements", ["maxResults"] = 1 })]));
+            }));
+        WorkflowSettings settings = new("https://example.test", "model", "key", MaxAgentTurns: otherLimit)
+        { MaxRepeatedWorkflowStates = 10 };
+        Dictionary<string, WorkflowSettings> profiles = clients.Keys.ToDictionary(name => name,
+            name => settings with { MaxAgentTurns = name == loopingAgent ? limit : otherLimit });
+
+        ChatMessage[] transcript = await Run(clients, referenceDocuments: new RecordingSearch(),
+            workflowSettings: settings, settingsByAgent: profiles);
+
+        Assert.Equal(limit, calls);
+        Assert.Equal("agent_turn_limit_reached", HandoffTopology.GetTerminationStatus(transcript, settings));
+        Assert.Contains(transcript, message => message.Text.Contains($"Agent '{loopingAgent}' reached its limit of {limit}"));
+    }
+
     private static ChatResponse Text(string text) => new(new ChatMessage(ChatRole.Assistant, text));
 
     private static ChatResponse Handoff(AITool tool, string evidence) => new(new ChatMessage(ChatRole.Assistant,
@@ -458,12 +486,13 @@ public sealed class AgentConversationScenarioTests
         IReferenceDocumentSearch? referenceDocuments = null,
         string task = "requested-change-42",
         IJiraIssueSearch? jira = null,
-        WorkflowSettings? workflowSettings = null)
+        WorkflowSettings? workflowSettings = null,
+        Dictionary<string, WorkflowSettings>? settingsByAgent = null)
     {
         WorkflowSettings settings = workflowSettings ?? new("https://example.test", "scripted-model", "test-key",
             MaxTotalMessages: 100, MaxAgentTurns: 15);
         WorkflowBundle bundle = HandoffWorkflowFactory.Create(clients,
-            clients.Keys.ToDictionary(name => name, _ => settings), referenceDocuments: referenceDocuments, jira: jira);
+            settingsByAgent ?? clients.Keys.ToDictionary(name => name, _ => settings), referenceDocuments: referenceDocuments, jira: jira);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
         await using StreamingRun run = await InProcessExecution.RunStreamingAsync(
             bundle.Workflow, task, cancellationToken: timeout.Token);

@@ -2,6 +2,26 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "C#: MAF Workbench (Release)",
+      "type": "coreclr",
+      "request": "launch",
+      "noDebug": true,
+      "preLaunchTask": "build-csharp-release",
+      "program": "${workspaceFolder}/CSharp/src/Maf.Handoff.Api/bin/Release/net10.0/Maf.Handoff.Api.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/CSharp/src/Maf.Handoff.Api",
+      "stopAtEntry": false,
+      "console": "internalConsole",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://127.0.0.1:8080"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
+      }
+    },
+    {
       "name": "C#: MAF Workbench (Debug)",
       "type": "coreclr",
       "request": "launch",

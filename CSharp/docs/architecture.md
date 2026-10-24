@@ -65,7 +65,13 @@ Review/build outcomes, execution limits, and cancellation retain their existing 
 2. Git validates the repository and branch and clones into a random directory under the configured
    temporary workspace. Before agents start, Git pulls the selected base branch from `origin` with
    `--ff-only --no-rebase`. A failed pull stops startup before any agent work begins.
-3. When enabled, Jira assesses task readiness with full issue details, paginated comments, selected attachments,
+3. When the Jira agent is enabled and `jiraValidationEnabled` is false, it only collects full issue details,
+   included comment pages, and selected attachments, and hands unvalidated source input to Planner.
+   Repository inspection, clarification tools, problem reporting, and automatic assessment reporting are
+   unavailable to Jira in that mode. Planner receives explicit instructions to validate requirements.
+   The UI checkbox defaults to checked; API requests default to validation enabled. The setting is saved
+   with run configuration and included in the Jira intake cache scope.
+   With validation enabled, Jira assesses task readiness with full issue details, paginated comments, selected attachments,
    scoped read-only repository inspection, and reference-document search. It checks requirement clarity and
    consistency, code feasibility, dependencies, and integration risks before handing evidence to Planner.
    It can publish one consolidated Persian problem comment on the selected task. A durable `jira_problem`

@@ -7,6 +7,7 @@ const source = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/w
 const fields = {
   provider: { value: 'aifa' }, model: { value: 'developer-model' },
   effort: { value: 'low', disabled: false }, prompt: { value: '' }, enabled: { checked: true },
+  'max-agent-turns': { value: '60' },
 };
 const card = { dataset: { agent: 'planner' }, querySelector(selector) {
   return fields[selector.match(/data-field="([^"]+)"/)[1]];
@@ -25,6 +26,14 @@ assert.throws(() => context.readAgentConfigurations(), /An API key for AIFA is r
 context.configuredProviderKeys.add('aifa');
 const configured = context.readAgentConfigurations().planner;
 assert.equal(configured.apiKey, '');
+assert.equal(configured.maxAgentTurns, 60);
+fields['max-agent-turns'].value = '180';
+assert.equal(context.readAgentConfigurations().planner.maxAgentTurns, 180);
+for (const invalid of ['', '0', '-1', '1.5', '2147483648']) {
+  fields['max-agent-turns'].value = invalid;
+  assert.throws(() => context.readAgentConfigurations(), /maximum model turns must be an integer/);
+}
+fields['max-agent-turns'].value = '60';
 assert.equal(configured.provider.name, 'AIFA');
 assert.equal(configured.provider.url, 'https://aifa-chatbot.dev.dotin.ir/v1');
 assert.equal(configured.provider.id, 'developer-model');

@@ -44,6 +44,11 @@ public static class CodeGraphPolicy
         prefetch before the next model request so graph evidence cannot be skipped. Use that supplied evidence when
         {RoleAction(agentName)}. Do not repeat the lookup merely to satisfy policy.
 
+        Graph tools remain available after prefetch. For relevant C# analysis, use find_symbol to resolve
+        ambiguous names, then get_context_by_id or get_neighbors to inspect the selected symbol's relationships.
+        An empty prefetch for one symbol does not mean the whole index is unavailable. Use a focused lookup
+        when repository evidence identifies a better symbol; avoid repeating an unproductive query.
+
         If CodeGraph returns no relevant data, is stale, or cannot identify the symbol, do not retry merely to
         satisfy a policy. Continue with targeted repository search, exact file reads, the Git diff, and appropriate
         tests. Briefly state the CodeGraph limitation and the replacement evidence used. Never claim graph evidence

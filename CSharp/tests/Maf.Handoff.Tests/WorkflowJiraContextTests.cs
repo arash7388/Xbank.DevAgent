@@ -140,6 +140,26 @@ public sealed class WorkflowJiraContextTests
     public void ResolvesOnlyAnUnambiguousRelatedTask(string? selected, string task, string? expected) =>
         Assert.Equal(expected, WorkflowJiraContext.ResolveIssueKey(selected, task));
 
+    [Theory]
+    [InlineData(false, "{\"name\":\"reporter.user\"}", "[~reporter.user]")]
+    [InlineData(true, "{\"accountId\":\"abc:123\",\"name\":\"legacy\"}", "[~accountid:abc:123]")]
+    [InlineData(false, "null", null)]
+    [InlineData(false, "{\"displayName\":\"Reporter\"}", null)]
+    [InlineData(false, "{\"name\":\"bad]name\"}", null)]
+    public async Task AppendsActualReporterMentionToWorkflowComments(bool scopeChange, string reporterJson, string? mention)
+    {
+        RecordingHandler handler = new() { ReporterJson = reporterJson };
+        WorkflowJiraContext context = Create(handler, "WEPOD-42", _ => { });
+        JiraProblemReport result = scopeChange
+            ? await context.ReportScopeChangeAsync(Problem)
+            : await context.ReportProblemAsync(Problem);
+        Assert.Equal("posted", result.Status);
+        using JsonDocument json = JsonDocument.Parse(handler.Body!);
+        Assert.Equal(JiraCommentHandler.Format(Problem, scopeChange, mention), json.RootElement.GetProperty("body").GetString());
+        Assert.Equal(1, handler.ReporterReads);
+        Assert.Equal(1, handler.Calls);
+    }
+
     private static WorkflowJiraContext Create(RecordingHandler handler, string? key, Action<RunEvent> notify)
     {
         IConfiguration config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -254,12 +274,19 @@ public sealed class WorkflowJiraContextTests
     private sealed class RecordingHandler(HttpStatusCode status = HttpStatusCode.Created, bool networkFailure = false) : HttpMessageHandler
     {
         public string ResponseJson { get; init; } = "{\"id\":\"321\"}";
+        public string ReporterJson { get; init; } = "null";
+        public int ReporterReads { get; private set; }
         public int Calls { get; private set; }
         public string? Url { get; private set; }
         public HttpMethod? Method { get; private set; }
         public string? Body { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.Method == HttpMethod.Get && request.RequestUri!.Query == "?fields=reporter")
+            {
+                ReporterReads++;
+                return new(HttpStatusCode.OK) { Content = new StringContent("{\"fields\":{\"reporter\":" + ReporterJson + "}}") };
+            }
             Calls++;
             Url = request.RequestUri!.AbsoluteUri;
             Method = request.Method;

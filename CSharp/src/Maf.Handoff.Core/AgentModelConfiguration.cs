@@ -5,6 +5,10 @@ public sealed record AgentModelConfiguration(
     string ApiKey,
     string? Prompt = null)
 {
+    public const int DefaultDeveloperMaxAgentTurns = 120;
+
+    public int? MaxAgentTurns { get; init; }
+
     [System.Text.Json.Serialization.JsonIgnore]
     public AifaRequestContext? AifaContext { get; init; }
 
@@ -26,7 +30,7 @@ public sealed record AgentModelConfiguration(
             provider.Id,
             ApiKey?.Trim() ?? string.Empty,
             maxTotalMessages,
-            maxAgentTurns,
+            MaxAgentTurns ?? maxAgentTurns,
             provider,
             string.IsNullOrWhiteSpace(Prompt) ? null : Prompt.Trim())
         {

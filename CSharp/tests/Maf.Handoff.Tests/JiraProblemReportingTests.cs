@@ -11,6 +11,60 @@ public sealed class JiraProblemReportingTests
 {
     private const string Problem = "معیار پذیرش مشخص نیست. لطفاً رفتار مورد انتظار را توضیح دهید.";
 
+    [Fact]
+    public async Task GatherOnlyIntakeReadsIssueAndHandsOffWithoutReportingOrClarification()
+    {
+        Reporter jira = new();
+        int intakeCalls = 0, downstreamCalls = 0;
+        string[] names = [AgentNames.Jira, .. AgentNames.Required];
+        Dictionary<string, IChatClient> clients = names.ToDictionary(name => name, name => (IChatClient)new Client(options =>
+        {
+            if (name == AgentNames.Jira)
+            {
+                Assert.Contains("Jira validation is disabled", options!.Instructions);
+                Assert.DoesNotContain(options.Tools!, tool => tool.Name is "report_jira_problem" or "ask_jira_clarification" or "ask_user_decision");
+                Assert.Contains(options.Tools!, tool => tool.Name == "get_jira_issue_comments");
+                Assert.Contains(options.Tools!, tool => tool.Name == "read_jira_attachment");
+                if (intakeCalls++ == 0)
+                    return new(new ChatMessage(ChatRole.Assistant,
+                        [new FunctionCallContent("details", "get_jira_issue_details", new Dictionary<string, object?> { ["issueKey"] = "WEPOD-42" })]));
+            }
+            else
+            {
+                downstreamCalls++;
+                Assert.Contains(options!.Tools!, tool => tool.Name == "ask_user_decision");
+                if (name == AgentNames.Planner)
+                    Assert.Contains("it did not validate readiness or requirements", options.Instructions);
+                if (name == AgentNames.ReleaseManager)
+                    return new(new ChatMessage(ChatRole.Assistant, "WORKFLOW_COMPLETE"));
+            }
+            AITool handoff = options!.Tools!.Last(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal));
+            // Source material may quote a previous assessment; gathering must not trigger automatic reporting.
+            string evidence = name == AgentNames.Jira ? "Source report: READY_WITH_ASSUMPTIONS\n" + Problem
+                : name == AgentNames.Reviewer ? "REVIEW_APPROVED" : "Requirements validated; implement the plan.";
+            return new(new ChatMessage(ChatRole.Assistant,
+                [new FunctionCallContent(Guid.NewGuid().ToString("N"), handoff.Name, new Dictionary<string, object?> { ["reasonForHandoff"] = evidence })]));
+        }));
+        WorkflowSettings settings = new("https://example.test", "test-model", "test-key")
+            { JiraValidationEnabled = false, AutonomyLevel = 50, ReleaseManagerValidationEnabled = true };
+        WorkflowBundle bundle = HandoffWorkflowFactory.Create(clients, names.ToDictionary(name => name, _ => settings), jira: jira, userInput: new RejectInput());
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(bundle.Workflow, "Gather WEPOD-42", cancellationToken: timeout.Token);
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+        ChatMessage[] transcript = [];
+        await foreach (WorkflowEvent item in run.WatchStreamAsync(timeout.Token))
+        {
+            Assert.IsNotType<WorkflowErrorEvent>(item);
+            Assert.IsNotType<ExecutorFailedEvent>(item);
+            if (item is WorkflowOutputEvent output) transcript = [.. output.As<IEnumerable<ChatMessage>>() ?? []];
+        }
+        Assert.Equal("completed", HandoffTopology.GetTerminationStatus(transcript, settings));
+        Assert.Equal(1, jira.DetailsReads);
+        Assert.Equal(0, jira.Reports);
+        Assert.Equal(2, intakeCalls);
+        Assert.Equal(4, downstreamCalls);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -122,8 +176,14 @@ public sealed class JiraProblemReportingTests
         Assert.True(CheckpointSerialization.SerializeResponse(new(new ChatMessage(ChatRole.Assistant, "READY"))).Reusable);
     }
 
+    private sealed class RejectInput : IWorkflowUserInput
+    {
+        public Task<string> AskAsync(string questions, CancellationToken cancellationToken = default) => throw new InvalidOperationException("Gather-only intake must not ask for clarification.");
+    }
+
     private sealed class Reporter : IJiraIssueSearch, IJiraProblemReporter
     {
+        public int DetailsReads { get; private set; }
         public int Reports { get; private set; }
         public string Problem { get; private set; } = "";
         public Task<JiraProblemReport> ReportProblemAsync(string problemInPersian, CancellationToken cancellationToken = default)
@@ -132,7 +192,11 @@ public sealed class JiraProblemReportingTests
             Problem = problemInPersian;
             return Task.FromResult(new JiraProblemReport("WEPOD-42", "posted", "نظر ثبت شد.", "321"));
         }
-        public Task<JsonElement> GetIssueDetailsAsync(string key, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<JsonElement> GetIssueDetailsAsync(string key, CancellationToken cancellationToken = default)
+        {
+            DetailsReads++;
+            return Task.FromResult(JsonSerializer.SerializeToElement(new { key, fields = new { summary = "Source task", description = Problem } }));
+        }
         public Task<JsonElement> GetIssueCommentsAsync(string key, int startAt = 0, int maxResults = 50, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraAttachmentInfo>> GetAttachmentsAsync(string key, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<JiraAttachmentText> ReadAttachmentAsync(string key, string id, int offset = 0, CancellationToken cancellationToken = default) => throw new NotSupportedException();

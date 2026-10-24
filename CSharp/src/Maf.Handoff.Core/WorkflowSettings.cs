@@ -13,6 +13,10 @@ public sealed record WorkflowSettings(
 
     public bool SkipBuildVerification { get; init; }
 
+    public bool ReleaseManagerValidationEnabled { get; init; }
+
+    public bool JiraValidationEnabled { get; init; } = true;
+
     public int AutonomyLevel { get; init; } = 100;
 
     public int MaxReviewerRemediationCycles { get; init; } = 5;

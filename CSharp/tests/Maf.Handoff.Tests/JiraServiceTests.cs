@@ -136,7 +136,7 @@ public sealed class JiraServiceTests
 
         Assert.Equal("Existing clients still work", details.GetProperty("fields").GetProperty("customfield_12345").GetString());
         Assert.Equal("WEPOD-41", details.GetProperty("fields").GetProperty("issuelinks")[0].GetProperty("inwardIssue").GetProperty("key").GetString());
-        Assert.Contains("parent,subtasks,issuelinks,customfield_12345", handler.RequestUri!.Query);
+        Assert.Contains("parent,subtasks,issuelinks,reporter,customfield_12345", handler.RequestUri!.Query);
         Assert.Contains("components,labels,fixVersions,versions", handler.RequestUri.Query);
         Assert.Contains("expand=names", handler.RequestUri.Query);
         Assert.Equal(HttpMethod.Get, handler.Method);
@@ -207,6 +207,7 @@ public sealed class JiraServiceTests
     {
         var request = System.Text.Json.JsonSerializer.Deserialize<CreateSessionRequest>("""{"RepositoryUrl":"https://example.test/repo.git","BaseBranch":"main","Task":"WEPOD-42","Agents":{},"GitHubToken":null}""");
         Assert.True(request!.JiraIncludeComments);
+        Assert.True(request.JiraValidationEnabled);
     }
 
     [Fact]
