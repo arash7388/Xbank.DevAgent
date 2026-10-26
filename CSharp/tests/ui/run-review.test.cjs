@@ -25,11 +25,19 @@ for (const checked of [null, false, true]) {
     '#agent-turn-limits': node(),
     '#build-project': checked === null ? null : { checked },
   };
+  const repository = {
+    dataset: { configCategory: 'repository' },
+    querySelector: selector => selector === 'legend' ? { textContent: 'Repository' } : {},
+    querySelectorAll: () => [
+      { type: 'radio', name: 'sourceControl', checked: false, value: 'github', labels: [{ textContent: 'GitHub' }] },
+      { type: 'radio', name: 'sourceControl', checked: true, value: 'gitlab', labels: [{ textContent: 'GitLab' }] },
+    ],
+  };
   const context = {
     document: {
       createElement: node,
       querySelector: selector => nodes[selector] || null,
-      querySelectorAll: () => [],
+      querySelectorAll: selector => selector === '#connection-settings > fieldset' ? [repository] : [],
     },
     agentModels: node(), changeRequestSource: 'manual', selectedReferenceFiles: () => [],
     setSetupStep: step => { editedStep = step; },
@@ -39,6 +47,9 @@ for (const checked of [null, false, true]) {
   const end = source.indexOf('// Native constraint validation', start);
   vm.runInContext(source.slice(start, end), context);
   assert.doesNotThrow(() => context.renderRunReview(), 'Review must work with current or older page markup');
+  const repositoryCard = summary.children.find(card => card.attributes['data-review-category'] === 'repository');
+  assert.ok(all(repositoryCard).some(item => item.textContent === 'GitLab'));
+  assert.ok(!all(repositoryCard).some(item => item.textContent === 'GitHub'));
   const buildCard = summary.children.find(card => all(card).some(item => item.tag === 'h3' && item.textContent === 'Build verification'));
   assert.ok(buildCard, 'Review must disclose the effective build setting');
   assert.ok(all(buildCard).some(item => item.textContent === (checked ? 'Build after changes — report result' : 'Skipped — compilation will not be verified')));

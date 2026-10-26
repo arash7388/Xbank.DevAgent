@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace Maf.Handoff.Core;
 
-public sealed class GitLabMergeRequestClient(HttpClient httpClient)
+public sealed partial class GitLabMergeRequestClient(HttpClient httpClient)
 {
     public async Task<PullRequestResult> CreateAsync(
         string repositoryUrl,

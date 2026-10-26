@@ -12,6 +12,19 @@ as a browsable changed-file tree with per-file add/delete stats and a toggle bet
 side-by-side layouts. Commit, push, and PR/MR creation require either explicit approval after review
 or the corresponding completion selections authorized before starting the run.
 
+In **Connection**, choose **Address GitLab MR review** and enter the MR number for the selected
+GitLab project. The server reads the open MR and all discussion pages using the configured or supplied
+GitLab token, then clones its source branch for a fresh agent run. Input includes the title, description,
+general comments, unresolved threads, replies, authors, timestamps, and file/line positions. Resolved
+threads can optionally be included as context. Additional instructions are optional and no Jira task
+number is required. Each run retains the fetched review context in its input event history.
+
+Review fixes pass through the normal agent review and build policy. Approved commits and authorized
+pushes use the existing MR source branch; this mode does not create another MR, post replies, or resolve
+threads. Only open MRs whose source and target are in the selected project are supported. Read access
+is required for intake, and pushing requires repository write access. Review intake fails rather than
+silently truncating discussions when it exceeds 100 pages or 200,000 characters of context.
+
 In **Agents**, **Autonomy and completion** offers five autonomy levels: 0% Guided (ask before major
 decisions), 25% Assisted (ask about unclear requirements), 50% Collaborative (resolve minor
 ambiguity), 75% Highly autonomous (infer decisions and ask only when essential), and 100% Fully autonomous
@@ -223,9 +236,10 @@ restricted to the Developer handoff so repeated inspection cannot consume the gl
 
 At the end of every run, the activity view and session response show provider-reported input/output
 tokens for every participating agent and the run total. To calculate an estimated USD cost, enter the
-current cached-input, uncached-input, and output price per million tokens for each agent model in
-**Usage pricing**. DeepSeek rates are refreshed from the provider's pricing page at page load and when
-continuing from Request & references to Review & confirm for the current UTC price band; these values remain editable.
+current cached-input, uncached-input, and output price per million tokens in step 1 under
+**LLM settings > Model token prices**, alongside provider API keys. Rates are shared by provider and model
+across all agents and reasoning efforts. DeepSeek rates are refreshed from the provider's pricing page at page load and when
+continuing from Request & references to Review & confirm for the current UTC price band; custom rates are preserved.
 The confirmed run uses the displayed rates without refreshing them after confirmation. The price-band schedule includes
 weekends and the official 2026 Chinese public holidays (the holiday calendar needs updating annually).
 If refresh fails, the UI warns that displayed rates may be outdated. DeepSeek cache-hit input is preserved

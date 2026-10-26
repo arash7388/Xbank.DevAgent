@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20261021-2">
+  <link rel="stylesheet" href="/styles.css?v=20261026-10">
 </head>
 <body>
   <header class="app-header">
@@ -40,11 +40,12 @@
         <button id="jira-check-connection" class="secondary" type="button">Test connection</button>
       </div>
       <div class="change-source-choice" role="group" aria-label="Change request source">
-        <button type="button" class="jira-search-tab active" data-change-source="jira" aria-pressed="true">Select a Jira task</button>
-        <button type="button" class="jira-search-tab" data-change-source="manual" aria-pressed="false">Type a change manually</button>
+        <button type="button" class="jira-search-tab active" data-change-source="jira" aria-pressed="true"><span class="change-choice-icon" aria-hidden="true">J</span><span><strong>Select a Jira task</strong><small>Search your backlog and bring task details into the workflow.</small></span></button>
+        <button type="button" class="jira-search-tab" data-change-source="manual" aria-pressed="false"><span class="change-choice-icon" aria-hidden="true">✎</span><span><strong>Type a change manually</strong><small>Describe the change you want the agents to make.</small></span></button>
       </div>
       <section id="manual-change-panel" class="codegraph-card" hidden>
         <h3>Describe your change</h3>
+        <p class="field-guide">Start with the desired outcome, then add any requirements or constraints.</p>
         <label for="manual-change">Requested change</label>
         <textarea id="manual-change" rows="8" maxlength="20000" placeholder="Describe what to change, expected behavior, constraints, and tests."></textarea>
         <p class="field-guide">Your change will be carried into step 4 for review and supporting files.</p>
@@ -57,7 +58,7 @@
           <button id="jira-clear-selection" class="secondary" type="button">Clear selection</button>
         </div>
         <section class="codegraph-card jira-search-card">
-          <div class="card-heading"><div><h3>Find a task</h3><p>Search for a task, preview its details, then add it to your workflow.</p></div></div>
+          <div class="card-heading"><div><span class="jira-section-label">01 · Search</span><h3>Find your change request</h3><p>Choose a search method and narrow down your tasks.</p></div></div>
           <div class="jira-search-tabs" role="group" aria-label="Jira search mode">
             <button class="jira-search-tab active" type="button" data-jira-search="jql" aria-pressed="true">JQL filter</button>
             <button class="jira-search-tab" type="button" data-jira-search="project" aria-pressed="false">Project</button>
@@ -66,7 +67,7 @@
           <form id="jira-search-form" class="jira-search-form">
             <div class="jira-query-field">
               <label id="jira-search-label" for="jira-query">JQL filter</label>
-              <textarea id="jira-query" maxlength="2000" rows="2" spellcheck="false" aria-describedby="jira-query-guide" required>ORDER BY updated DESC</textarea>
+              <textarea id="jira-query" maxlength="2000" rows="1" spellcheck="false" aria-describedby="jira-query-guide" required>ORDER BY updated DESC</textarea>
               <p id="jira-query-guide" class="field-guide">Use a JQL query to filter tasks. Ctrl+Enter or ⌘+Enter to search.</p>
             </div>
             <div>
@@ -106,20 +107,19 @@
         </section>
         <div class="jira-browser">
         <section class="codegraph-card jira-results-card" aria-labelledby="jira-results-title">
-          <div class="jira-results-heading"><h3 id="jira-results-title">Tasks</h3><p id="jira-result-count" class="jira-result-count" role="status" aria-live="polite">Ready to search</p></div>
+          <div class="jira-results-heading"><div><span class="jira-section-label">02 · Results</span><h3 id="jira-results-title">Choose a task</h3></div><p id="jira-result-count" class="jira-result-count" role="status" aria-live="polite">Ready to search</p></div>
           <div id="jira-results" class="jira-results">
             <div class="jira-empty-state"><span class="jira-empty-icon" aria-hidden="true">⌕</span><h4>Find your next task</h4><p>Use the filters above to find Jira tasks, or open an issue by key in the preview.</p></div>
           </div>
         </section>
         <section class="codegraph-card jira-preview-card" aria-labelledby="jira-preview-title">
-          <div class="card-heading"><div><h3 id="jira-preview-title">Task preview</h3><p>Choose a result or open an issue by key.</p></div></div>
+          <div class="card-heading"><div><span class="jira-section-label">03 · Review &amp; select</span><h3 id="jira-preview-title">Task details</h3><p>Review a search result, or open a task directly by its issue key.</p></div></div>
           <form id="jira-issue-form" class="jira-issue-form">
             <div><label for="jira-issue-key">Issue key</label><input id="jira-issue-key" placeholder="e.g. OPIM-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required></div>
             <button id="jira-issue-button" class="secondary" type="submit">Open issue</button>
-            <button id="jira-title-button" class="text-button" type="button">Title only</button>
           </form>
           <div id="jira-issue-error" class="form-error" role="alert" hidden></div>
-          <label><input id="jira-include-comments" type="checkbox" checked> Include Jira comments in the AI context</label>
+          <label class="jira-context-option"><input id="jira-include-comments" type="checkbox" checked> Include Jira comments in the AI context</label>
           <p class="field-guide">Uncheck to use the task without its comments. Comments remain visible in the preview.</p>
           <div class="jira-preview-actions"><button id="jira-select-task" class="primary" type="button" disabled>Use this task</button><p class="field-guide">Adds task context to your change request.</p></div>
           <div id="jira-issue-result" class="jira-issue-result" tabindex="-1">
@@ -307,11 +307,17 @@
       <form id="run-form">
         <fieldset>
           <legend>Repository</legend>
-          <label for="source-control">Source control</label>
-          <select id="source-control" name="sourceControl">
-            <option value="github">GitHub</option>
-            <option value="gitlab" selected>GitLab</option>
-          </select>
+          <div id="source-control" class="run-mode-options" role="radiogroup" aria-labelledby="source-control-label">
+            <span id="source-control-label" class="run-mode-label">Source control</span>
+            <label class="run-mode-option" for="source-control-github">
+              <input id="source-control-github" name="sourceControl" type="radio" value="github">
+              <span>GitHub</span>
+            </label>
+            <label class="run-mode-option" for="source-control-gitlab">
+              <input id="source-control-gitlab" name="sourceControl" type="radio" value="gitlab" checked>
+              <span>GitLab</span>
+            </label>
+          </div>
           <section class="repository-source-panel" data-repository-source="github" hidden>
             <div class="two-columns">
               <div>
@@ -352,6 +358,23 @@
             </div>
             <p class="field-guide">For self-managed GitLab, configure the server's <code>GitLab:Host</code> setting.</p>
           </section>
+          <div id="run-mode" class="run-mode-options" role="radiogroup" aria-labelledby="run-mode-label">
+            <span id="run-mode-label" class="run-mode-label">Run mode</span>
+            <label class="run-mode-option" for="run-mode-change">
+              <input id="run-mode-change" name="runMode" type="radio" value="change" checked>
+              <span>New code change</span>
+            </label>
+            <label class="run-mode-option" for="run-mode-review">
+              <input id="run-mode-review" name="runMode" type="radio" value="gitlab_review">
+              <span>Address GitLab MR review</span>
+            </label>
+          </div>
+          <div id="mr-review-settings" hidden>
+            <label for="merge-request-iid">GitLab MR number</label>
+            <input id="merge-request-iid" name="mergeRequestIid" type="number" min="1" step="1" placeholder="17">
+            <label class="check-row"><input name="includeResolvedDiscussions" type="checkbox">Include resolved discussions as context</label>
+            <p class="field-guide">Uses the selected GitLab project and token. Loads the open MR's source branch, description, comments and unresolved review threads into a fresh agent run. Branch selection is automatic. Extra instructions below are optional; no task number is needed. Approved commits and pushes update the existing MR's source branch. Fork MRs are not supported.</p>
+          </div>
           <div>
             <label for="branch">Base branch</label>
             <input id="branch" name="branch" list="repository-branches" value="Develop" required aria-describedby="branch-status">
@@ -367,7 +390,6 @@
             <button id="copy-planner-settings" class="text-button" type="button">Apply planner model to all</button>
           </div>
           <p class="field-guide">Planner, Developer, Reviewer, and the final Release Manager are required. Planner creates the implementation contract, Developer executes it, and Reviewer independently confirms the changes. Jira and security are optional and start disabled.</p>
-          <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Each agent's current model pricing appears below its prompt and remains editable.</p>
           <div id="agent-models" class="agent-model-grid"></div>
         </fieldset>
 
@@ -401,7 +423,8 @@
         </fieldset>
 
         <fieldset>
-          <legend>Provider credentials</legend>
+          <legend>LLM settings</legend>
+          <h3 class="llm-subheading">Provider API keys</h3>
           <p class="field-guide">Enter credentials for the providers you intend to use. Entering one provider key switches all agents to that provider; adjust individual models in step 3. Keys remain in server memory for this run.</p>
           <div class="credential-grid">
             <div>
@@ -421,6 +444,12 @@
               <input id="claude-key" data-provider-key="claude" type="password" autocomplete="off" placeholder="Anthropic API key">
             </div>
           </div>
+          <details class="llm-pricing-settings">
+            <summary>Model token prices <span>Shared across all agents</span></summary>
+            <p class="field-guide">Set rates once per provider and model, in USD per million tokens. Every agent using that model shares these prices, regardless of reasoning effort. Blank rates stay unpriced; AIFA is free.</p>
+            <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Custom rates remain editable.</p>
+            <div id="llm-model-prices" class="llm-model-prices"></div>
+          </details>
         </fieldset>
 
         <fieldset id="autonomy-settings">
@@ -444,7 +473,7 @@
 
         <fieldset>
           <legend>Instruction</legend>
-          <label for="task">Requested code change</label>
+          <label for="task">Requested code change / additional review instructions</label>
           <textarea id="task" name="task" rows="7" maxlength="20000" required
                     placeholder="Describe the change to implement for the selected Jira task, including expected behavior and tests."></textarea>
           <p class="field-guide">Include expected behavior, constraints, and tests. For a manual request, include WEPOD-12345 or task number 12345. The task number is required to create the user/WEPOD-12345 branch. The agent edits only an isolated clone.</p>
@@ -662,6 +691,6 @@
 
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>
   <script src="/autonomy.js?v=20261016-1" defer></script>
-  <script src="/app.js?v=20261022-1" defer></script>
+  <script src="/app.js?v=20261026-10" defer></script>
 </body>
 </html>

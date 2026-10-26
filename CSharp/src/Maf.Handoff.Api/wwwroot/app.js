@@ -72,7 +72,7 @@ let changeRequestSource = 'jira';
 const changeRequestDrafts = { jira: '', manual: '' };
 let jiraEnabledForSelection = false;
 const workflowCodeGraphEnabled = document.querySelector('#codegraph-enabled');
-const sourceControlInput = document.querySelector('#source-control');
+let sourceControlInput = document.querySelector('input[name="sourceControl"]:checked');
 const repositorySourcePanels = document.querySelectorAll('[data-repository-source]');
 const projectKeyInput = document.querySelector('#project-key');
 const gitLabRepositoryInput = document.querySelector('#gitlab-repository');
@@ -173,6 +173,23 @@ function initializeSetupSteps() {
   if (retrySettings) agentsSettings.append(retrySettings);
   agentsSettings.append(document.querySelector('#agent-turn-limits'), agentSettings);
   runSettings.append(instructionSettings, referenceSettings);
+  [
+    [repositorySettings, 'repository'],
+    [providerSettings, 'credentials'],
+    [qdrantSettings, 'search'],
+    [cogniaSettings, 'knowledge'],
+    [analysisSettings, 'analysis'],
+    [jiraConnection, 'jira'],
+    [agentSettings, 'models'],
+    [autonomySettings, 'autonomy'],
+    [buildSettings, 'verification'],
+    [retrySettings, 'retry'],
+    [document.querySelector('#agent-turn-limits'), 'limits'],
+    [instructionSettings, 'instruction'],
+    [referenceSettings, 'references'],
+  ].forEach(([settings, category]) => {
+    if (settings) settings.dataset.configCategory = category;
+  });
   const confirmationSettings = document.createElement('section');
   confirmationSettings.id = 'confirmation-settings';
   confirmationSettings.className = 'setup-step-content';
@@ -186,14 +203,18 @@ function initializeSetupSteps() {
   navigation.className = 'setup-navigation';
   navigation.innerHTML = '<button id="setup-previous" class="back-button" type="button">Back</button><button id="setup-next" class="primary" type="button">Continue to Change request</button>';
   document.querySelector('.setup-panel').append(navigation);
-  document.querySelector('#setup-previous').addEventListener('click', () => setSetupStep(setupStepOrder[setupStepOrder.indexOf(currentSetupStep) - 1]));
+  document.querySelector('#setup-previous').addEventListener('click', () => {
+    const previous = setupStepOrder[setupStepOrder.indexOf(currentSetupStep) - 1];
+    setSetupStep(previous === 'jira' && document.querySelector('input[name="runMode"]:checked').value === 'gitlab_review' ? 'connection' : previous);
+  });
   document.querySelector('#setup-next').addEventListener('click', () => {
     if (currentSetupStep === 'request') { form.requestSubmit(); return; }
     if (currentSetupStep === 'jira' && !validateChangeRequestSource()) return;
     const panel = document.querySelector(`[data-setup-step="${currentSetupStep}"]`);
     const invalid = currentSetupStep === 'jira' ? null : panel.querySelector('input:invalid, select:invalid, textarea:invalid');
     if (invalid) { invalid.reportValidity(); return; }
-    setSetupStep(setupStepOrder[setupStepOrder.indexOf(currentSetupStep) + 1]);
+    const next = setupStepOrder[setupStepOrder.indexOf(currentSetupStep) + 1];
+    setSetupStep(next === 'jira' && document.querySelector('input[name="runMode"]:checked').value === 'gitlab_review' ? 'agents' : next);
   });
   setSetupStep('connection');
 }
@@ -225,7 +246,25 @@ function setSetupStep(step) {
 initializeSetupSteps();
 setRepositorySource(sourceControlInput.value);
 initializeProjectSelector();
-sourceControlInput.addEventListener('change', () => setRepositorySource(sourceControlInput.value));
+document.querySelector('#source-control').addEventListener('change', () => {
+  sourceControlInput = document.querySelector('input[name="sourceControl"]:checked');
+  setRepositorySource(sourceControlInput.value);
+});
+document.querySelector('#run-mode').addEventListener('change', syncMergeRequestMode);
+function syncMergeRequestMode() {
+  const review = document.querySelector('input[name="runMode"]:checked').value === 'gitlab_review';
+  document.querySelector('#mr-review-settings').hidden = !review;
+  document.querySelector('#merge-request-iid').required = review;
+  document.querySelector('#task').required = !review;
+  baseBranchInput.required = !review;
+  baseBranchInput.disabled = review;
+  if (review) {
+    sourceControlInput = document.querySelector('#source-control-gitlab');
+    sourceControlInput.checked = true;
+    setRepositorySource('gitlab');
+  }
+  document.querySelectorAll('input[name="sourceControl"]').forEach(input => { input.disabled = review; });
+}
 document.querySelector('#use-saved-gitlab-token').addEventListener('change', () => {
   syncSavedGitLabToken();
   loadRepositoryBranches();
@@ -241,6 +280,9 @@ workflowSteps.forEach(button => {
 
 function showSetupStepForControl(control) {
   setSetupStep(control.closest('[data-setup-step]')?.dataset.setupStep || 'request');
+  for (let parent = control.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === 'DETAILS') parent.open = true;
+  }
 }
 
 function prepareRunReview() {
@@ -262,9 +304,10 @@ function prepareRunReview() {
 function renderRunReview() {
   const summary = document.querySelector('#run-review-summary');
   summary.replaceChildren();
-  function section(title, step) {
+  function section(title, step, category = step) {
     const card = document.createElement('section');
     card.className = 'run-review-card';
+    card.setAttribute('data-review-category', category);
     const heading = document.createElement('div');
     heading.className = 'run-review-heading';
     const name = document.createElement('h3');
@@ -292,10 +335,16 @@ function renderRunReview() {
   }
   function controls(card, container) {
     container.querySelectorAll('input, select, textarea').forEach(control => {
+      if (control.type === 'radio' && !control.checked) return;
       if (control.disabled && control.type !== 'checkbox') return;
-      const label = control.labels?.[0]?.textContent.trim()
+      let label = control.labels?.[0]?.textContent.trim()
         || control.getAttribute('aria-label') || control.dataset.field || control.id;
       let value = control.value.trim();
+      if (control.type === 'radio') {
+        label = control.name === 'sourceControl' ? 'Source control' : 'Run mode';
+        value = control.labels?.[0]?.textContent.trim() || value;
+      }
+      if (control.id?.startsWith('price-')) label = control.getAttribute('aria-label') || label;
       if (control.id === 'task-complexity') value = document.querySelector('#task-complexity-label').textContent;
       if (control.type === 'password') {
         value = value ? 'Provided for this run' : configuredProviderKeys.has(control.dataset.providerKey)
@@ -309,11 +358,18 @@ function renderRunReview() {
   }
 
   const request = section('Requested changes', 'request');
-  row(request, 'Source', changeRequestSource === 'jira' ? `Jira task ${selectedJiraKey}` : 'Manual change request');
+  row(request, 'Source', document.querySelector('input[name="runMode"]:checked')?.value === 'gitlab_review' ? 'GitLab MR review'
+    : changeRequestSource === 'jira' ? `Jira task ${selectedJiraKey}` : 'Manual change request');
   row(request, 'Requested code change', document.querySelector('#task').value.trim());
+  if (document.querySelector('input[name="runMode"]:checked')?.value === 'gitlab_review') {
+    row(request, 'Merge request', `!${document.querySelector('#merge-request-iid').value}`);
+    row(request, 'Review scope', document.querySelector('[name="includeResolvedDiscussions"]').checked
+      ? 'Comments and all review threads (resolved threads are context)' : 'Comments and unresolved review threads');
+    row(request, 'Branch', 'The MR source branch is selected automatically. Approved pushes update the existing MR.');
+  }
 
   document.querySelectorAll('#connection-settings > fieldset').forEach(fieldset => {
-    const card = section(fieldset.querySelector('legend').textContent.trim(), 'connection');
+    const card = section(fieldset.querySelector('legend').textContent.trim(), 'connection', fieldset.dataset?.configCategory || 'connection');
     controls(card, fieldset);
     if (!fieldset.querySelector('input, select, textarea')) {
       row(card, 'Server settings', document.querySelector('#jira-server-settings').textContent);
@@ -605,8 +661,10 @@ function createAgentModelCard(agent) {
   turnGuide.className = 'field-guide';
   turnGuide.textContent = 'Counts model requests across all tool rounds and handoffs for this agent. The run-wide AI call and USD budget limits also apply.';
 
-  controls.append(providerGroup, effortGroup);
-  body.append(enabledLabel, description, tools, controls, modelLabel, modelSelect, turnLabel, turnInput, turnGuide, promptLabel, promptInput);
+  const modelGroup = document.createElement('div');
+  modelGroup.append(modelLabel, modelSelect);
+  controls.append(providerGroup, effortGroup, modelGroup);
+  body.append(enabledLabel, description, tools, controls, turnLabel, turnInput, turnGuide, promptLabel, promptInput);
   card.append(header, body);
   header.addEventListener('click', () => {
     const expanded = header.getAttribute('aria-expanded') === 'true';
@@ -615,85 +673,70 @@ function createAgentModelCard(agent) {
     card.classList.toggle('is-expanded', !expanded);
   });
   providerSelect.addEventListener('change', () => syncAgentCard(card));
-  modelSelect.addEventListener('change', () => syncUsagePricingCard(agent.id, true));
-  effortSelect.addEventListener('change', () => syncUsagePricingCard(agent.id, true));
   enabledInput.addEventListener('change', () => syncAgentCardEnabled(card));
   agentModels.append(card);
   syncAgentCard(card, agent.model, agent.effort);
 }
 
-function createUsagePricingCard(agent) {
-  const modelCard = agentModels.querySelector(`[data-agent="${agent.id}"]`);
-  if (!modelCard) return;
+function createModelPricingCard(providerId, modelId) {
+  const provider = providerCatalog[providerId];
   const card = document.createElement('section');
   card.className = 'usage-price-card';
-  card.dataset.usageAgent = agent.id;
+  card.dataset.pricingProvider = providerId;
+  card.dataset.pricingModel = modelId;
   const title = document.createElement('h3');
-  title.textContent = 'Token pricing';
-  const model = document.createElement('p');
-  model.dataset.field = 'pricing-model';
-  const modeNote = document.createElement('p');
-  modeNote.dataset.field = 'pricing-mode-note';
-  const inputLabel = document.createElement('label');
-  inputLabel.textContent = 'Uncached input USD / 1M';
-  const input = document.createElement('input');
-  input.type = 'number';
-  input.min = '0';
-  input.step = '0.0001';
-  input.inputMode = 'decimal';
-  input.placeholder = 'Optional';
-  input.dataset.field = 'input-cost';
-  input.setAttribute('aria-label', `${agent.name} input token price in USD per million tokens`);
-  const cachedInputLabel = document.createElement('label');
-  cachedInputLabel.textContent = 'Cached input USD / 1M';
-  const cachedInput = document.createElement('input');
-  cachedInput.type = 'number';
-  cachedInput.min = '0';
-  cachedInput.step = '0.0001';
-  cachedInput.inputMode = 'decimal';
-  cachedInput.placeholder = 'Optional';
-  cachedInput.dataset.field = 'cached-input-cost';
-  cachedInput.setAttribute('aria-label', `${agent.name} cached input token price in USD per million tokens`);
-  const outputLabel = document.createElement('label');
-  outputLabel.textContent = 'Output USD / 1M tokens';
-  const output = document.createElement('input');
-  output.type = 'number';
-  output.min = '0';
-  output.step = '0.0001';
-  output.inputMode = 'decimal';
-  output.placeholder = 'Optional';
-  output.dataset.field = 'output-cost';
-  output.setAttribute('aria-label', `${agent.name} output token price in USD per million tokens`);
-  card.append(title, model, modeNote, inputLabel, input, cachedInputLabel, cachedInput, outputLabel, output);
-  modelCard.querySelector('.agent-card-body').append(card);
-  syncUsagePricingCard(agent.id);
+  title.textContent = modelId;
+  card.append(title);
+  const note = document.createElement('p');
+  note.textContent = providerId === 'aifa' ? 'Free calls. Token rates are fixed at $0.' : 'USD per 1 million tokens';
+  card.append(note);
+  [
+    ['input-cost', 'Uncached input'],
+    ['cached-input-cost', 'Cached input'],
+    ['output-cost', 'Output'],
+  ].forEach(([field, caption]) => {
+    const group = document.createElement('div');
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.id = 'price-' + providerId + '-' + modelId + '-' + field;
+    label.htmlFor = input.id;
+    label.textContent = caption;
+    input.type = 'number';
+    input.min = '0';
+    input.step = 'any';
+    input.inputMode = 'decimal';
+    input.placeholder = 'Unpriced';
+    input.dataset.field = field;
+    input.setAttribute('aria-label', provider.name + ' ' + modelId + ' ' + caption + ' price in USD per million tokens');
+    input.readOnly = providerId === 'aifa';
+    group.append(label, input);
+    card.append(group);
+  });
+  return card;
 }
 
-function syncUsagePricingCard(agentId, forceProviderRates = false) {
-  const modelCard = agentModels.querySelector(`[data-agent="${agentId}"]`);
-  const priceCard = agentModels.querySelector(`[data-usage-agent="${agentId}"]`);
-  if (!modelCard || !priceCard) return;
-  const provider = providerCatalog[modelCard.querySelector('[data-field="provider"]').value];
-  const model = modelCard.querySelector('[data-field="model"]').value;
-  const effort = modelCard.querySelector('[data-field="effort"]');
-  const thinkingMode = effort?.disabled ? 'none' : effort.value;
-  const thinking = effort?.disabled ? '' : ` · ${thinkingMode} thinking`;
-  priceCard.querySelector('[data-field="pricing-model"]').textContent = `${provider?.name || 'Provider'} · ${model || 'No model selected'}${thinking}`;
-  const defaultPricing = provider?.pricingByThinking?.[model]?.[thinkingMode]
-    ?? provider?.defaultPricing?.[model];
-  priceCard.querySelector('[data-field="pricing-mode-note"]').textContent = provider?.name === 'AIFA'
-    ? 'AIFA calls are free. All token rates and call costs are $0.'
-    : provider?.name === 'DeepSeek'
-    ? `DeepSeek publishes the same per-token rates for ${thinkingMode} thinking; reasoning tokens are charged at the output rate.`
-    : 'Rates are resolved for the selected model and thinking mode.';
-  const isAifa = provider?.name === 'AIFA';
-  syncDefaultTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), defaultPricing?.input, forceProviderRates || isAifa);
-  syncDefaultTokenPrice(priceCard.querySelector('[data-field="cached-input-cost"]'), defaultPricing?.cachedInput, forceProviderRates || isAifa);
-  syncDefaultTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), defaultPricing?.output, forceProviderRates || isAifa);
-  for (const field of ['input-cost', 'cached-input-cost', 'output-cost']) {
-    priceCard.querySelector(`[data-field="${field}"]`).readOnly = isAifa;
-  }
-  priceCard.hidden = !isAgentCardEnabled(modelCard);
+function initializeModelPricing() {
+  const container = document.querySelector('#llm-model-prices');
+  Object.entries(providerCatalog).forEach(([providerId, provider]) => {
+    const group = document.createElement('details');
+    group.className = 'llm-provider-prices';
+    group.open = providerId === 'deepseek';
+    const summary = document.createElement('summary');
+    summary.textContent = provider.name;
+    group.append(summary);
+    provider.models.forEach(([modelId]) => group.append(createModelPricingCard(providerId, modelId)));
+    container.append(group);
+  });
+  syncModelPricing();
+}
+
+function syncModelPricing() {
+  document.querySelectorAll('[data-pricing-provider]').forEach(card => {
+    const rates = providerCatalog[card.dataset.pricingProvider]?.defaultPricing?.[card.dataset.pricingModel];
+    syncDefaultTokenPrice(card.querySelector('[data-field="input-cost"]'), rates?.input);
+    syncDefaultTokenPrice(card.querySelector('[data-field="cached-input-cost"]'), rates?.cachedInput);
+    syncDefaultTokenPrice(card.querySelector('[data-field="output-cost"]'), rates?.output);
+  });
 }
 
 function syncDefaultTokenPrice(input, nextDefault, forceProviderRate = false) {
@@ -733,7 +776,6 @@ function syncAgentCard(card, preferredModel = null, preferredEffort = null) {
   }
   syncRequiredProviderKeys();
   syncAgentCardEnabled(card);
-  syncUsagePricingCard(card.dataset.agent, true);
 }
 
 function isAgentCardEnabled(card) {
@@ -754,7 +796,7 @@ if (providerCatalog[requestedProvider]) {
   agentCatalog.forEach(agent => { agent.provider = requestedProvider; agent.model = null; agent.effort = null; });
 }
 agentCatalog.forEach(createAgentModelCard);
-agentCatalog.forEach(createUsagePricingCard);
+initializeModelPricing();
 initializeTaskComplexity();
 
 function initializeTaskComplexity() {
@@ -856,7 +898,7 @@ async function loadDeepSeekPricing() {
       return [model, Object.fromEntries(
         ['low', 'medium', 'high', 'max'].map(mode => [mode, { ...rates }]))];
     }));
-    agentCatalog.forEach(agent => syncUsagePricingCard(agent.id));
+    syncModelPricing();
     const effective = new Date(snapshot.effectiveAt).toLocaleString();
     pricingStatus.textContent = `DeepSeek ${snapshot.priceBand} prices loaded from the provider at ${effective}. Prices remain editable.`;
   } catch (error) {
@@ -1120,7 +1162,10 @@ async function startAgentRun() {
   const request = {
     sourceControl: connection.sourceControl,
     repositoryUrl: connection.repositoryUrl,
-    baseBranch: values.get('branch').trim(),
+    runMode: values.get('runMode') || 'change',
+    mergeRequestIid: values.get('runMode') === 'gitlab_review' ? Number(values.get('mergeRequestIid')) : null,
+    includeResolvedDiscussions: values.get('includeResolvedDiscussions') === 'on',
+    baseBranch: (values.get('branch') || '').trim(),
     task: values.get('task').trim(),
     agents,
     maxAiCalls: Number(values.get('maxAiCalls')),
@@ -1172,7 +1217,7 @@ function readAgentConfigurations() {
     if (!Number.isInteger(maxAgentTurns) || maxAgentTurns < 1 || maxAgentTurns > 2147483647) {
       throw new Error(`${card.dataset.agent} maximum model turns must be an integer between 1 and 2147483647.`);
     }
-    const priceCard = agentModels.querySelector(`[data-usage-agent="${card.dataset.agent}"]`);
+    const priceCard = providerId === 'aifa' ? null : document.querySelector(`[data-pricing-provider="${providerId}"][data-pricing-model="${model}"]`);
     const inputCostPerMillionTokens = providerId === 'aifa' ? 0 : readTokenPrice(priceCard.querySelector('[data-field="input-cost"]'), `${card.dataset.agent} input price`);
     const cachedInputCostPerMillionTokens = providerId === 'aifa' ? 0 : readTokenPrice(priceCard.querySelector('[data-field="cached-input-cost"]'), `${card.dataset.agent} cached input price`);
     const outputCostPerMillionTokens = providerId === 'aifa' ? 0 : readTokenPrice(priceCard.querySelector('[data-field="output-cost"]'), `${card.dataset.agent} output price`);
@@ -1463,6 +1508,7 @@ function render(snapshot) {
   setElapsedTimer(snapshot.startedAt, snapshot.status);
   sessionLabel.textContent = `${shortRepo(snapshot.repositoryUrl)} · ${snapshot.baseBranch}`;
   document.querySelector('#target-branch').value = snapshot.branch || '';
+  document.querySelector('#target-branch').readOnly = snapshot.runMode === 'gitlab_review';
   setStatus(snapshot.status, snapshot.sourceControl);
   renderEvents(snapshot.events || []);
   renderUsage(snapshot.usage, snapshot.status);
@@ -1502,9 +1548,9 @@ function render(snapshot) {
     diffSummary.textContent = `${snapshot.approval.pushed ? 'Pushed' : 'Committed'} ${snapshot.approval.commit.slice(0, 10)} on ${snapshot.approval.branch}`;
   }
   if (snapshot.pullRequest) {
-    diffSummary.textContent = `${isGitLab ? 'Merge' : 'Pull'} request #${snapshot.pullRequest.number} created from ${snapshot.approval.branch}`;
+    diffSummary.textContent = `${isGitLab ? 'Merge' : 'Pull'} request #${snapshot.pullRequest.number}${snapshot.approval ? ` · ${snapshot.approval.pushed ? 'Pushed' : 'Committed'} on ${snapshot.approval.branch}` : ''}`;
   }
-  pushBranchLabel.textContent = `Push the new branch to ${providerName}`;
+  pushBranchLabel.textContent = `Push the approved branch to ${providerName}`;
   pushBranchGuide.textContent = `Push requires a ${providerName} token with repository write permission.`;
 }
 
@@ -2705,6 +2751,7 @@ document.querySelector('#manual-change').addEventListener('input', event => {
   document.querySelector('#change-source-error').hidden = true;
 });
 function validateChangeRequestSource() {
+  if (document.querySelector('input[name="runMode"]:checked')?.value === 'gitlab_review') return true;
   const manual = document.querySelector('#manual-change');
   const error = document.querySelector('#change-source-error');
   const message = changeRequestSource === 'manual'
@@ -3093,7 +3140,6 @@ async function lookupJiraIssue(titleOnly, focusPreview = false) {
 }
 
 jiraIssueForm.addEventListener('submit', event => { event.preventDefault(); lookupJiraIssue(false); });
-document.querySelector('#jira-title-button').addEventListener('click', () => lookupJiraIssue(true));
 
 document.querySelector('#jira-create-form').addEventListener('submit', async event => {
   event.preventDefault();

@@ -7,6 +7,61 @@ namespace Maf.Handoff.Tests;
 
 public sealed class GitLabMergeRequestClientTests
 {
+    private const string ReviewMr = """{"iid":17,"state":"opened","title":"Fix checkout","description":"Expected behavior","source_project_id":1,"target_project_id":1,"source_branch":"user/WEPOD-123","target_branch":"main","web_url":"https://gitlab.com/acme/orders/-/merge_requests/17"}""";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadsReviewThreadsWithRepliesAndPositions(bool includeResolved)
+    {
+        using HttpClient http = new(new StubHandler(request =>
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            Assert.Equal("token", Assert.Single(request.Headers.GetValues("PRIVATE-TOKEN")));
+            string body = request.RequestUri!.Query.Length == 0 ? ReviewMr : """
+                [
+                  {"id":"open","notes":[{"id":1,"body":"Handle null","author":{"username":"reviewer"},"position":{"new_path":"Checkout.cs","new_line":12},"resolvable":true,"resolved":false},{"id":2,"body":"Agreed","author":{"username":"developer"}}]},
+                  {"id":"done","notes":[{"body":"Already fixed","resolvable":true,"resolved":true}]},
+                  {"id":"general","notes":[{"body":"Check tests","system":false}]},
+                  {"id":"system","notes":[{"body":"pushed a commit","system":true}]}
+                ]
+                """;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+        }));
+        GitLabMergeRequestReview result = await new GitLabMergeRequestClient(http).ReadReviewAsync(
+            "https://gitlab.com/acme/orders.git", "token", 17, includeResolved, CancellationToken.None);
+        Assert.Equal("user/WEPOD-123", result.SourceBranch);
+        Assert.Contains("Checkout.cs", result.Context);
+        Assert.Contains("Agreed", result.Context);
+        Assert.Contains("Check tests", result.Context);
+        Assert.DoesNotContain("pushed a commit", result.Context);
+        Assert.Equal(includeResolved, result.Context.Contains("Already fixed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ReadsEveryDiscussionPage()
+    {
+        int requests = 0;
+        string fullPage = "[" + string.Join(',', Enumerable.Repeat("""{"id":"thread","notes":[{"body":"feedback"}]}""", 100)) + "]";
+        using HttpClient http = new(new StubHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(++requests switch { 1 => ReviewMr, 2 => fullPage, _ => "[]" }),
+        })));
+        await new GitLabMergeRequestClient(http).ReadReviewAsync("https://gitlab.com/acme/orders.git", "token", 17, false, CancellationToken.None);
+        Assert.Equal(3, requests);
+    }
+
+    [Theory]
+    [InlineData("\"opened\"", "\"merged\"")]
+    [InlineData("\"source_project_id\":1", "\"source_project_id\":2")]
+    public async Task RejectsClosedOrForkMergeRequests(string original, string replacement)
+    {
+        using HttpClient http = new(new StubHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new StringContent(ReviewMr.Replace(original, replacement, StringComparison.Ordinal)) })));
+        await Assert.ThrowsAsync<RepositoryException>(() => new GitLabMergeRequestClient(http).ReadReviewAsync(
+            "https://gitlab.com/acme/orders.git", "token", 17, false, CancellationToken.None));
+    }
+
     [Fact]
     public async Task CreatesMergeRequestForNestedGitLabProjectAsync()
     {

@@ -497,7 +497,9 @@ public sealed partial class RepositoryWorkspace
             throw new RepositoryException("Commit message must contain between 1 and 200 characters.");
         }
 
-        await EnsureGitSuccessAsync(["switch", "-c", branch], cancellationToken);
+        string currentBranch = (await EnsureGitSuccessAsync(["branch", "--show-current"], cancellationToken)).Trim();
+        if (!string.Equals(currentBranch, branch, StringComparison.Ordinal))
+            await EnsureGitSuccessAsync(["switch", "-c", branch], cancellationToken);
         await EnsureGitSuccessAsync(["add", "--all"], cancellationToken);
         await EnsureGitSuccessAsync(
             ["-c", "user.name=MAF Repository Agent", "-c", "user.email=maf-agent@local.invalid",
@@ -524,7 +526,7 @@ public sealed partial class RepositoryWorkspace
         await EnsureGitSuccessAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], cancellationToken);
     }
 
-    internal static void ValidateRepositoryUrl(
+    public static void ValidateRepositoryUrl(
         string repositoryUrl,
         RepositoryProvider provider,
         string? gitLabHost)

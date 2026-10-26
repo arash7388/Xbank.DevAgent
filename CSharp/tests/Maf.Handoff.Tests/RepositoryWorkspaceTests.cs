@@ -6,6 +6,33 @@ namespace Maf.Handoff.Tests;
 public sealed class RepositoryWorkspaceTests
 {
     [Fact]
+    public async Task CommitsReviewFixOnExistingSourceBranch()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-review-commit", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            await GitAsync(root, "init", "--initial-branch=review-source");
+            File.WriteAllText(Path.Combine(root, "Fix.cs"), "class Fix {}\n");
+            await GitAsync(root, "add", ".");
+            await GitAsync(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "initial");
+            RepositoryWorkspace workspace = CreateWorkspace(root);
+            workspace.WriteFile("Fix.cs", "class Fix { public int Value => 1; }\n");
+            ApprovalResult result = await workspace.CommitAsync("review-source", "Address MR feedback", false, CancellationToken.None);
+            Assert.Equal("review-source", result.Branch);
+            Assert.Equal("review-source", await GitAsync(root, "branch", "--show-current"));
+            Assert.Equal("Address MR feedback", await GitAsync(root, "log", "-1", "--format=%s"));
+            Assert.Equal(string.Empty, await GitAsync(root, "status", "--porcelain"));
+        }
+        finally
+        {
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task CancellingGitTerminatesTheProcessAndItsChildren()
     {
         string root = Path.Combine(Path.GetTempPath(), "maf-git-cancellation", Guid.NewGuid().ToString("N"));
