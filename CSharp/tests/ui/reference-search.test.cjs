@@ -7,7 +7,7 @@ const source = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/w
 const field = value => ({ value, disabled: false });
 const semanticFields = { hidden: false };
 const context = {
-  referenceSearchModeInput: field('exact'),
+  referenceSearchModeInput: { value: 'exact', querySelector() { return this; } },
   qdrantUrlInput: field('invalid stale URL'),
   qdrantApiKeyInput: field(''),
   embeddingProviderInput: field('openai'),

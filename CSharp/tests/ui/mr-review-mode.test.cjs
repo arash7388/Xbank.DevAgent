@@ -12,6 +12,7 @@ const context = {
     querySelectorAll: () => sourceRadios,
   },
   baseBranchInput: {}, sourceControlInput: {}, setRepositorySource(value) { this.provider = value; },
+  loadOpenMergeRequests() {},
 };
 vm.createContext(context);
 const start = source.indexOf('function syncMergeRequestMode()');
@@ -42,6 +43,29 @@ vm.runInContext(require('./request-payload.cjs')(source), requestContext);
 assert.equal(requestContext.request.runMode, 'gitlab_review');
 assert.equal(requestContext.request.mergeRequestIid, 17);
 assert.equal(requestContext.request.includeResolvedDiscussions, true);
+assert.equal(requestContext.request.mrReviewMode, 'combined');
+for (const mode of ['independent', 'feedback', 'combined']) {
+  requestContext.values.set('mrReviewMode', mode);
+  vm.runInContext(require('./request-payload.cjs')(source), requestContext);
+  assert.equal(requestContext.request.mrReviewMode, mode);
+  assert.equal(requestContext.request.includeResolvedDiscussions, mode !== 'independent');
+}
 assert.equal(requestContext.request.baseBranch, '');
 assert.equal(requestContext.request.task, '');
+let modeChanged;
+const resolved = { checked: true, disabled: false };
+const selectedMode = { value: 'combined' };
+const modeContext = {
+  document: { querySelector: selector => selector === '#mr-review-mode'
+    ? { addEventListener: (event, handler) => { modeChanged = handler; } }
+    : selector === '[name="includeResolvedDiscussions"]' ? resolved : selectedMode },
+};
+vm.createContext(modeContext);
+const modeStart = source.indexOf("document.querySelector('#mr-review-mode').addEventListener");
+vm.runInContext(source.slice(modeStart, source.indexOf('function syncMergeRequestMode()', modeStart)), modeContext);
+for (const mode of ['independent', 'feedback', 'combined']) {
+  selectedMode.value = mode;
+  modeChanged();
+  assert.equal(resolved.disabled, mode === 'independent');
+}
 console.log('MR review mode selects GitLab and permits branch and task discovery.');

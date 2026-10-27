@@ -161,6 +161,17 @@ app.MapGet("/api/projects", (IConfiguration configuration) =>
 
 app.MapGet("/api/codegraph/config", (CodeGraphService codeGraph) => Results.Ok(codeGraph.GetConfiguration()));
 
+app.MapPost("/api/repositories/merge-requests", async (
+    RepositoryBranchesRequest request, IConfiguration configuration, GitLabMergeRequestClient client,
+    CancellationToken cancellationToken) =>
+{
+    if (!string.Equals(request.SourceControl, "gitlab", StringComparison.OrdinalIgnoreCase))
+        throw new ArgumentException("Merge request selection requires GitLab.");
+    string token = string.IsNullOrWhiteSpace(request.AccessToken)
+        ? configuration["GitLab:Token"] ?? "" : request.AccessToken.Trim();
+    return Results.Ok(await client.ListOpenAsync(request.RepositoryUrl.Trim(), token, cancellationToken));
+});
+
 app.MapPost("/api/repositories/branches", async (
     RepositoryBranchesRequest request, IConfiguration configuration, CancellationToken cancellationToken) =>
 {

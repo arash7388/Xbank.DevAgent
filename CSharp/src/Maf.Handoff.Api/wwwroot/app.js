@@ -127,7 +127,7 @@ function initializeSetupSteps() {
   qdrantGuide.className = 'field-guide';
   qdrantGuide.textContent = 'Plain text search needs no external services. Enable semantic search to use Qdrant and embeddings for files attached in step 4.';
   qdrantSettings.append(qdrantLegend, qdrantGuide);
-  qdrantSettings.append(document.querySelector('label[for="reference-search-mode"]'), referenceSearchModeInput);
+  qdrantSettings.append(document.querySelector('#reference-search-mode-label'), referenceSearchModeInput);
   const semanticFields = document.createElement('div');
   semanticFields.id = 'semantic-search-fields';
   [
@@ -149,7 +149,10 @@ function initializeSetupSteps() {
 
   const jiraConnection = document.createElement('fieldset');
   jiraConnection.innerHTML = '<legend>Jira connection</legend><p id="jira-server-settings" class="field-guide">Loading server Jira settings…</p>';
-  jiraConnection.append(document.querySelector('#jira-check-connection'), document.querySelector('#jira-connection-status'));
+  const jiraConnectionRow = document.createElement('div');
+  jiraConnectionRow.className = 'jira-connection-row';
+  jiraConnectionRow.append(document.querySelector('#jira-check-connection'), document.querySelector('#jira-connection-status'));
+  jiraConnection.append(jiraConnectionRow);
   connectionSettings.append(jiraConnection);
 
   const jiraSetup = document.querySelector('#jira-panel');
@@ -251,6 +254,10 @@ document.querySelector('#source-control').addEventListener('change', () => {
   setRepositorySource(sourceControlInput.value);
 });
 document.querySelector('#run-mode').addEventListener('change', syncMergeRequestMode);
+document.querySelector('#mr-review-mode').addEventListener('change', () => {
+  document.querySelector('[name="includeResolvedDiscussions"]').disabled =
+    document.querySelector('input[name="mrReviewMode"]:checked').value === 'independent';
+});
 function syncMergeRequestMode() {
   const review = document.querySelector('input[name="runMode"]:checked').value === 'gitlab_review';
   document.querySelector('#mr-review-settings').hidden = !review;
@@ -264,9 +271,12 @@ function syncMergeRequestMode() {
     setRepositorySource('gitlab');
   }
   document.querySelectorAll('input[name="sourceControl"]').forEach(input => { input.disabled = review; });
+  if (!review) loadOpenMergeRequests();
 }
 document.querySelector('#use-saved-gitlab-token').addEventListener('change', () => {
   syncSavedGitLabToken();
+  document.querySelector('[name="includeResolvedDiscussions"]').disabled = !['feedback', 'combined'].includes(
+    document.querySelector('input[name="mrReviewMode"]:checked')?.value || 'combined') || sourceControl !== 'gitlab';
   loadRepositoryBranches();
 });
 document.querySelectorAll('#github-repository, #gitlab-repository, #github-token, #gitlab-token')
@@ -287,6 +297,18 @@ function showSetupStepForControl(control) {
 
 function prepareRunReview() {
   clearError();
+  if (sourceControlInput.value === 'gitlab' && !gitLabRepositoryInput.value) {
+    setSetupStep('connection');
+    showError('Select a configured GitLab project before continuing.');
+    return false;
+  }
+  if (document.querySelector('input[name="runMode"]:checked')?.value === 'gitlab_review'
+      && !document.querySelector('#merge-request-iid').value) {
+    setSetupStep('connection');
+    showError('Select an open merge request from the table before continuing.');
+    document.querySelector('#refresh-merge-requests').focus();
+    return false;
+  }
   if (!validateChangeRequestSource()) { setSetupStep('jira'); return false; }
   if (!form.reportValidity()) return false;
   try {
@@ -317,7 +339,17 @@ function renderRunReview() {
     edit.className = 'text-button';
     edit.textContent = 'Edit';
     edit.setAttribute('aria-label', `Edit ${title}`);
-    edit.addEventListener('click', () => setSetupStep(step));
+    edit.addEventListener('click', () => {
+      setSetupStep(step);
+      const target = document.querySelector(`[data-setup-step="${step}"] [data-config-category="${category}"]`);
+      if (!target) return;
+      for (let parent = target; parent; parent = parent.parentElement) {
+        if (parent.tagName === 'DETAILS') parent.open = true;
+      }
+      target.setAttribute('tabindex', '-1');
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: 'start', behavior: 'instant' });
+    });
     heading.append(name, edit);
     card.append(heading);
     summary.append(card);
@@ -335,16 +367,18 @@ function renderRunReview() {
   }
   function controls(card, container) {
     container.querySelectorAll('input, select, textarea').forEach(control => {
+      if (control.type === 'hidden') return;
+      if (control.id?.startsWith('price-')) return;
       if (control.type === 'radio' && !control.checked) return;
       if (control.disabled && control.type !== 'checkbox') return;
       let label = control.labels?.[0]?.textContent.trim()
         || control.getAttribute('aria-label') || control.dataset.field || control.id;
       let value = control.value.trim();
       if (control.type === 'radio') {
-        label = control.name === 'sourceControl' ? 'Source control' : 'Run mode';
+        label = control.name === 'sourceControl' ? 'Source control' : control.name === 'projectKey' ? 'Configured project'
+          : control.name === 'mrReviewMode' ? 'Review mode' : 'Run mode';
         value = control.labels?.[0]?.textContent.trim() || value;
       }
-      if (control.id?.startsWith('price-')) label = control.getAttribute('aria-label') || label;
       if (control.id === 'task-complexity') value = document.querySelector('#task-complexity-label').textContent;
       if (control.type === 'password') {
         value = value ? 'Provided for this run' : configuredProviderKeys.has(control.dataset.providerKey)
@@ -357,14 +391,20 @@ function renderRunReview() {
     });
   }
 
-  const request = section('Requested changes', 'request');
+  const request = section('Requested changes', 'request', 'instruction');
   row(request, 'Source', document.querySelector('input[name="runMode"]:checked')?.value === 'gitlab_review' ? 'GitLab MR review'
     : changeRequestSource === 'jira' ? `Jira task ${selectedJiraKey}` : 'Manual change request');
   row(request, 'Requested code change', document.querySelector('#task').value.trim());
   if (document.querySelector('input[name="runMode"]:checked')?.value === 'gitlab_review') {
     row(request, 'Merge request', `!${document.querySelector('#merge-request-iid').value}`);
-    row(request, 'Review scope', document.querySelector('[name="includeResolvedDiscussions"]').checked
-      ? 'Comments and all review threads (resolved threads are context)' : 'Comments and unresolved review threads');
+    const reviewMode = document.querySelector('input[name="mrReviewMode"]:checked')?.value || 'combined';
+    row(request, 'Review scope', {
+      independent: 'Independent MR review: review and fix the implementation against task requirements and acceptance criteria. GitLab comments and threads are excluded.',
+      feedback: 'Apply reviewer feedback: evaluate GitLab comments and unresolved threads, apply relevant fixes, and verify them.',
+      combined: 'Independent review + reviewer feedback: perform both and report outcomes separately.',
+    }[reviewMode]);
+    row(request, 'Resolved discussions', reviewMode !== 'independent' && document.querySelector('[name="includeResolvedDiscussions"]').checked
+      ? 'Included as context' : 'Excluded');
     row(request, 'Branch', 'The MR source branch is selected automatically. Approved pushes update the existing MR.');
   }
 
@@ -377,14 +417,14 @@ function renderRunReview() {
     }
   });
 
-  controls(section('Agentic turn limits', 'agents'), document.querySelector('#agent-turn-limits'));
+  controls(section('Agentic turn limits', 'agents', 'limits'), document.querySelector('#agent-turn-limits'));
   const retrySettings = document.querySelector('#workflow-retry-settings');
-  if (retrySettings) controls(section('Workflow retry', 'agents'), retrySettings);
+  if (retrySettings) controls(section('Workflow retry', 'agents', 'retry'), retrySettings);
   const autonomySettings = document.querySelector('#autonomy-settings');
-  if (autonomySettings) controls(section('Autonomy and completion', 'agents'), autonomySettings);
-  row(section('Build verification', 'agents'), 'Build verification',
+  if (autonomySettings) controls(section('Autonomy and completion', 'agents', 'autonomy'), autonomySettings);
+  row(section('Build verification', 'agents', 'verification'), 'Build verification',
     document.querySelector('#build-project')?.checked ? 'Build after changes — report result' : 'Skipped — compilation will not be verified');
-  const agents = section('Agents and model settings', 'agents');
+  const agents = section('Agents and model settings', 'agents', 'models');
   agentModels.querySelectorAll('.agent-model-card').forEach(agent => {
     const card = document.createElement('section');
     card.className = 'run-review-agent';
@@ -396,7 +436,7 @@ function renderRunReview() {
     agents.append(card);
   });
 
-  const attachments = section('Attachments', 'request');
+  const attachments = section('Attachments', 'request', 'references');
   const files = selectedReferenceFiles();
   row(attachments, 'Reference documents', files.length
     ? `${files.length} files (${formatBytes(files.reduce((sum, file) => sum + file.size, 0))})` : 'None');
@@ -453,6 +493,7 @@ function readRepositoryConnection() {
 }
 
 async function loadRepositoryBranches() {
+  loadOpenMergeRequests();
   const version = ++branchRequestVersion;
   repositoryBranches.replaceChildren();
   const sourceControl = sourceControlInput.value;
@@ -482,17 +523,111 @@ async function loadRepositoryBranches() {
   }
 }
 
-async function initializeProjectSelector() {
+async function loadOpenMergeRequests() {
+  const version = loadOpenMergeRequests.version = (loadOpenMergeRequests.version || 0) + 1;
+  const select = document.querySelector('#merge-request-iid');
+  const status = document.querySelector('#merge-request-status');
+  const table = document.querySelector('#merge-request-table');
+  const rows = document.querySelector('#merge-request-rows');
+  select.value = '';
+  rows.replaceChildren();
+  table.hidden = true;
+  if (document.querySelector('input[name="runMode"]:checked').value !== 'gitlab_review') return;
+  const connection = readRepositoryConnection();
+  if (!connection.repositoryUrl || !gitLabRepositoryInput.checkValidity()) {
+    status.textContent = 'Select a GitLab repository to see its open merge requests.';
+    return;
+  }
+  status.textContent = 'Loading open merge requests…';
   try {
-    const projects = await api('/api/projects');
-    projects.forEach(project => projectKeyInput.add(new Option(project.key, project.key)));
+    const requests = await api('/api/repositories/merge-requests', {
+      method: 'POST', body: JSON.stringify(connection),
+    });
+    if (version !== loadOpenMergeRequests.version) return;
+    for (const mr of requests) {
+      const row = document.createElement('tr');
+      const choice = document.createElement('td');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'mergeRequestSelection';
+      radio.value = String(mr.iid);
+      radio.disabled = mr.isFork;
+      radio.setAttribute('aria-label', `Select merge request !${mr.iid}: ${mr.title}`);
+      choice.append(radio);
+      const title = document.createElement('td');
+      const link = document.createElement('a');
+      const url = new URL(mr.url);
+      if (url.protocol !== 'https:' || url.origin !== new URL(connection.repositoryUrl).origin) throw new Error('Invalid merge request link');
+      link.href = url.href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `!${mr.iid} · ${mr.title}`;
+      title.append(link);
+      if (mr.isFork) {
+        const note = document.createElement('small');
+        note.textContent = 'Fork MR · review runs unsupported';
+        title.append(note);
+      }
+      const branches = document.createElement('td');
+      branches.textContent = `${mr.sourceBranch} → ${mr.targetBranch}`;
+      const author = document.createElement('td');
+      author.textContent = mr.author;
+      row.append(choice, title, branches, author);
+      radio.addEventListener('change', () => {
+        select.value = radio.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      rows.append(row);
+    }
+    table.hidden = requests.length === 0;
+    status.textContent = requests.length ? `${requests.length} open merge request${requests.length === 1 ? '' : 's'} · Select one to address its review.` : 'No open merge requests in this repository.';
+  } catch (error) {
+    if (version !== loadOpenMergeRequests.version) return;
+    rows.replaceChildren();
+    table.hidden = true;
+    select.value = '';
+    status.textContent = `Could not load merge requests: ${error.message}. Check your connection and refresh to retry.`;
+  }
+}
 
-    projectKeyInput.addEventListener('change', () => {
-      const project = projects.find(item => item.key === projectKeyInput.value);
+document.querySelector('#refresh-merge-requests').addEventListener('click', loadOpenMergeRequests);
+document.querySelector('#merge-request-iid').addEventListener('change', event => {
+  document.querySelectorAll('input[name="mergeRequestSelection"]').forEach(input => {
+    input.checked = input.value === event.target.value;
+    input.closest('tr').classList.toggle('mr-selected', input.checked);
+  });
+});
+
+async function initializeProjectSelector() {
+  const status = document.querySelector('#project-status');
+  try {
+    const projects = (await api('/api/projects')).filter(project => project.gitLabProjectPath);
+    projects.forEach((project, index) => {
+      const label = document.createElement('label');
+      label.className = 'check-row';
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'projectKey';
+      radio.value = project.key;
+      radio.required = true;
+      radio.checked = index === 0;
+      radio.disabled = sourceControlInput.value !== 'gitlab';
+      label.append(radio, document.createTextNode(project.key));
+      projectKeyInput.append(label);
+    });
+    gitLabRepositoryInput.value = projects[0]?.gitLabProjectPath || '';
+    status.textContent = projects.length ? '' : 'No GitLab projects are configured. Configure a project before starting a run.';
+    status.hidden = projects.length > 0;
+    loadRepositoryBranches();
+
+    projectKeyInput.addEventListener('change', event => {
+      const project = projects.find(item => item.key === event.target.value);
       if (project?.gitLabProjectPath) gitLabRepositoryInput.value = project.gitLabProjectPath;
       loadRepositoryBranches();
     });
   } catch (error) {
+    status.textContent = 'Configured projects could not be loaded. Reload to retry.';
+    status.hidden = false;
     console.warn('Configured projects could not be loaded.', error);
   }
 }
@@ -983,7 +1118,7 @@ function syncEmbeddingProvider() {
 syncEmbeddingProvider();
 
 function syncReferenceSearchMode() {
-  const semantic = referenceSearchModeInput.value === 'semantic';
+  const semantic = referenceSearchModeInput.querySelector('input:checked').value === 'semantic';
   document.querySelector('#semantic-search-fields').hidden = !semantic;
   [qdrantUrlInput, qdrantApiKeyInput, embeddingProviderInput, embeddingApiKeyInput]
     .forEach(input => { input.disabled = !semantic; });
@@ -1069,7 +1204,7 @@ async function uploadReferenceDocuments() {
 function validateReferenceDocuments() {
   if (!selectedReferenceFiles().length) return null;
 
-  const searchMode = referenceSearchModeInput.value;
+  const searchMode = referenceSearchModeInput.querySelector('input:checked').value;
   if (searchMode === 'exact') {
     return { searchMode, provider: '', qdrantUrl: '', qdrantApiKey: '', apiKey: '' };
   }
@@ -1164,7 +1299,8 @@ async function startAgentRun() {
     repositoryUrl: connection.repositoryUrl,
     runMode: values.get('runMode') || 'change',
     mergeRequestIid: values.get('runMode') === 'gitlab_review' ? Number(values.get('mergeRequestIid')) : null,
-    includeResolvedDiscussions: values.get('includeResolvedDiscussions') === 'on',
+    mrReviewMode: values.get('mrReviewMode') || 'combined',
+    includeResolvedDiscussions: values.get('mrReviewMode') !== 'independent' && values.get('includeResolvedDiscussions') === 'on',
     baseBranch: (values.get('branch') || '').trim(),
     task: values.get('task').trim(),
     agents,

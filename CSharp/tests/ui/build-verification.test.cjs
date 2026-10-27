@@ -7,7 +7,7 @@ const html = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/www
 const checkbox = html.match(/<input[^>]*id="build-project"[^>]*>/)[0];
 assert.ok(checkbox.includes('name="buildProject"'));
 assert.ok(checkbox.includes('checked'), 'Build project is enabled by default');
-assert.ok(source.includes("row(section('Build verification', 'agents')"), 'Choice is included in run confirmation');
+assert.ok(source.includes("row(section('Build verification', 'agents', 'verification')"), 'Choice is included in run confirmation');
 
 const context = {
   connection: { sourceControl: 'gitlab', repositoryUrl: 'https://example.test/repo.git' },

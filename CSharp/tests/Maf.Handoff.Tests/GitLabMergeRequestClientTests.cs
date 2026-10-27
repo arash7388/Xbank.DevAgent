@@ -9,6 +9,34 @@ public sealed class GitLabMergeRequestClientTests
 {
     private const string ReviewMr = """{"iid":17,"state":"opened","title":"Fix checkout","description":"Expected behavior","source_project_id":1,"target_project_id":1,"source_branch":"user/WEPOD-123","target_branch":"main","web_url":"https://gitlab.com/acme/orders/-/merge_requests/17"}""";
 
+    [Fact]
+    public async Task ListsOpenMergeRequestsAcrossPagesAndMarksForks()
+    {
+        int calls = 0;
+        string item = ReviewMr.Replace("\"description\":", "\"author\":{\"username\":\"alice\"},\"description\":", StringComparison.Ordinal);
+        using HttpClient http = new(new StubHandler(request =>
+        {
+            calls++;
+            Assert.Contains("/projects/acme%2Forders/merge_requests", request.RequestUri!.AbsoluteUri);
+            Assert.Contains("state=opened", request.RequestUri.Query);
+            Assert.Contains($"page={calls}", request.RequestUri.Query);
+            Assert.Equal("token", Assert.Single(request.Headers.GetValues("PRIVATE-TOKEN")));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(calls == 1
+                    ? "[" + string.Join(',', Enumerable.Repeat(item, 100)) + "]"
+                    : "[" + item.Replace("\"source_project_id\":1", "\"source_project_id\":2", StringComparison.Ordinal) + "]"),
+            });
+        }));
+        var result = await new GitLabMergeRequestClient(http).ListOpenAsync(
+            "https://gitlab.com/acme/orders.git", "token", CancellationToken.None);
+        Assert.Equal(101, result.Count);
+        Assert.Equal(2, calls);
+        Assert.False(result[0].IsFork);
+        Assert.True(result[^1].IsFork);
+        Assert.Equal("alice", result[0].Author);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -36,6 +64,26 @@ public sealed class GitLabMergeRequestClientTests
         Assert.Contains("Check tests", result.Context);
         Assert.DoesNotContain("pushed a commit", result.Context);
         Assert.Equal(includeResolved, result.Context.Contains("Already fixed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task IndependentReviewDoesNotFetchOrIncludeDiscussions()
+    {
+        int requests = 0;
+        using HttpClient http = new(new StubHandler(request =>
+        {
+            requests++;
+            Assert.DoesNotContain("discussions", request.RequestUri!.AbsoluteUri);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(ReviewMr) });
+        }));
+        GitLabMergeRequestReview review = await new GitLabMergeRequestClient(http).ReadReviewAsync(
+            "https://gitlab.com/acme/orders.git", "token", 17, true, CancellationToken.None,
+            MergeRequestReviewModes.Independent);
+        Assert.Equal(1, requests);
+        using JsonDocument context = JsonDocument.Parse(review.Context);
+        Assert.Equal("Expected behavior", context.RootElement.GetProperty("description").GetString());
+        Assert.Empty(context.RootElement.GetProperty("discussions").EnumerateArray());
+        Assert.False(context.RootElement.GetProperty("includeResolved").GetBoolean());
     }
 
     [Fact]

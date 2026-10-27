@@ -19,6 +19,8 @@ function all(root) { return [root, ...root.children.flatMap(all)]; }
 for (const checked of [null, false, true]) {
   const summary = node();
   let editedStep;
+  let scrolledCategory;
+  let focusedCategory;
   const nodes = {
     '#run-review-summary': summary,
     '#task': { value: 'Change the requested value' },
@@ -36,7 +38,18 @@ for (const checked of [null, false, true]) {
   const context = {
     document: {
       createElement: node,
-      querySelector: selector => nodes[selector] || null,
+      querySelector: selector => {
+        const destination = selector.match(/^\[data-setup-step="([^"]+)"\] \[data-config-category="([^"]+)"\]$/);
+        if (destination) {
+          assert.equal(editedStep, destination[1], 'Reveal the destination step before scrolling');
+          return {
+            setAttribute() {},
+            focus: options => { assert.equal(options.preventScroll, true); focusedCategory = destination[2]; },
+            scrollIntoView: options => { assert.equal(options.block, 'start'); scrolledCategory = destination[2]; },
+          };
+        }
+        return nodes[selector] || null;
+      },
       querySelectorAll: selector => selector === '#connection-settings > fieldset' ? [repository] : [],
     },
     agentModels: node(), changeRequestSource: 'manual', selectedReferenceFiles: () => [],
@@ -56,6 +69,19 @@ for (const checked of [null, false, true]) {
   const edit = all(buildCard).find(item => item.tag === 'button');
   edit.handlers.click();
   assert.equal(editedStep, 'agents');
+  assert.equal(scrolledCategory, 'verification');
+  for (const [title, step, category] of [
+    ['Requested changes', 'request', 'instruction'],
+    ['Repository', 'connection', 'repository'],
+    ['Agentic turn limits', 'agents', 'limits'],
+    ['Agents and model settings', 'agents', 'models'],
+    ['Attachments', 'request', 'references'],
+  ]) {
+    all(summary).find(item => item.attributes['aria-label'] === `Edit ${title}`).handlers.click();
+    assert.equal(editedStep, step);
+    assert.equal(scrolledCategory, category);
+    assert.equal(focusedCategory, category);
+  }
 }
 
 // Exercise the setup placement with both current and older page markup.

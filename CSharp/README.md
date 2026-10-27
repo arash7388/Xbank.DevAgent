@@ -12,14 +12,26 @@ as a browsable changed-file tree with per-file add/delete stats and a toggle bet
 side-by-side layouts. Commit, push, and PR/MR creation require either explicit approval after review
 or the corresponding completion selections authorized before starting the run.
 
-In **Connection**, choose **Address GitLab MR review** and enter the MR number for the selected
-GitLab project. The server reads the open MR and all discussion pages using the configured or supplied
+In **Connection**, choose **Review GitLab MR and apply feedback** and select an open MR from the repository's
+merge request table. Titles link to GitLab in a new tab. Refresh reloads the list; fork MRs are shown
+but cannot be selected. The server reads the open MR and all discussion pages using the configured or supplied
 GitLab token, then clones its source branch for a fresh agent run. Input includes the title, description,
 general comments, unresolved threads, replies, authors, timestamps, and file/line positions. Resolved
 threads can optionally be included as context. Additional instructions are optional and no Jira task
 number is required. Each run retains the fetched review context in its input event history.
 
-Review fixes pass through the normal agent review and build policy. Approved commits and authorized
+Choose one of three review modes:
+
+- **Independent MR review** inspects and fixes the implementation against task requirements and acceptance
+  criteria from the MR description, additional instructions, and attachments. It does not fetch or use
+  GitLab comments or discussion threads, even if resolved discussions were previously selected.
+- **Apply reviewer feedback** evaluates GitLab comments and unresolved threads, applies relevant fixes,
+  and verifies them without a separate requirements audit.
+- **Independent review + reviewer feedback** (default) performs both and reports their outcomes separately.
+
+All modes retain the normal developer/reviewer cycle and configured build policy. Resolved threads are
+optional context for the feedback and combined modes. Step 5 displays the chosen scope.
+Approved commits and authorized
 pushes use the existing MR source branch; this mode does not create another MR, post replies, or resolve
 threads. Only open MRs whose source and target are in the selected project are supported. Read access
 is required for intake, and pushing requires repository write access. Review intake fails rather than

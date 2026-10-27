@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20261026-10">
+  <link rel="stylesheet" href="/styles.css?v=20261026-16">
 </head>
 <body>
   <header class="app-header">
@@ -52,7 +52,7 @@
       </section>
       <div id="change-source-error" class="form-error" role="alert" hidden></div>
       <div class="jira-content" id="jira-change-panel">
-        <div id="jira-connection-status" class="jira-message" role="status" aria-live="polite">Connection not checked.</div>
+        <span id="jira-connection-status" class="jira-connection-status" role="status" aria-live="polite">Connection not checked.</span>
         <div id="jira-selection" class="jira-selection" hidden>
           <div><span class="jira-eyebrow">Selected for this workflow</span><p id="jira-selected-task" role="status" aria-live="polite">No Jira task selected.</p></div>
           <button id="jira-clear-selection" class="secondary" type="button">Clear selection</button>
@@ -335,27 +335,22 @@
           </section>
           <section class="repository-source-panel" data-repository-source="gitlab">
             <div>
-              <label for="project-key">Configured project</label>
-              <select id="project-key" name="projectKey">
-                <option value="">Enter a GitLab project URL manually</option>
-              </select>
+              <span id="project-key-label">Configured project</span>
+              <div id="project-key" class="project-options" role="radiogroup" aria-labelledby="project-key-label"></div>
+              <p id="project-status" class="field-guide" role="status">Loading configured projects…</p>
             </div>
-            <div class="two-columns">
-              <div>
-                <label for="gitlab-repository">GitLab project URL</label>
-                <input id="gitlab-repository" name="gitlabRepository" type="url" required
-                       placeholder="https://gitlab.dotin.ir/group/project.git">
-              </div>
+            <input id="gitlab-repository" name="gitlabRepository" type="hidden">
               <div>
                 <label for="gitlab-token">GitLab access token</label>
-              <input id="gitlab-token" name="gitlabToken" type="password"
+                <div class="gitlab-token-row">
+                  <input id="gitlab-token" name="gitlabToken" type="password"
                        autocomplete="off" placeholder="Uses the server-local default when blank">
-              <label id="saved-gitlab-token-option" class="check-row" hidden>
-                <input id="use-saved-gitlab-token" type="checkbox">
-                Use saved GitLab token
-              </label>
+                  <label id="saved-gitlab-token-option" class="check-row" hidden>
+                    <input id="use-saved-gitlab-token" type="checkbox">
+                    Use saved GitLab token
+                  </label>
+                </div>
               </div>
-            </div>
             <p class="field-guide">For self-managed GitLab, configure the server's <code>GitLab:Host</code> setting.</p>
           </section>
           <div id="run-mode" class="run-mode-options" role="radiogroup" aria-labelledby="run-mode-label">
@@ -366,20 +361,30 @@
             </label>
             <label class="run-mode-option" for="run-mode-review">
               <input id="run-mode-review" name="runMode" type="radio" value="gitlab_review">
-              <span>Address GitLab MR review</span>
+              <span>Review GitLab MR and apply feedback</span>
             </label>
           </div>
           <div id="mr-review-settings" hidden>
-            <label for="merge-request-iid">GitLab MR number</label>
-            <input id="merge-request-iid" name="mergeRequestIid" type="number" min="1" step="1" placeholder="17">
+            <div class="mr-picker-heading"><div><strong>Open merge requests</strong><p class="field-guide">Choose a merge request from the selected repository.</p></div><button id="refresh-merge-requests" class="text-button" type="button">Refresh</button></div>
+            <input id="merge-request-iid" name="mergeRequestIid" type="hidden">
+            <p id="merge-request-status" class="field-guide" role="status" aria-live="polite"></p>
+            <div id="merge-request-table" class="mr-table-wrap" hidden><table class="mr-table"><thead><tr><th scope="col">Select</th><th scope="col">Merge request</th><th scope="col">Branches</th><th scope="col">Author</th></tr></thead><tbody id="merge-request-rows"></tbody></table></div>
+            <span id="mr-review-mode-label">Review mode</span>
+            <div id="mr-review-mode" class="project-options mr-review-modes" role="radiogroup" aria-labelledby="mr-review-mode-label">
+              <label class="check-row"><input name="mrReviewMode" type="radio" value="independent"><span><strong>Independent MR review</strong><small>Review and fix the implementation against task requirements and acceptance criteria. GitLab comments and threads are excluded.</small></span></label>
+              <label class="check-row"><input name="mrReviewMode" type="radio" value="feedback"><span><strong>Apply reviewer feedback</strong><small>Evaluate GitLab comments and unresolved threads, apply relevant fixes, and verify them.</small></span></label>
+              <label class="check-row"><input name="mrReviewMode" type="radio" value="combined" checked><span><strong>Independent review + reviewer feedback</strong><small>Perform both and report outcomes separately.</small></span></label>
+            </div>
             <label class="check-row"><input name="includeResolvedDiscussions" type="checkbox">Include resolved discussions as context</label>
-            <p class="field-guide">Uses the selected GitLab project and token. Loads the open MR's source branch, description, comments and unresolved review threads into a fresh agent run. Branch selection is automatic. Extra instructions below are optional; no task number is needed. Approved commits and pushes update the existing MR's source branch. Fork MRs are not supported.</p>
+            <p class="field-guide">Uses the selected GitLab project and token. Review scope follows your selected mode. Requirements come from the MR title and description, extra instructions, and attachments. Branch selection is automatic. Extra instructions below are optional; no task number is needed. Approved commits and pushes update the existing MR's source branch. Fork MRs are not supported.</p>
           </div>
           <div>
             <label for="branch">Base branch</label>
+            <div class="branch-input-row">
             <input id="branch" name="branch" list="repository-branches" value="Develop" required aria-describedby="branch-status">
             <datalist id="repository-branches"></datalist>
             <button id="refresh-branches" class="text-button" type="button">Refresh branches</button>
+            </div>
             <p id="branch-status" class="field-guide" role="status">Select a repository to load its branches, or enter a branch name.</p>
           </div>
         </fieldset>
@@ -424,26 +429,28 @@
 
         <fieldset>
           <legend>LLM settings</legend>
-          <h3 class="llm-subheading">Provider API keys</h3>
+          <section class="api-keys-panel" aria-labelledby="api-keys-heading">
+          <h3 id="api-keys-heading" class="llm-subheading">API Keys</h3>
           <p class="field-guide">Enter credentials for the providers you intend to use. Entering one provider key switches all agents to that provider; adjust individual models in step 3. Keys remain in server memory for this run.</p>
-          <div class="credential-grid">
+          <div class="api-key-rows">
             <div>
-              <label for="openai-key">OpenAI API key</label>
+              <label for="openai-key">OpenAI</label>
               <input id="openai-key" data-provider-key="openai" type="password" autocomplete="off" placeholder="OpenAI API key">
             </div>
             <div>
-              <label for="deepseek-key">DeepSeek API key</label>
+              <label for="deepseek-key">DeepSeek</label>
               <input id="deepseek-key" data-provider-key="deepseek" type="password" autocomplete="off" placeholder="DeepSeek API key">
             </div>
             <div>
-              <label for="aifa-key">AIFA API key</label>
+              <label for="aifa-key">AIFA</label>
               <input id="aifa-key" data-provider-key="aifa" type="password" autocomplete="off" placeholder="AIFA bearer token">
             </div>
             <div>
-              <label for="claude-key">Claude API key</label>
+              <label for="claude-key">Claude</label>
               <input id="claude-key" data-provider-key="claude" type="password" autocomplete="off" placeholder="Anthropic API key">
             </div>
           </div>
+          </section>
           <details class="llm-pricing-settings">
             <summary>Model token prices <span>Shared across all agents</span></summary>
             <p class="field-guide">Set rates once per provider and model, in USD per million tokens. Every agent using that model shares these prices, regardless of reasoning effort. Blank rates stay unpriced; AIFA is free.</p>
@@ -497,11 +504,11 @@
               <input id="reference-folder" type="file" multiple webkitdirectory directory>
             </div>
           </div>
-          <label for="reference-search-mode">Document search</label>
-          <select id="reference-search-mode" name="searchMode">
-            <option value="exact" selected>Plain text search (no external services)</option>
-            <option value="semantic">Semantic and plain text search (Qdrant + embeddings)</option>
-          </select>
+          <span id="reference-search-mode-label">Document search</span>
+          <div id="reference-search-mode" class="search-mode-options" role="radiogroup" aria-labelledby="reference-search-mode-label">
+            <label><input type="radio" name="searchMode" value="exact" checked><span>Plain text search <small>(no external services)</small></span></label>
+            <label><input type="radio" name="searchMode" value="semantic"><span>Semantic and plain text search <small>(Qdrant + embeddings)</small></span></label>
+          </div>
           <label for="qdrant-url">Qdrant endpoint</label>
           <input id="qdrant-url" name="qdrantUrl" type="url" autocomplete="off"
                  placeholder="https://your-cluster.cloud.qdrant.io">
@@ -691,6 +698,6 @@
 
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>
   <script src="/autonomy.js?v=20261016-1" defer></script>
-  <script src="/app.js?v=20261026-10" defer></script>
+  <script src="/app.js?v=20261026-16" defer></script>
 </body>
 </html>

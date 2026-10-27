@@ -26,6 +26,7 @@ const context = {
   repositoryBranches: picker,
   branchStatus: { textContent: '' },
   branchRequestVersion: 0,
+  loadOpenMergeRequests() {},
   document: { querySelector: selector => controls[selector] },
   Option: class { constructor(text, value) { this.text = text; this.value = value; } },
   api: async (url, options) => {
@@ -40,7 +41,7 @@ vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('function readRepositoryConnection()'),
   source.indexOf('async function loadRepositoryBranches()')), context);
 const start = source.indexOf('async function loadRepositoryBranches(');
-const end = source.indexOf('\nasync function initializeProjectSelector(', start);
+const end = source.indexOf('\nasync function loadOpenMergeRequests(', start);
 vm.runInContext(source.slice(start, end), context);
 
 (async () => {
