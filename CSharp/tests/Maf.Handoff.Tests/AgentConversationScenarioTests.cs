@@ -9,6 +9,43 @@ namespace Maf.Handoff.Tests;
 public sealed class AgentConversationScenarioTests
 {
     [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task MergeRequestReviewRunsOnlyJiraReviewerAndRelease(bool approved, bool payloadOnly)
+    {
+        List<string> activated = [];
+        var clients = AgentNames.All.ToDictionary(name => name,
+            name => (IChatClient)new ScriptedClient((messages, options) =>
+            {
+                activated.Add(name);
+                if (name == AgentNames.ReleaseManager)
+                {
+                    Assert.Empty(Handoffs(options));
+                    return Text(approved ? HandoffTopology.CompletionMarker : HandoffTopology.ReleaseRejectionMarker);
+                }
+                Assert.Single(Handoffs(options));
+                if (name == AgentNames.Jira)
+                {
+                    Assert.Contains("hand off directly to Reviewer", options!.Instructions);
+                    return Handoff(Handoffs(options)[0], "Task requirements evidence");
+                }
+                Assert.Equal(AgentNames.Reviewer, name);
+                Assert.Contains(messages, message => message.Text.Contains("Task requirements evidence", StringComparison.Ordinal));
+                Assert.Contains("Apply applicable fixes yourself", options!.Instructions);
+                ChatResponse response = Handoff(Handoffs(options)[0], approved ? HandoffTopology.ReviewApprovalMarker : "Unresolved blocker");
+                if (payloadOnly)
+                    response.Messages[0].Contents = response.Messages[0].Contents.OfType<FunctionCallContent>().Cast<AIContent>().ToList();
+                return response;
+            }));
+        WorkflowSettings settings = new("https://example.test", "model", "key") { IsMergeRequestReview = true };
+        var transcript = await Run(clients, workflowSettings: settings);
+        Assert.Equal(AgentNames.ReviewRequired, activated);
+        Assert.Equal(approved ? "completed" : "rejected_by_release", HandoffTopology.GetTerminationStatus(transcript, settings));
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task EnabledSecurityGateRequiresAnExplicitApproval(bool securityApproves)

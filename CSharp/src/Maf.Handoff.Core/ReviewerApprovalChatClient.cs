@@ -27,10 +27,10 @@ internal sealed class ReviewerApprovalChatClient(IChatClient innerClient) : ICha
 
     private static void RecordApproval(ChatResponse response, ChatOptions? options)
     {
-        // The factory registers remediation first, then the forward review gate.
+        // Change workflows register remediation then the forward gate; MR reviews have only the forward gate.
         AITool[] handoffs = options?.Tools?.Where(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal)).ToArray() ?? [];
         FunctionCallContent[] calls = response.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>().ToArray();
-        if (handoffs.Length != 2 || calls.Length != 1 || calls[0].Name != handoffs[1].Name) return;
+        if (handoffs.Length is not (1 or 2) || calls.Length != 1 || calls[0].Name != handoffs[^1].Name) return;
         string? reason = calls[0].Arguments?.TryGetValue("reasonForHandoff", out object? value) is true
             ? value?.ToString() : null;
         if (reason?.Contains(HandoffTopology.ReviewApprovalMarker, StringComparison.Ordinal) is not true) return;

@@ -11,6 +11,8 @@ public sealed partial class RepositoryWorkspace
     {
         using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         Add(Interlocked.Read(ref _readCacheRevision).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Add(_reviewDiffRefs?.BaseSha ?? "");
+        Add(_reviewDiffRefs?.HeadSha ?? "");
         if (filePath is not null)
         {
             string path = ResolveSourcePath(filePath, mustExist: false);

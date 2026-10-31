@@ -147,7 +147,7 @@ public sealed class JiraProblemReportingTests
             name => (IChatClient)(name == AgentNames.Jira ? intake : other));
         Dictionary<string, WorkflowSettings> settingsByAgent = names.ToDictionary(name => name, _ => settings);
         AgentTeam team = AgentTeamFactory.Create(clients, settingsByAgent, jira: jira);
-        await team.Planner.RunAsync("Check available tools.");
+        await team.Planner!.RunAsync("Check available tools.");
         Assert.Equal(1, other.Calls);
 
         WorkflowBundle bundle = HandoffWorkflowFactory.Create(clients, settingsByAgent, jira: jira);

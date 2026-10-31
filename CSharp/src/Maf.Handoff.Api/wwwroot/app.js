@@ -208,7 +208,7 @@ function initializeSetupSteps() {
   document.querySelector('.setup-panel').append(navigation);
   document.querySelector('#setup-previous').addEventListener('click', () => {
     const previous = setupStepOrder[setupStepOrder.indexOf(currentSetupStep) - 1];
-    setSetupStep(previous === 'jira' && document.querySelector('input[name="runMode"]:checked').value === 'gitlab_review' ? 'connection' : previous);
+    setSetupStep(previous);
   });
   document.querySelector('#setup-next').addEventListener('click', () => {
     if (currentSetupStep === 'request') { form.requestSubmit(); return; }
@@ -217,7 +217,7 @@ function initializeSetupSteps() {
     const invalid = currentSetupStep === 'jira' ? null : panel.querySelector('input:invalid, select:invalid, textarea:invalid');
     if (invalid) { invalid.reportValidity(); return; }
     const next = setupStepOrder[setupStepOrder.indexOf(currentSetupStep) + 1];
-    setSetupStep(next === 'jira' && document.querySelector('input[name="runMode"]:checked').value === 'gitlab_review' ? 'agents' : next);
+    setSetupStep(next);
   });
   setSetupStep('connection');
 }
@@ -255,12 +255,16 @@ document.querySelector('#source-control').addEventListener('change', () => {
 });
 document.querySelector('#run-mode').addEventListener('change', syncMergeRequestMode);
 document.querySelector('#mr-review-mode').addEventListener('change', () => {
+  document.querySelector('[name="commentIssuesOnSourceCode"]').disabled =
+    document.querySelector('input[name="mrReviewMode"]:checked').value === 'feedback';
   document.querySelector('[name="includeResolvedDiscussions"]').disabled =
     document.querySelector('input[name="mrReviewMode"]:checked').value === 'independent';
 });
 function syncMergeRequestMode() {
   const review = document.querySelector('input[name="runMode"]:checked').value === 'gitlab_review';
   document.querySelector('#mr-review-settings').hidden = !review;
+  document.querySelector('#review-team-map').hidden = !review;
+  document.querySelector('#change-team-map').hidden = review;
   document.querySelector('#merge-request-iid').required = review;
   document.querySelector('#task').required = !review;
   baseBranchInput.required = !review;
@@ -271,6 +275,28 @@ function syncMergeRequestMode() {
     setRepositorySource('gitlab');
   }
   document.querySelectorAll('input[name="sourceControl"]').forEach(input => { input.disabled = review; });
+  agentModels.querySelectorAll('[data-agent]').forEach(card => {
+    const toggle = card.querySelector('[data-field="enabled"]');
+    const agent = agentCatalog.find(agent => agent.id === card.dataset.agent);
+    if (review) {
+      if (card.dataset.beforeReview === undefined) card.dataset.beforeReview = String(toggle.checked);
+      toggle.checked = ['jira', 'reviewer', 'release_manager'].includes(card.dataset.agent);
+      toggle.disabled = true;
+    } else {
+      if (card.dataset.beforeReview !== undefined) {
+        toggle.checked = card.dataset.beforeReview === 'true';
+        delete card.dataset.beforeReview;
+      }
+      toggle.disabled = Boolean(agent.required);
+    }
+    card.querySelector('.agent-toggle span').textContent = review
+      ? toggle.checked ? 'Required for review' : 'Disabled for review'
+      : agent.required ? 'Required' : toggle.checked ? 'Enabled' : 'Disabled';
+    syncAgentCardEnabled(card);
+  });
+  document.querySelector('#agent-selection-guide').textContent = review
+    ? 'MR reviews use Jira → Reviewer → Release Manager. Reviewer applies and verifies applicable fixes. Planner, Developer, and Security are disabled in every review mode.'
+    : 'Planner, Developer, Reviewer, and the final Release Manager are required. Planner creates the implementation contract, Developer executes it, and Reviewer independently confirms the changes. Jira and security are optional and start disabled.';
   if (!review) loadOpenMergeRequests();
 }
 document.querySelector('#use-saved-gitlab-token').addEventListener('change', () => {
@@ -330,6 +356,7 @@ function renderRunReview() {
     const card = document.createElement('section');
     card.className = 'run-review-card';
     card.setAttribute('data-review-category', category);
+    if (['autonomy', 'verification', 'retry', 'limits'].includes(category)) card.setAttribute('data-advanced-only', '');
     const heading = document.createElement('div');
     heading.className = 'run-review-heading';
     const name = document.createElement('h3');
@@ -358,6 +385,7 @@ function renderRunReview() {
   function row(card, label, value) {
     const item = document.createElement('div');
     item.className = 'run-review-row';
+    if (['Resolved discussions', 'Source-code issue comments', 'Jira attachments'].includes(label)) item.setAttribute('data-advanced-only', '');
     const name = document.createElement('strong');
     name.textContent = label;
     const text = document.createElement('div');
@@ -367,6 +395,8 @@ function renderRunReview() {
   }
   function controls(card, container) {
     container.querySelectorAll('input, select, textarea').forEach(control => {
+      if (document.querySelector('input[name="runExperience"]:checked')?.value === 'simple'
+          && control.closest?.('[data-advanced-only]')) return;
       if (control.type === 'hidden') return;
       if (control.id?.startsWith('price-')) return;
       if (control.type === 'radio' && !control.checked) return;
@@ -405,6 +435,8 @@ function renderRunReview() {
     }[reviewMode]);
     row(request, 'Resolved discussions', reviewMode !== 'independent' && document.querySelector('[name="includeResolvedDiscussions"]').checked
       ? 'Included as context' : 'Excluded');
+    row(request, 'Source-code issue comments', reviewMode !== 'feedback' && document.querySelector('[name="commentIssuesOnSourceCode"]').checked
+      ? 'Enabled — comments marked “Agent Review:” plus the final report' : 'Disabled');
     row(request, 'Branch', 'The MR source branch is selected automatically. Approved pushes update the existing MR.');
   }
 
@@ -443,7 +475,10 @@ function renderRunReview() {
   files.forEach(file => row(attachments, file.webkitRelativePath || file.name, `${formatBytes(file.size)} · ${file.type || 'Unknown file type'}`));
   const jiraAttachments = changeRequestSource === 'jira' ? selectedJiraAttachments : [];
   row(attachments, 'Jira attachments', jiraAttachments.length ? `${jiraAttachments.length} selected` : 'None');
-  jiraAttachments.forEach(file => row(attachments, file.filename || `Attachment ${file.id}`, `${formatBytes(file.size || 0)} · ${file.mimeType || 'Unknown file type'}`));
+  jiraAttachments.forEach(file => {
+    row(attachments, file.filename || `Attachment ${file.id}`, `${formatBytes(file.size || 0)} · ${file.mimeType || 'Unknown file type'}`);
+    attachments.lastElementChild.setAttribute('data-advanced-only', '');
+  });
 }
 
 // Native constraint validation runs before the submit event. Reveal a hidden setup panel first so
@@ -1082,7 +1117,8 @@ Object.entries(providerKeys).forEach(([providerId, input]) => {
   input.addEventListener('input', () => {
     if (!input.value.trim()) return;
     const populatedProviders = Object.entries(providerKeys)
-      .filter(([, keyInput]) => keyInput.value.trim())
+      .filter(([id, keyInput]) => keyInput.value.trim()
+        && (document.querySelector('input[name="runExperience"]:checked')?.value !== 'simple' || ['aifa', 'deepseek'].includes(id)))
       .map(([id]) => id);
     if (populatedProviders.length === 1) applyProviderToAllAgents(providerId);
   });
@@ -1265,6 +1301,8 @@ async function startAgentRun() {
   let agents;
   try {
     agents = readAgentConfigurations();
+    if (values.get('runMode') === 'gitlab_review' && !agents.jira)
+      throw new Error('MR review requires the Jira agent to read the task contents before code review. Enable and configure the Jira agent.');
   } catch (error) {
     showError(error.message);
     resetElapsedTimer();
@@ -1301,6 +1339,7 @@ async function startAgentRun() {
     mergeRequestIid: values.get('runMode') === 'gitlab_review' ? Number(values.get('mergeRequestIid')) : null,
     mrReviewMode: values.get('mrReviewMode') || 'combined',
     includeResolvedDiscussions: values.get('mrReviewMode') !== 'independent' && values.get('includeResolvedDiscussions') === 'on',
+    commentIssuesOnSourceCode: values.get('runMode') === 'gitlab_review' && values.get('mrReviewMode') !== 'feedback' && values.get('commentIssuesOnSourceCode') === 'on',
     baseBranch: (values.get('branch') || '').trim(),
     task: values.get('task').trim(),
     agents,
@@ -2564,7 +2603,7 @@ function renderCodeGraphIndexStatus(status) {
 async function refreshCodeGraphDatabase(showErrors = true) {
   const request = ++codeGraphDatabaseRequest;
   codeGraphCheckSource.disabled = true;
-  document.querySelector('#codegraph-source-checked').textContent = 'Checking current source files against the saved index...';
+    document.querySelector('#codegraph-source-checked').textContent = 'Checking the indexed local folder against the saved index...';
   document.querySelector('#codegraph-freshness-summary').textContent = 'Checking...';
   document.querySelector('#codegraph-freshness').replaceChildren();
   try {
@@ -2577,7 +2616,7 @@ async function refreshCodeGraphDatabase(showErrors = true) {
     if (checks.some(check => check.sourcePath === selected)) codeGraphCodebase.value = selected;
     codeGraphCodebase.disabled = checks.length === 0;
     renderCodeGraphFreshness(checks.filter(check => check.sourcePath === codeGraphCodebase.value));
-    document.querySelector('#codegraph-source-checked').textContent = `Checked ${new Date().toLocaleString()}. Compares the selected codebase's local source files with its saved database fingerprint.`;
+    document.querySelector('#codegraph-source-checked').textContent = `Checked ${new Date().toLocaleString()}. Compares the indexed local folder with its saved database fingerprint. Each run checks its own cloned branch/revision separately.`;
     document.querySelector('#codegraph-db-meta').textContent = `${overview.databasePath} · ${formatBytes(overview.sizeBytes)}`;
     const counts = document.querySelector('#codegraph-counts');
     counts.replaceChildren(...Object.entries(overview.counts).map(([name, count]) => {
@@ -2637,7 +2676,7 @@ function codeGraphIcon(name) {
 
 function renderCodeGraphFreshness(checks) {
   document.querySelector('#codegraph-freshness-summary').textContent = checks.length
-    ? 'Selected codebase' : 'No indexed sources';
+    ? 'Indexed local folder' : 'No indexed sources';
   const rows = checks.map(check => {
     const state = ['fresh', 'stale', 'unknown', 'unavailable'].includes(check.state) ? check.state : 'unknown';
     const row = document.createElement('div'); row.className = 'codegraph-freshness-row'; row.dataset.state = state;
@@ -2646,15 +2685,15 @@ function renderCodeGraphFreshness(checks) {
     const heading = document.createElement('div'); heading.className = 'codegraph-source-heading';
     const name = document.createElement('strong'); name.textContent = check.sourcePath?.split(/[\\/]/).pop() || 'Source verification';
     const badge = document.createElement('span'); badge.className = 'codegraph-freshness-badge';
-    badge.textContent = { fresh: 'Source matches index', stale: 'Source differs from index', unknown: 'Match unverified', unavailable: 'Source unavailable' }[state];
+    badge.textContent = { fresh: 'Local source matches index', stale: 'Local source differs from index', unknown: 'Local match unverified', unavailable: 'Local source unavailable' }[state];
     heading.append(name, badge);
     const source = document.createElement('p'); source.className = 'codegraph-source-path'; source.textContent = check.sourcePath || 'Source path unavailable';
     const message = document.createElement('p'); message.className = 'codegraph-freshness-message';
-    message.textContent = state === 'fresh'
-      ? 'The current local source fingerprint equals the fingerprint saved when this codebase was indexed.'
+    message.textContent = check.message || (state === 'fresh'
+      ? 'The indexed local folder matches its saved fingerprint. Each run verifies its own checkout separately; a different branch or newer revision may require reindexing.'
       : state === 'stale'
         ? 'The local source has changed since this codebase was indexed. Reindex this source to update its graph.'
-        : check.message || 'The source and index could not be compared.';
+        : 'The source and index could not be compared.');
     const details = document.createElement('details'); details.className = 'codegraph-verification-details';
     details.open = true;
     const summary = document.createElement('summary'); summary.textContent = 'Source and database fingerprints';
@@ -2852,7 +2891,7 @@ document.querySelector('#jira-clear-selection').addEventListener('click', () => 
   changeRequestDrafts.jira = task.value;
   if (jiraEnabledForSelection) {
     const toggle = agentModels.querySelector('[data-agent="jira"]')?.querySelector('[data-field="enabled"]');
-    if (toggle) { toggle.checked = false; toggle.dispatchEvent(new Event('change')); }
+    if (toggle) { toggle.checked = document.querySelector('input[name="runMode"]:checked')?.value === 'gitlab_review'; toggle.dispatchEvent(new Event('change')); }
     jiraEnabledForSelection = false;
   }
   task.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2876,7 +2915,7 @@ document.querySelectorAll('[data-change-source]').forEach(button => button.addEv
   });
   if (jiraEnabledForSelection) {
     const toggle = agentModels.querySelector('[data-agent="jira"]')?.querySelector('[data-field="enabled"]');
-    if (toggle) { toggle.checked = nextSource === 'jira'; toggle.dispatchEvent(new Event('change')); }
+    if (toggle) { toggle.checked = nextSource === 'jira' || document.querySelector('input[name="runMode"]:checked')?.value === 'gitlab_review'; toggle.dispatchEvent(new Event('change')); }
   }
   task.dispatchEvent(new Event('input', { bubbles: true }));
 }));
@@ -3170,6 +3209,7 @@ async function lookupJiraIssue(titleOnly, focusPreview = false) {
       description.dir = 'auto';
       description.textContent = jiraText(fields.description).trim() || 'No description provided.';
       const comments = document.createElement('details');
+      comments.setAttribute('data-advanced-only', '');
       const summary = document.createElement('summary');
       const visibleComments = fields.comment?.comments || [];
       const commentTotal = fields.comment?.total ?? visibleComments.length;
@@ -3186,12 +3226,14 @@ async function lookupJiraIssue(titleOnly, focusPreview = false) {
         comments.append(item);
       });
       const rawDetails = document.createElement('details');
+      rawDetails.setAttribute('data-advanced-only', '');
       rawDetails.append(Object.assign(document.createElement('summary'), { textContent: 'Raw Jira response (advanced)' }));
       const raw = document.createElement('pre');
       raw.textContent = JSON.stringify(issue, null, 2);
       rawDetails.append(raw);
       result.replaceChildren(issueKey, heading, meta, descriptionHeading, description, comments);
       const attachments = document.createElement('div');
+      attachments.setAttribute('data-advanced-only', '');
       const attachmentHeading = document.createElement('h5');
       attachmentHeading.textContent = `Attachments (${fields.attachment?.length || 0})`;
       attachments.append(attachmentHeading);

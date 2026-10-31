@@ -46,6 +46,8 @@ public sealed record AgentModelConfiguration(
 
 public static class AgentNames
 {
+    public static IReadOnlyList<string> ReviewRequired { get; } = [Jira, Reviewer, ReleaseManager];
+
     public const string Jira = "jira";
     public const string Planner = "planner";
     public const string Developer = "developer";

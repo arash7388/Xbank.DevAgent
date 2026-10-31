@@ -259,7 +259,7 @@ app.MapPost("/api/sessions", async (CreateSessionRequest request, RepositorySess
 app.MapGet("/api/sessions/{id:guid}", (Guid id, RepositorySessionService sessions) =>
     Results.Ok(sessions.Get(id)));
 
-app.MapGet("/api/runs", (IWorkflowRunStore runs, int? limit) => Results.Ok(runs.ListRuns(limit ?? 100)));
+app.MapGet("/api/runs", (IWorkflowRunStore runs, int? limit, int? offset) => Results.Ok(runs.ListRuns(limit ?? 50, offset ?? 0)));
 app.MapGet("/api/runs/{id:guid}", (Guid id, IWorkflowRunStore runs) => Results.Ok(runs.GetLog(id)));
 
 app.MapGet("/api/sessions/{id:guid}/logs", (Guid id, RepositorySessionService sessions, IWorkflowRunStore runs) =>

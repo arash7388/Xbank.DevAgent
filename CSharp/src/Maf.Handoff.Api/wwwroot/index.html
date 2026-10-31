@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-run-experience="simple">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Repository Change Workbench</title>
-  <link rel="stylesheet" href="/styles.css?v=20261026-16">
+  <link rel="stylesheet" href="/styles.css?v=20261028-4">
 </head>
 <body>
   <header class="app-header">
@@ -15,6 +15,7 @@
     <nav class="app-mode-nav" aria-label="Workbench views">
       <button class="app-mode active" type="button" data-app-mode="workflow" aria-pressed="true">Agent workflow</button>
       <button class="app-mode" type="button" data-app-mode="codegraph" aria-pressed="false">Code graph</button>
+      <button id="previous-runs-button" class="app-mode" type="button" aria-haspopup="dialog">Previous runs</button>
     </nav>
     <div id="connection" class="connection"><span></span> Local service</div>
   </header>
@@ -201,17 +202,13 @@
         <section id="codegraph-overview" class="codegraph-card" hidden>
           <div class="card-heading codegraph-overview-heading"><div><h3>Database overview</h3><p id="codegraph-db-meta"></p></div><span class="codegraph-storage-badge">SQLite</span></div>
           <div id="codegraph-counts" class="codegraph-counts" aria-label="Database metrics"></div>
-          <div class="codegraph-freshness-heading"><h4>Source compared with database index</h4><span id="codegraph-freshness-summary"></span></div>
-          <div class="codegraph-paths">
-            <div>
-              <label for="codegraph-codebase">Indexed codebase</label>
-              <select id="codegraph-codebase"></select>
-            </div>
-            <div>
-              <button id="codegraph-check-source" class="secondary" type="button">Check source against index</button>
-              <p id="codegraph-source-checked" class="codegraph-freshness-message"></p>
-            </div>
+          <div class="codegraph-freshness-heading"><h4>Indexed local source compared with database index</h4><span id="codegraph-freshness-summary"></span></div>
+          <label for="codegraph-codebase">Indexed codebase</label>
+          <div class="codegraph-source-controls">
+            <select id="codegraph-codebase" aria-describedby="codegraph-source-checked"></select>
+            <button id="codegraph-check-source" class="secondary" type="button">Check source against index</button>
           </div>
+          <p id="codegraph-source-checked" class="codegraph-freshness-message"></p>
           <div id="codegraph-freshness" class="codegraph-freshness-list" role="status" aria-live="polite"></div>
           <div class="codegraph-summary-grid">
             <div><h4>Node kinds</h4><div id="codegraph-node-kinds"></div></div>
@@ -263,6 +260,11 @@
     </section>
 
     <section class="setup-panel" data-workflow-panel="setup" aria-labelledby="setup-title">
+      <div id="run-experience" class="run-mode-options run-experience" role="radiogroup" aria-label="Run experience">
+        <label class="run-mode-option"><input name="runExperience" type="radio" value="simple" checked><span>Simple Run</span></label>
+        <label class="run-mode-option"><input name="runExperience" type="radio" value="advanced"><span>Advanced Run</span></label>
+      </div>
+      <p class="field-guide">Simple Run uses default settings. Advanced Run lets you customize all settings.</p>
       <div class="section-heading">
         <div>
           <h2 id="setup-title">Set up a run</h2>
@@ -281,7 +283,8 @@
             <span class="remediation">Remediation loop</span>
           </div>
         </div>
-        <div class="team-map-canvas">
+        <p id="review-team-map" class="field-guide" hidden>Jira → Reviewer (review, fix, verify) → Release Manager</p>
+        <div id="change-team-map" class="team-map-canvas">
           <svg id="team-map" viewBox="0 0 1120 330" role="img" aria-labelledby="team-map-title team-map-description">
             <desc id="team-map-description">Optional Jira context flows into the required Planner, then Developer, mandatory Reviewer, optional Security, and the terminal Release manager. Review and security may return work to the Developer to resolve issues.</desc>
             <defs>
@@ -376,6 +379,7 @@
               <label class="check-row"><input name="mrReviewMode" type="radio" value="combined" checked><span><strong>Independent review + reviewer feedback</strong><small>Perform both and report outcomes separately.</small></span></label>
             </div>
             <label class="check-row"><input name="includeResolvedDiscussions" type="checkbox">Include resolved discussions as context</label>
+            <label class="check-row"><input name="commentIssuesOnSourceCode" type="checkbox"><span><strong>Comment issues on the source code</strong><small>Add comments marked “Agent Review:” beside confirmed independent review findings, in addition to the final report. Available for independent and combined reviews.</small></span></label>
             <p class="field-guide">Uses the selected GitLab project and token. Review scope follows your selected mode. Requirements come from the MR title and description, extra instructions, and attachments. Branch selection is automatic. Extra instructions below are optional; no task number is needed. Approved commits and pushes update the existing MR's source branch. Fork MRs are not supported.</p>
           </div>
           <div>
@@ -394,7 +398,7 @@
             <legend>Agent models</legend>
             <button id="copy-planner-settings" class="text-button" type="button">Apply planner model to all</button>
           </div>
-          <p class="field-guide">Planner, Developer, Reviewer, and the final Release Manager are required. Planner creates the implementation contract, Developer executes it, and Reviewer independently confirms the changes. Jira and security are optional and start disabled.</p>
+          <p id="agent-selection-guide" class="field-guide">Planner, Developer, Reviewer, and the final Release Manager are required. Planner creates the implementation contract, Developer executes it, and Reviewer independently confirms the changes. Jira and security are optional and start disabled.</p>
           <div id="agent-models" class="agent-model-grid"></div>
         </fieldset>
 
@@ -412,7 +416,7 @@
           <p class="field-guide">Build the solution after applying changes and show the result. Build failures are reported without starting another repair cycle.</p>
         </fieldset>
 
-        <fieldset id="agent-turn-limits">
+        <fieldset id="agent-turn-limits" data-advanced-only>
           <legend>Agentic turn limits</legend>
           <label for="task-complexity">Task complexity</label>
           <output id="task-complexity-label" for="task-complexity" aria-live="polite">Normal — 1×</output>
@@ -696,8 +700,33 @@
     </div>
   </dialog>
 
+  <dialog id="run-history-dialog" class="run-history-dialog" aria-labelledby="run-history-title">
+    <div class="run-history-shell">
+      <div class="dialog-header">
+        <div><span class="run-history-eyebrow">WORKFLOW ACTIVITY</span><h2 id="run-history-title">Previous agent runs</h2><p>Your team's execution history, all in one place. Explore agents, outputs, and tool calls.</p></div>
+        <button id="run-history-close" class="icon-button" type="button" aria-label="Close previous runs">&times;</button>
+      </div>
+      <div class="run-history-controls">
+        <label for="run-history-limit">Runs per page</label>
+        <select id="run-history-limit"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select>
+        <button id="run-history-refresh" class="secondary history-refresh" type="button"><span aria-hidden="true">&#x21bb;</span> Refresh</button>
+        <span class="run-history-hint">Newest first <span aria-hidden="true">&middot;</span> Local time</span>
+      </div>
+      <p id="run-history-message" role="status" aria-live="polite"></p>
+      <div id="run-history-error" class="form-error" role="alert" hidden></div>
+      <div id="run-history-list"></div>
+      <nav class="run-history-pagination" aria-label="Run history pages">
+        <span id="run-history-page" role="status" aria-live="polite">Page 1</span>
+        <div><button id="run-history-prev" class="secondary" type="button" disabled>&larr; Previous</button><button id="run-history-next" class="secondary" type="button" disabled>Next &rarr;</button></div>
+      </nav>
+      <section id="run-history-details" aria-label="Selected run details" aria-live="polite" hidden></section>
+    </div>
+  </dialog>
+
+  <script src="/run-history.js?v=20261028-2" defer></script>
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>
   <script src="/autonomy.js?v=20261016-1" defer></script>
-  <script src="/app.js?v=20261026-16" defer></script>
+  <script src="/app.js?v=20261028-19" defer></script>
+  <script src="/run-settings.js?v=20261028-1" defer></script>
 </body>
 </html>

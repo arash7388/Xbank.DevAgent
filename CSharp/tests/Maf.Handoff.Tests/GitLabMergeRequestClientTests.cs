@@ -7,7 +7,9 @@ namespace Maf.Handoff.Tests;
 
 public sealed class GitLabMergeRequestClientTests
 {
-    private const string ReviewMr = """{"iid":17,"state":"opened","title":"Fix checkout","description":"Expected behavior","source_project_id":1,"target_project_id":1,"source_branch":"user/WEPOD-123","target_branch":"main","web_url":"https://gitlab.com/acme/orders/-/merge_requests/17"}""";
+    private const string HeadSha = "2222222222222222222222222222222222222222";
+    private const string ReviewMr = """{"iid":17,"state":"opened","title":"Fix checkout","description":"Expected behavior","source_project_id":1,"target_project_id":1,"source_branch":"user/WEPOD-123","target_branch":"main","web_url":"https://gitlab.com/acme/orders/-/merge_requests/17","diff_refs":{"base_sha":"1111111111111111111111111111111111111111","head_sha":"2222222222222222222222222222222222222222","start_sha":"3333333333333333333333333333333333333333"}}""";
+    private const string ReviewCommits = """[{"id":"2222222222222222222222222222222222222222","title":"Second change","message":"WEPOD-123 Second change"},{"id":"4444444444444444444444444444444444444444","title":"First change","message":"First change"}]""";
 
     [Fact]
     public async Task ListsOpenMergeRequestsAcrossPagesAndMarksForks()
@@ -46,7 +48,8 @@ public sealed class GitLabMergeRequestClientTests
         {
             Assert.Equal(HttpMethod.Get, request.Method);
             Assert.Equal("token", Assert.Single(request.Headers.GetValues("PRIVATE-TOKEN")));
-            string body = request.RequestUri!.Query.Length == 0 ? ReviewMr : """
+            string body = request.RequestUri!.AbsolutePath.EndsWith("/commits", StringComparison.Ordinal) ? ReviewCommits
+                : request.RequestUri.Query.Length == 0 ? ReviewMr : """
                 [
                   {"id":"open","notes":[{"id":1,"body":"Handle null","author":{"username":"reviewer"},"position":{"new_path":"Checkout.cs","new_line":12},"resolvable":true,"resolved":false},{"id":2,"body":"Agreed","author":{"username":"developer"}}]},
                   {"id":"done","notes":[{"body":"Already fixed","resolvable":true,"resolved":true}]},
@@ -59,6 +62,9 @@ public sealed class GitLabMergeRequestClientTests
         GitLabMergeRequestReview result = await new GitLabMergeRequestClient(http).ReadReviewAsync(
             "https://gitlab.com/acme/orders.git", "token", 17, includeResolved, CancellationToken.None);
         Assert.Equal("user/WEPOD-123", result.SourceBranch);
+        Assert.Equal(HeadSha, result.DiffRefs!.HeadSha);
+        Assert.Equal(2, result.Commits.Count);
+        Assert.Contains("First change", result.Context);
         Assert.Contains("Checkout.cs", result.Context);
         Assert.Contains("Agreed", result.Context);
         Assert.Contains("Check tests", result.Context);
@@ -74,12 +80,13 @@ public sealed class GitLabMergeRequestClientTests
         {
             requests++;
             Assert.DoesNotContain("discussions", request.RequestUri!.AbsoluteUri);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(ReviewMr) });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                request.RequestUri.AbsolutePath.EndsWith("/commits", StringComparison.Ordinal) ? ReviewCommits : ReviewMr) });
         }));
         GitLabMergeRequestReview review = await new GitLabMergeRequestClient(http).ReadReviewAsync(
             "https://gitlab.com/acme/orders.git", "token", 17, true, CancellationToken.None,
             MergeRequestReviewModes.Independent);
-        Assert.Equal(1, requests);
+        Assert.Equal(2, requests);
         using JsonDocument context = JsonDocument.Parse(review.Context);
         Assert.Equal("Expected behavior", context.RootElement.GetProperty("description").GetString());
         Assert.Empty(context.RootElement.GetProperty("discussions").EnumerateArray());
@@ -93,10 +100,35 @@ public sealed class GitLabMergeRequestClientTests
         string fullPage = "[" + string.Join(',', Enumerable.Repeat("""{"id":"thread","notes":[{"body":"feedback"}]}""", 100)) + "]";
         using HttpClient http = new(new StubHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent(++requests switch { 1 => ReviewMr, 2 => fullPage, _ => "[]" }),
+            Content = new StringContent(++requests switch { 1 => ReviewMr, 2 => ReviewCommits, 3 => fullPage, _ => "[]" }),
         })));
         await new GitLabMergeRequestClient(http).ReadReviewAsync("https://gitlab.com/acme/orders.git", "token", 17, false, CancellationToken.None);
-        Assert.Equal(3, requests);
+        Assert.Equal(4, requests);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("{\"base_sha\":\"HEAD~2\",\"head_sha\":\"2222222222222222222222222222222222222222\",\"start_sha\":\"3333333333333333333333333333333333333333\"}")]
+    public async Task RejectsUnavailableOrInvalidDiffReferences(string refs)
+    {
+        var mr = System.Text.Json.Nodes.JsonNode.Parse(ReviewMr)!;
+        mr["diff_refs"] = System.Text.Json.Nodes.JsonNode.Parse(refs);
+        using HttpClient http = new(new StubHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new StringContent(mr.ToJsonString()) })));
+        var error = await Assert.ThrowsAsync<RepositoryException>(() => new GitLabMergeRequestClient(http).ReadReviewAsync(
+            "https://gitlab.com/acme/orders.git", "token", 17, false, CancellationToken.None));
+        Assert.Contains("diff references", error.Message);
+    }
+
+    [Fact]
+    public async Task RejectsCommitsFromADifferentSnapshot()
+    {
+        using HttpClient http = new(new StubHandler(request => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new StringContent(request.RequestUri!.Query.Length == 0 ? ReviewMr : "[]") })));
+        var error = await Assert.ThrowsAsync<RepositoryException>(() => new GitLabMergeRequestClient(http).ReadReviewAsync(
+            "https://gitlab.com/acme/orders.git", "token", 17, false, CancellationToken.None));
+        Assert.Contains("do not match", error.Message);
     }
 
     [Theory]

@@ -82,12 +82,16 @@ public sealed class HandoffWorkflowRunner
         if (_settingsByAgent is not null)
         {
             Dictionary<string, IChatClient> clients = [];
-            foreach ((string agentName, WorkflowSettings agentSettings) in _settingsByAgent)
+            bool review = _settingsByAgent.TryGetValue(AgentNames.Reviewer, out var reviewerSettings) && reviewerSettings.IsMergeRequestReview;
+            settingsByAgent = review
+                ? _settingsByAgent.Where(pair => AgentNames.ReviewRequired.Contains(pair.Key)).ToDictionary()
+                : _settingsByAgent;
+            foreach ((string agentName, WorkflowSettings agentSettings) in settingsByAgent)
             {
                 clients[agentName] = ModelChatClientFactory.Create(agentSettings);
             }
 
-            foreach (string requiredAgent in AgentNames.Required)
+            foreach (string requiredAgent in review ? AgentNames.ReviewRequired : AgentNames.Required)
             {
                 if (!clients.ContainsKey(requiredAgent))
                 {
@@ -95,8 +99,7 @@ public sealed class HandoffWorkflowRunner
                 }
             }
 
-            workflowSettings = _settingsByAgent[AgentNames.Developer];
-            settingsByAgent = _settingsByAgent;
+            workflowSettings = settingsByAgent[review ? AgentNames.Reviewer : AgentNames.Developer];
             usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests, workflowSettings.MaxBudgetUsd);
             clients = clients.ToDictionary(
                 pair => pair.Key,
@@ -125,9 +128,10 @@ public sealed class HandoffWorkflowRunner
         {
             workflowSettings = _settings ?? throw new ConfigurationException("Workflow model settings are required.");
             IChatClient effectiveChatClient = _chatClient ?? ModelChatClientFactory.Create(workflowSettings);
-            settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => workflowSettings);
+            var names = workflowSettings.IsMergeRequestReview ? AgentNames.ReviewRequired : AgentNames.Required;
+            settingsByAgent = names.ToDictionary(name => name, _ => workflowSettings);
             usageCollector = new(settingsByAgent, workflowSettings.MaxLlmRequests, workflowSettings.MaxBudgetUsd);
-            Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(
+            Dictionary<string, IChatClient> clients = names.ToDictionary(
                 name => name,
                 name => WithTelemetryAndCheckpoints(
                     effectiveChatClient,
@@ -197,7 +201,7 @@ public sealed class HandoffWorkflowRunner
                             string identity = call.CallId ?? call.Name;
                             if (observedToolCalls.Add(identity))
                             {
-                                yield return RunEvent.Tool(activeAgent, $"Requested tool: {call.Name} (call {identity}).");
+                                yield return RunEvent.Tool(activeAgent, ResponseLogFormatter.FormatToolRequest(call, identity));
                             }
                         }
 

@@ -9,6 +9,39 @@ public sealed class AgentTeamFactoryTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task ReviewTeamExcludesOtherAgentsAndGivesReviewerEditingTools(bool review)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-review-tools-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using (var git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git")
+            {
+                WorkingDirectory = root, ArgumentList = { "init", "--quiet" }, UseShellExecute = false, CreateNoWindow = true,
+            })!) { await git.WaitForExitAsync(); Assert.Equal(0, git.ExitCode); }
+            RepositoryWorkspace workspace = (RepositoryWorkspace)Activator.CreateInstance(typeof(RepositoryWorkspace),
+                BindingFlags.Instance | BindingFlags.NonPublic, null, [root, "https://github.com/example/repo", "main", null], null)!;
+            RecordingChatClient client = new();
+            WorkflowSettings settings = new("https://example.test", "model", "key") { IsMergeRequestReview = review };
+            AgentTeam team = AgentTeamFactory.Create(client, settings, workspace);
+            if (review)
+            {
+                Assert.Null(team.Planner);
+                Assert.Null(team.Developer);
+                Assert.Null(team.Security);
+                Assert.Equal(AgentNames.ReviewRequired, team.All.Select(agent => agent.Name));
+                Assert.Equal(AgentNames.Jira, team.StartAgent.Name);
+            }
+            await team.Reviewer.RunAsync("Inspect the MR");
+            Assert.Equal(review, client.Options!.Tools!.Any(tool => tool.Name == "replace_repository_text"));
+            Assert.Equal(review, client.Options.Tools!.Any(tool => tool.Name == "write_repository_file"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task ReleaseValidationSelectsRoleAndTools(bool enabled)
     {
         RecordingChatClient client = new();
@@ -44,8 +77,8 @@ public sealed class AgentTeamFactoryTests
             AgentTeam team = AgentTeamFactory.Create(clients.ToDictionary(p => p.Key, p => (IChatClient)p.Value),
                 AgentNames.Required.ToDictionary(name => name, _ => settings), workspace,
                 toolCallStore: store, workflowId: run.ToString("D"));
-            await team.Planner.RunAsync("Inspect");
-            await team.Developer.RunAsync("Inspect");
+            await team.Planner!.RunAsync("Inspect");
+            await team.Developer!.RunAsync("Inspect");
             await team.Reviewer.RunAsync("Inspect");
             AIFunction Tool(string agent, string name) => clients[agent].Options!.Tools!.OfType<AIFunction>().Single(t => t.Name == name);
             AIFunctionArguments readArgs = new() { ["path"] = "settings.json" };

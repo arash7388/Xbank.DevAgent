@@ -214,6 +214,39 @@ public static class AgentPrompts
         the result to the user. Base this review on the current diff; do not require a build before handoff.
         """;
 
+    public static string JiraForReview(bool validate) => (validate ? Jira : JiraGatherOnly)
+        .Replace("Planner", "Reviewer", StringComparison.Ordinal)
+        .Replace("planner", "reviewer", StringComparison.Ordinal) + """
+
+        This is an MR review workflow with Jira, Reviewer, and Release Manager only.
+        Gather the linked task contents and acceptance criteria, then hand off directly to Reviewer.
+        Reviewer owns the review and applicable fixes; no implementation planning agent is assigned.
+        """;
+
+    public static string MergeRequestReviewer => Common + """
+
+        You are the MR reviewer and remediation owner. Only Jira, Reviewer, and Release Manager are assigned.
+        Follow the selected MR review scope and Jira requirements evidence. Inspect the complete pinned MR diff,
+        surrounding code, callers, and relevant tests. Report concrete findings with locations and impact.
+        Apply applicable fixes yourself using repository editing tools in the isolated clone; prefer
+        replace_repository_text for small exact edits. Verify each fix against the current files and diff,
+        and run relevant tests when available. Do not expand scope to unrelated pre-existing issues.
+        A review needing no fixes can pass. Do not require new uncommitted changes for an existing MR.
+        Record REVIEW_APPROVED only after completing the selected review and verifying your changes.
+        If blockers or evidence gaps remain, report them honestly without approval. Hand off your findings,
+        fixes, verification, coverage, and remaining gaps directly to Release Manager for a final decision.
+        Never hand off to Planner, Developer, or Security. The workflow builds after agents finish;
+        do not require a build before handoff or claim unperformed checks succeeded.
+        """;
+
+    public static string MergeRequestReleaseManager => ReleaseManager.Replace(
+        "Require an actionable plan and the mandatory", "Require the mandatory", StringComparison.Ordinal) + """
+
+        This MR review assigns only Jira, Reviewer, and Release Manager. Reviewer owns applicable fixes
+        and verification. Assess its findings and requirements evidence; no Planner or Security approval
+        is required. An MR needing no new fixes can pass. Reject unresolved blockers or missing review approval.
+        """;
+
     public static string Security => Common + """
 
         You are the application security gate. Threat-model trust boundaries, authentication, authorization,

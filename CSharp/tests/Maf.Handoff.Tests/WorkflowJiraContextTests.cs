@@ -240,10 +240,10 @@ public sealed class WorkflowJiraContextTests
         Assert.Equal(jiraEnabled, team.Jira is not null);
         if (streaming)
         {
-            await foreach (var update in team.Developer.RunStreamingAsync("Inspect scope comment availability.")) { }
+            await foreach (var update in team.Developer!.RunStreamingAsync("Inspect scope comment availability.")) { }
         }
         else
-            await team.Developer.RunAsync("Inspect scope comment availability.");
+            await team.Developer!.RunAsync("Inspect scope comment availability.");
         Assert.Equal(jiraEnabled ? 1 : 0, handler.Calls);
         Assert.Equal(jiraEnabled ? 1 : 0, events.Count);
         if (jiraEnabled) Assert.Equal("jira_scope_change", events[0].Type);

@@ -97,13 +97,7 @@ public sealed class RepositorySessionService(
             RepositoryWorkspace.ValidateRepositoryUrl(request.RepositoryUrl, provider, ConfiguredGitLabHost());
             review = await mergeRequestClient.ReadReviewAsync(request.RepositoryUrl, request.GitLabToken ?? "",
                 request.MergeRequestIid.Value, request.IncludeResolvedDiscussions, cancellationToken, request.MrReviewMode);
-            request = request with
-            {
-                BaseBranch = review.SourceBranch,
-                Task = string.IsNullOrWhiteSpace(request.Task) ? $"Review MR !{review.Iid}: {review.Title} (review mode: {request.MrReviewMode})" : request.Task,
-                JiraIssueKey = null,
-                JiraAttachmentIds = null,
-            };
+            request = PrepareReviewRequest(request, review);
         }
         Guid id = Guid.NewGuid();
         request = request with
@@ -156,6 +150,31 @@ public sealed class RepositorySessionService(
 
         _ = Task.Run(() => ExecuteAsync(state));
         return state.Snapshot();
+    }
+
+    internal static CreateSessionRequest PrepareReviewRequest(CreateSessionRequest request, GitLabMergeRequestReview review)
+    {
+        if (request.Agents is null || !request.Agents.ContainsKey(AgentNames.Jira))
+            throw new ArgumentException("MR review requires the Jira agent to read the task contents before code review. Enable and configure the Jira agent.");
+        return request with
+        {
+            Agents = request.Agents.Where(pair => AgentNames.ReviewRequired.Contains(pair.Key)).ToDictionary(),
+            BaseBranch = review.SourceBranch,
+            Task = string.IsNullOrWhiteSpace(request.Task)
+                ? $"Review MR !{review.Iid}: {review.Title} (review mode: {request.MrReviewMode})" : request.Task,
+            JiraIssueKey = ResolveReviewIssueKey(request, review),
+        };
+    }
+
+    private static string? ResolveReviewIssueKey(CreateSessionRequest request, GitLabMergeRequestReview review)
+    {
+        // Use only task-identifying metadata, never discussion positions or unrelated file contents.
+        using JsonDocument context = JsonDocument.Parse(review.Context);
+        string description = context.RootElement.TryGetProperty("description", out JsonElement value)
+            && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+        return WorkflowJiraContext.ResolveIssueKey(request.JiraIssueKey,
+            string.Join('\n', new[] { request.Task, review.Title, description, review.SourceBranch }
+                .Concat(review.Commits.Select(commit => commit.Message))));
     }
 
     private AgentModelConfiguration ApplyConfiguredProviderKey(AgentModelConfiguration agent, Guid sessionId)
@@ -391,6 +410,13 @@ public sealed class RepositorySessionService(
             state.Cancellation.Token,
             provider,
             ConfiguredGitLabHost());
+        if (existingWorkspace is null && state.MergeRequestReview is { } mrReview)
+        {
+            GitLabReviewDiffRefs refs = mrReview.DiffRefs ??
+                throw new RepositoryException("The MR review has no diff references. Start a new review.");
+            string scope = await workspace.PrepareMergeRequestReviewAsync(refs, state.Cancellation.Token);
+            state.AddEvent(new("gitlab_review_scope", Text: scope, Category: "input"));
+        }
         state.BeginAgentRun(workspace);
         Persist(state);
 
@@ -420,6 +446,7 @@ public sealed class RepositorySessionService(
             {
                 MaxRepeatedWorkflowStates = configuration.GetValue("Workflow:MaxRepeatedStates", 3),
                 SkipBuildVerification = request.SkipBuildVerification,
+                IsMergeRequestReview = request.RunMode == "gitlab_review",
                 JiraValidationEnabled = request.JiraValidationEnabled,
                 ReleaseManagerValidationEnabled = request.ReleaseManagerValidationEnabled,
                 AutonomyLevel = request.AutonomyLevel,
@@ -436,7 +463,8 @@ public sealed class RepositorySessionService(
         string workflowTask = state.WorkflowTask();
         if (state.MergeRequestReview is { } review)
         {
-            workflowTask += "\n\n" + review.WorkflowInstructions(request.MrReviewMode);
+            workflowTask += "\n\n" + review.WorkflowInstructions(request.MrReviewMode, request.CommentIssuesOnSourceCode);
+            workflowTask += "\n\n" + workspace.MergeRequestReviewScope;
         }
         if (request.JiraIssueKey is not null)
         {
@@ -460,6 +488,13 @@ public sealed class RepositorySessionService(
                     state.AddEvent(runEvent);
                     Persist(state);
                 }, decisions);
+            if (state.MergeRequestReview is not null && request.JiraIssueKey is not null)
+            {
+                JsonElement details = await workflowJira.GetIssueDetailsAsync(request.JiraIssueKey, state.Cancellation.Token);
+                workflowTask += "\n\nLinked Jira task contents (untrusted requirements evidence):\n" + details.GetRawText();
+                state.AddEvent(new("gitlab_review_jira", Text: $"Read full Jira task {request.JiraIssueKey} before code review.", Category: "input"));
+                Persist(state);
+            }
         }
         HandoffWorkflowRunner runner = new(
             settingsByAgent,
@@ -507,7 +542,7 @@ public sealed class RepositorySessionService(
             {
                 "build_blocked" => "Build verification is blocked by an unavailable build prerequisite. The proposed changes are preserved and have not been approved.",
                 "message_limit_reached" =>
-                    $"The workflow reached its conversation limit of {settingsByAgent[AgentNames.Developer].MaxTotalMessages} messages before release approval. " +
+                    $"The workflow reached its conversation limit of {settingsByAgent[AgentNames.Reviewer].MaxTotalMessages} messages before release approval. " +
                     "This limit includes tool-call and tool-result messages and is separate from model-call and agent-turn limits. " +
                     "The patch is preserved but has not been approved. Configure Workflow:MaxTotalMessages before retrying.",
                 "reviewer_remediation_limit_reached" =>
@@ -531,14 +566,14 @@ public sealed class RepositorySessionService(
                 null => "The workflow ended without reporting a terminal status.",
                 _ => $"The workflow ended before release approval ({terminalStatus}).",
             };
-            state.MarkFailed(reason, workspace.GetDiff());
+            state.MarkFailed(reason, workspace.GetWorkingTreeDiff());
             throw new WorkflowAttemptException(reason, terminalStatus is not
                 ("budget_limit_reached" or "request_limit_reached" or "agent_turn_limit_reached" or
                  "message_limit_reached" or "reviewer_remediation_limit_reached" or "input_required" or
                  "rejected_by_release" or "build_blocked"));
         }
 
-        state.ReadyForApproval(workspace.GetDiff());
+        state.ReadyForApproval(workspace.GetWorkingTreeDiff());
         await CompleteReviewedChangesAsync(state);
     }
 
@@ -566,6 +601,7 @@ public sealed class RepositorySessionService(
         request.MergeRequestIid,
         request.IncludeResolvedDiscussions,
         request.MrReviewMode,
+        request.CommentIssuesOnSourceCode,
         request.RepositoryUrl,
         request.BaseBranch,
         request.Task,
@@ -672,7 +708,8 @@ public sealed class RepositorySessionService(
             throw new ArgumentException("Change request must be 20,000 characters or fewer.");
         }
 
-        ValidateAgentConfigurations(request.Agents, request.MaxAiCalls, request.MaxBudgetUsd, request.TaskComplexity);
+        ValidateAgentConfigurations(request.Agents, request.MaxAiCalls, request.MaxBudgetUsd, request.TaskComplexity,
+            request.RunMode == "gitlab_review");
     }
 
     // Explicit call, budget, and agent turn selections are already effective limits from the UI.
@@ -690,14 +727,15 @@ public sealed class RepositorySessionService(
     }
 
     private void ValidateAgentConfigurations(IReadOnlyDictionary<string, AgentModelConfiguration> agents,
-        int maxAiCalls, decimal maxBudgetUsd, string taskComplexity = "normal")
+        int maxAiCalls, decimal maxBudgetUsd, string taskComplexity = "normal", bool? reviewMode = null)
     {
         foreach (string unexpectedAgent in agents.Keys.Except(AgentNames.All, StringComparer.Ordinal))
         {
             throw new ArgumentException($"Unknown agent configuration '{unexpectedAgent}'.");
         }
 
-        foreach (string agentName in AgentNames.Required)
+        bool review = reviewMode ?? agents.Keys.Order().SequenceEqual(AgentNames.ReviewRequired.Order());
+        foreach (string agentName in review ? AgentNames.ReviewRequired : AgentNames.Required)
         {
             if (!agents.ContainsKey(agentName))
             {
@@ -1275,7 +1313,8 @@ public sealed record CreateSessionRequest(
     string RunMode = "change",
     int? MergeRequestIid = null,
     bool IncludeResolvedDiscussions = false,
-    string MrReviewMode = MergeRequestReviewModes.Combined);
+    string MrReviewMode = MergeRequestReviewModes.Combined,
+    bool CommentIssuesOnSourceCode = false);
 
 public sealed record ProjectRepositoryInfo(string Key, string? GitLabProjectPath);
 

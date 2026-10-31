@@ -6,6 +6,20 @@ namespace Maf.Handoff.Core;
 
 internal static partial class ResponseLogFormatter
 {
+    internal static string FormatToolRequest(FunctionCallContent call, string identity)
+    {
+        object? path = null;
+        if (call.Name == "read_repository_file") call.Arguments?.TryGetValue("path", out path);
+        string? file = path switch
+        {
+            string text => text,
+            JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+            _ => null,
+        };
+        string detail = string.IsNullOrWhiteSpace(file) ? "" : $" — {Whitespace().Replace(file, " ").Trim()}";
+        return $"Requested tool: {call.Name}{detail} (call {identity}).";
+    }
+
     internal static string Format(IEnumerable<ChatMessage> messages, string? finishReason = null)
     {
         ChatMessage[] response = [.. messages];

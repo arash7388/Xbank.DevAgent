@@ -162,6 +162,6 @@ public sealed class SessionWorkflowRetryTests
         public void AppendEvent(Guid runId, RunEvent runEvent) => Events.Add(runEvent);
         public WorkflowRunLog GetLog(Guid runId) => throw new NotSupportedException();
         public string? GetSnapshot(Guid runId) => null;
-        public IReadOnlyList<WorkflowRunLogEntry> ListRuns(int limit = 100) => [];
+        public IReadOnlyList<WorkflowRunLogEntry> ListRuns(int limit = 100, int offset = 0) => [];
     }
 }

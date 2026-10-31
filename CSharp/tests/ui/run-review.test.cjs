@@ -16,13 +16,15 @@ function node(tag = '') {
 }
 function all(root) { return [root, ...root.children.flatMap(all)]; }
 
-for (const checked of [null, false, true]) {
+for (const [checked, experience] of [null, false, true].flatMap(checked =>
+  ['simple', 'advanced'].map(experience => [checked, experience]))) {
   const summary = node();
   let editedStep;
   let scrolledCategory;
   let focusedCategory;
   const nodes = {
     '#run-review-summary': summary,
+    'input[name="runExperience"]:checked': { value: experience },
     '#task': { value: 'Change the requested value' },
     '#agent-turn-limits': node(),
     '#build-project': checked === null ? null : { checked },
@@ -33,6 +35,7 @@ for (const checked of [null, false, true]) {
     querySelectorAll: () => [
       { type: 'radio', name: 'sourceControl', checked: false, value: 'github', labels: [{ textContent: 'GitHub' }] },
       { type: 'radio', name: 'sourceControl', checked: true, value: 'gitlab', labels: [{ textContent: 'GitLab' }] },
+      { type: 'text', value: 'Advanced setting', labels: [{ textContent: 'Hidden control' }], closest: () => ({}) },
     ],
   };
   const context = {
@@ -63,8 +66,11 @@ for (const checked of [null, false, true]) {
   const repositoryCard = summary.children.find(card => card.attributes['data-review-category'] === 'repository');
   assert.ok(all(repositoryCard).some(item => item.textContent === 'GitLab'));
   assert.ok(!all(repositoryCard).some(item => item.textContent === 'GitHub'));
+  assert.equal(all(repositoryCard).some(item => item.textContent === 'Advanced setting'), experience === 'advanced',
+    'Step 5 must follow the visibility of controls in earlier steps');
   const buildCard = summary.children.find(card => all(card).some(item => item.tag === 'h3' && item.textContent === 'Build verification'));
   assert.ok(buildCard, 'Review must disclose the effective build setting');
+  assert.equal(buildCard.attributes['data-advanced-only'], '', 'Build summary is hidden in Simple Run');
   assert.ok(all(buildCard).some(item => item.textContent === (checked ? 'Build after changes — report result' : 'Skipped — compilation will not be verified')));
   const edit = all(buildCard).find(item => item.tag === 'button');
   edit.handlers.click();

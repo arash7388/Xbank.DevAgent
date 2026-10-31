@@ -5,6 +5,32 @@ namespace Maf.Handoff.Core.Tests;
 public sealed class WorkflowRunStoreTests
 {
     [Fact]
+    public void PagesRunsInStableNewestFirstOrder()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"maf-workflow-pages-{Guid.NewGuid():N}");
+        try
+        {
+            SqliteLlmCheckpointStore store = new(Path.Combine(directory, "checkpoints.db"));
+            DateTimeOffset createdAt = DateTimeOffset.UtcNow;
+            Guid[] ids = Enumerable.Range(0, 53).Select(_ => Guid.NewGuid()).ToArray();
+            foreach (Guid id in ids) store.Create(id, "repository_change", "{}", createdAt);
+
+            string[] expected = ids.Select(id => id.ToString("D")).OrderDescending(StringComparer.Ordinal).ToArray();
+            var first = store.ListRuns(50);
+            var second = store.ListRuns(50, 50);
+            Assert.Equal(50, first.Count);
+            Assert.Equal(3, second.Count);
+            Assert.Equal(expected, first.Concat(second).Select(run => run.Id));
+            Assert.Empty(store.ListRuns(50, 100));
+            Assert.Equal(first.Select(run => run.Id), store.ListRuns(50, -1).Select(run => run.Id));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void StoresAnImmutableConfigSnapshotAndRunLifecycle()
     {
         string directory = Path.Combine(Path.GetTempPath(), $"maf-workflow-store-{Guid.NewGuid():N}");

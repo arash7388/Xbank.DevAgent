@@ -27,6 +27,7 @@ public sealed partial class RepositoryWorkspace
     private RepositoryProvider _provider;
     private readonly Lock _progressGate = new();
     private string? _progressFingerprint;
+    private GitLabReviewDiffRefs? _reviewDiffRefs;
 
     private RepositoryWorkspace(string rootPath, string repositoryUrl, string baseBranch, string? accessToken)
     {
@@ -45,6 +46,8 @@ public sealed partial class RepositoryWorkspace
     public string RepositoryUrl { get; }
 
     public string BaseBranch { get; private set; }
+
+    public string? MergeRequestReviewScope { get; private set; }
 
     /// <summary>Returns whether the cloned repository contains at least one non-ignored C# source file.</summary>
     public bool ContainsCSharpSource() => EnumerateSourceFiles()
@@ -102,6 +105,30 @@ public sealed partial class RepositoryWorkspace
             throw new RepositoryException(
                 $"Unable to pull base branch '{BaseBranch}' before starting the agent run: {SanitizeGitError(result.StandardError)}");
         }
+    }
+
+    public async Task<string> PrepareMergeRequestReviewAsync(GitLabReviewDiffRefs diffRefs,
+        CancellationToken cancellationToken)
+    {
+        diffRefs.Validate();
+        GitResult head = await RunGitAsync(RootPath, ["rev-parse", "HEAD"], cancellationToken);
+        if (head.ExitCode != 0 || !head.StandardOutput.Trim().Equals(diffRefs.HeadSha, StringComparison.OrdinalIgnoreCase))
+            throw new RepositoryException("The MR source branch changed after its review context was read. Start a new review to use a consistent MR snapshot.");
+
+        // Fetch the exact objects: depth-one source clones contain neither the MR merge base nor
+        // target history. Comparing two commit trees needs no guessed parent or full-history clone.
+        GitResult fetch = await RunGitAsync(RootPath,
+            ["fetch", "--no-tags", "--depth=1", "origin", diffRefs.BaseSha], cancellationToken);
+        if (fetch.ExitCode != 0)
+            throw new RepositoryException($"Unable to fetch the MR diff base: {SanitizeGitError(fetch.StandardError)}");
+        GitResult files = await RunGitAsync(RootPath,
+            ["diff", "--no-ext-diff", "--name-status", diffRefs.BaseSha, diffRefs.HeadSha, "--"], cancellationToken);
+        if (files.ExitCode != 0)
+            throw new RepositoryException($"Unable to identify MR changes: {SanitizeGitError(files.StandardError)}");
+        _reviewDiffRefs = diffRefs;
+        Interlocked.Increment(ref _readCacheRevision);
+        return MergeRequestReviewScope = $"MR review range: {diffRefs.BaseSha}..{diffRefs.HeadSha}\n" +
+            "Changed files (GitLab merge base to source head):\n" + files.StandardOutput;
     }
 
     public static async Task<string[]> ListBranchesAsync(
@@ -410,10 +437,19 @@ public sealed partial class RepositoryWorkspace
     [Description("Returns the current Git status for the isolated clone.")]
     public string GetStatus() => Limit(RunGit(["status", "--short"]).StandardOutput);
 
-    [Description("Returns the exact uncommitted Git diff, including newly created source files.")]
-    public string GetDiff()
+    [Description("Returns the complete MR diff from its pinned GitLab merge base, including current fixes, in MR review mode; otherwise the uncommitted diff. Includes newly created source files.")]
+    public string GetDiff() => GetDiffCore(_reviewDiffRefs?.BaseSha);
+
+    /// <summary>Only edits proposed during this run, for approval and publication.</summary>
+    public string GetWorkingTreeDiff() => GetDiffCore(null);
+
+    private string GetDiffCore(string? baseSha)
     {
-        GitResult tracked = RunGit(["diff", "--no-ext-diff", "--"]);
+        GitResult tracked = RunGit(baseSha is null
+            ? ["diff", "--no-ext-diff", "--"]
+            : ["diff", "--no-ext-diff", baseSha, "--"]);
+        if (tracked.ExitCode != 0)
+            throw new RepositoryException($"Unable to read repository diff: {SanitizeGitError(tracked.StandardError)}");
         GitResult untracked = RunGitAsync(RootPath,
             ["ls-files", "--others", "--exclude-standard", "-z"], CancellationToken.None,
             truncateOutput: false).GetAwaiter().GetResult();
@@ -669,7 +705,7 @@ public sealed partial class RepositoryWorkspace
         bool truncateOutput = true)
     {
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        bool remote = arguments.Count > 0 && arguments[0] is "clone" or "pull" or "push" or "ls-remote";
+        bool remote = arguments.Count > 0 && arguments[0] is "clone" or "pull" or "fetch" or "push" or "ls-remote";
         TimeSpan limit = remote ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(30);
         timeout.CancelAfter(limit);
         timeout.Token.ThrowIfCancellationRequested();

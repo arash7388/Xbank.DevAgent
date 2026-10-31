@@ -14,7 +14,7 @@ public interface IWorkflowRunStore
     void SaveSnapshot(Guid runId, string snapshotJson);
     string? GetSnapshot(Guid runId);
     void AppendEvent(Guid runId, RunEvent runEvent);
-    IReadOnlyList<WorkflowRunLogEntry> ListRuns(int limit = 100);
+    IReadOnlyList<WorkflowRunLogEntry> ListRuns(int limit = 100, int offset = 0);
 }
 
 public sealed record WorkflowRunLog(
@@ -302,12 +302,13 @@ public sealed partial class SqliteLlmCheckpointStore : IWorkflowRunStore
         return events;
     }
 
-    public IReadOnlyList<WorkflowRunLogEntry> ListRuns(int limit = 100)
+    public IReadOnlyList<WorkflowRunLogEntry> ListRuns(int limit = 100, int offset = 0)
     {
         using SqliteConnection connection = Open();
         using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = "SELECT id,workflow_id,status,error,created_at,updated_at,started_at,finished_at FROM workflow_runs ORDER BY created_at DESC LIMIT $limit";
+        command.CommandText = "SELECT id,workflow_id,status,error,created_at,updated_at,started_at,finished_at FROM workflow_runs ORDER BY created_at DESC, id DESC LIMIT $limit OFFSET $offset";
         command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 1000));
+        command.Parameters.AddWithValue("$offset", Math.Max(0, offset));
         using SqliteDataReader reader = command.ExecuteReader();
         List<WorkflowRunLogEntry> runs = [];
         while (reader.Read()) runs.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), ReadNullableString(reader, 3),

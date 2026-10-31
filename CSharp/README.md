@@ -17,20 +17,36 @@ merge request table. Titles link to GitLab in a new tab. Refresh reloads the lis
 but cannot be selected. The server reads the open MR and all discussion pages using the configured or supplied
 GitLab token, then clones its source branch for a fresh agent run. Input includes the title, description,
 general comments, unresolved threads, replies, authors, timestamps, and file/line positions. Resolved
-threads can optionally be included as context. Additional instructions are optional and no Jira task
-number is required. Each run retains the fetched review context in its input event history.
+threads can optionally be included as context. Review requires the Jira agent and starts by reading the
+full linked Jira task. Select the task explicitly, or let the run identify one unambiguous key from the
+MR title, description, source branch, and commit messages. Ambiguous or unavailable requirements must
+be reported as an evidence gap. Selected comments and attachments remain respected.
+Each run retains the fetched review context, commit list, pinned base/head SHAs, and changed-file scope
+in its input event history. Agents review the complete change from GitLab's MR merge base to its source
+head, including all MR commits and current fixes. Unrelated target-branch changes are excluded. A source
+branch that moves after context loading requires a new review. Approval shows only fixes from this run;
+an MR that needs no fixes can finish without manufacturing a new patch.
 
 Choose one of three review modes:
 
 - **Independent MR review** inspects and fixes the implementation against task requirements and acceptance
-  criteria from the MR description, additional instructions, and attachments. It does not fetch or use
+  criteria from the linked Jira task, MR description, additional instructions, and attachments. It does not fetch or use
   GitLab comments or discussion threads, even if resolved discussions were previously selected.
 - **Apply reviewer feedback** evaluates GitLab comments and unresolved threads, applies relevant fixes,
   and verifies them without a separate requirements audit.
 - **Independent review + reviewer feedback** (default) performs both and reports their outcomes separately.
 
-All modes retain the normal developer/reviewer cycle and configured build policy. Resolved threads are
+All review modes use only **Jira → Reviewer → Release Manager**. Planner, Developer, and Security are
+disabled. Reviewer applies and verifies applicable fixes; these fixes do not receive a separate Developer/Reviewer
+pass. Switching back to a change request restores the previous agent selection. All modes retain the
+configured build policy. Resolved threads are
 optional context for the feedback and combined modes. Step 5 displays the chosen scope.
+For independent and combined reviews, **Comment issues on the source code** optionally adds concise
+comments prefixed with `Agent Review:` at confirmed finding locations in the checked-out source,
+in addition to the final report. It is off by default. Comments use valid file syntax, avoid duplicates,
+and describe fixes accurately when the issue is resolved during the run. Findings in formats without
+comment support remain in the report. These are repository edits, visible in the diff and subject to
+the normal review and commit/push selections; they are not posted as GitLab discussions.
 Approved commits and authorized
 pushes use the existing MR source branch; this mode does not create another MR, post replies, or resolve
 threads. Only open MRs whose source and target are in the selected project are supported. Read access
@@ -94,7 +110,17 @@ then continue with targeted repository evidence when the graph has no useful mat
 unavailable graph data never blocks a handoff or the workflow. Configuration, documentation, and other
 non-C# work normally needs no graph call.
 
-Each agent has an independent OpenAI, DeepSeek, Claude, or AIFA provider selector, model selector, and
+The setup starts in **Simple Run**. Switch to **Advanced Run** at the top of setup to expose all
+settings. Simple Run offers AIFA and DeepSeek credentials and independent MR review only. It uses
+fully autonomous execution, Jira requirements validation, and build verification, with Release
+Manager validation, workflow retry, source comments, resolved discussion context, and automatic
+commit/push/PR creation off. Task complexity stays Normal; per-agent turn limits use their defaults
+and additional guidance is empty. Pricing, Jira connection tests, additional Jira actions, raw Jira
+responses, Jira comments/attachment controls, and advanced agent settings are hidden. Step 5 follows
+the same visibility rules. Switching back to Simple Run reapplies these defaults. Jira comments and
+attachments retain their existing context-selection behavior behind the hidden controls.
+
+In Advanced Run, each agent has an independent OpenAI, DeepSeek, Claude, or AIFA provider selector, model selector, and
 reasoning-effort selector. All agents default to DeepSeek `deepseek-flash` with low reasoning,
 but can be configured individually. Provider credentials are entered once and reused only by agents
 assigned to that provider. Endpoints and capability metadata remain internal.

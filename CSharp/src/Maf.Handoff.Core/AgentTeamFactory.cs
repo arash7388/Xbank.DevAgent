@@ -21,8 +21,9 @@ public static class AgentTeamFactory
         IWorkflowUserInput? userInput = null,
         JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
     {
-        Dictionary<string, IChatClient> clients = AgentNames.Required.ToDictionary(name => name, _ => chatClient);
-        Dictionary<string, WorkflowSettings> settingsByAgent = AgentNames.Required.ToDictionary(name => name, _ => settings);
+        var names = settings.IsMergeRequestReview ? AgentNames.ReviewRequired : AgentNames.Required;
+        Dictionary<string, IChatClient> clients = names.ToDictionary(name => name, _ => chatClient);
+        Dictionary<string, WorkflowSettings> settingsByAgent = names.ToDictionary(name => name, _ => settings);
         return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId, jira, userInput, jiraIntakeCheckpoint);
     }
 
@@ -39,7 +40,18 @@ public static class AgentTeamFactory
         IWorkflowUserInput? userInput = null,
         JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
     {
-        WorkflowSettings workflowSettings = Get(settingsByAgent, AgentNames.Developer);
+        bool review = Get(settingsByAgent, AgentNames.Reviewer).IsMergeRequestReview;
+        if (review)
+        {
+            clients = clients.Where(pair => AgentNames.ReviewRequired.Contains(pair.Key)).ToDictionary();
+            settingsByAgent = settingsByAgent.Where(pair => AgentNames.ReviewRequired.Contains(pair.Key)).ToDictionary();
+            foreach (string name in AgentNames.ReviewRequired)
+            {
+                _ = Get(clients, name);
+                _ = Get(settingsByAgent, name);
+            }
+        }
+        WorkflowSettings workflowSettings = Get(settingsByAgent, review ? AgentNames.Reviewer : AgentNames.Developer);
         bool jiraValidation = settingsByAgent.TryGetValue(AgentNames.Jira, out WorkflowSettings? jiraSettings)
             ? jiraSettings.JiraValidationEnabled : workflowSettings.JiraValidationEnabled;
         bool releaseValidation = Get(settingsByAgent, AgentNames.ReleaseManager).ReleaseManagerValidationEnabled;
@@ -71,7 +83,7 @@ public static class AgentTeamFactory
             pair => pair.Key,
             pair => CreateEffectiveClient(pair.Key, pair.Value),
             StringComparer.Ordinal);
-        if (workspace is not null)
+        if (workspace is not null && !review)
         {
             effectiveClients[AgentNames.Developer] = new DeveloperHandoffGuardChatClient(
                 Get(effectiveClients, AgentNames.Developer),
@@ -101,18 +113,18 @@ public static class AgentTeamFactory
 
         return new(
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Jira,
-                jiraValidation ? "Task readiness, requirements validation, and integration reconnaissance." : "Gather Jira task input for Planner without validation.",
-                jiraValidation ? AgentPrompts.Jira : AgentPrompts.JiraGatherOnly,
+                jiraValidation ? "Task readiness, requirements validation, and integration reconnaissance." : review ? "Gather Jira task input for Reviewer without validation." : "Gather Jira task input for Planner without validation.",
+                review ? AgentPrompts.JiraForReview(jiraValidation) : jiraValidation ? AgentPrompts.Jira : AgentPrompts.JiraGatherOnly,
                 CreateTools(AgentNames.Jira, false), codeGraphAvailable),
-            CreateAgent(Get(effectiveClients, AgentNames.Planner), Get(settingsByAgent, AgentNames.Planner), AgentNames.Planner, "Architecture and acceptance criteria.",
+            review ? null : CreateAgent(Get(effectiveClients, AgentNames.Planner), Get(settingsByAgent, AgentNames.Planner), AgentNames.Planner, "Architecture and acceptance criteria.",
                 jiraValidation ? AgentPrompts.Planner : AgentPrompts.PlannerWithUnvalidatedJira,
                 CreateTools(AgentNames.Planner, false), codeGraphAvailable),
-            CreateAgent(Get(effectiveClients, AgentNames.Developer), Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, CreateTools(AgentNames.Developer, true), codeGraphAvailable),
-            CreateAgent(Get(effectiveClients, AgentNames.Reviewer), Get(settingsByAgent, AgentNames.Reviewer), AgentNames.Reviewer, "Independent correctness and quality review.", AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, false), codeGraphAvailable),
+            review ? null : CreateAgent(Get(effectiveClients, AgentNames.Developer), Get(settingsByAgent, AgentNames.Developer), AgentNames.Developer, "Implementation, tests, and remediation.", AgentPrompts.Developer, CreateTools(AgentNames.Developer, true), codeGraphAvailable),
+            CreateAgent(Get(effectiveClients, AgentNames.Reviewer), Get(settingsByAgent, AgentNames.Reviewer), AgentNames.Reviewer, "Correctness and quality review.", review ? AgentPrompts.MergeRequestReviewer : AgentPrompts.Reviewer, CreateTools(AgentNames.Reviewer, review), codeGraphAvailable),
             CreateOptionalAgent(effectiveClients, settingsByAgent, AgentNames.Security, "Threat modeling and security review.", AgentPrompts.Security, CreateTools(AgentNames.Security, false), codeGraphAvailable),
             CreateAgent(Get(effectiveClients, AgentNames.ReleaseManager), Get(settingsByAgent, AgentNames.ReleaseManager), AgentNames.ReleaseManager,
                 releaseValidation ? "Final evidence gate." : "Minimal finalization using prior approvals.",
-                releaseValidation ? AgentPrompts.ReleaseManager : AgentPrompts.ReleaseManagerFinalizeOnly,
+                releaseValidation ? review ? AgentPrompts.MergeRequestReleaseManager : AgentPrompts.ReleaseManager : AgentPrompts.ReleaseManagerFinalizeOnly,
                 releaseValidation ? CreateTools(AgentNames.ReleaseManager, false) : null, false));
 
         IChatClient CreateEffectiveClient(string agentName, IChatClient client)
