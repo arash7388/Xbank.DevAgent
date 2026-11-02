@@ -16,7 +16,8 @@ public sealed class RepositorySessionService(
     IWorkflowRunStore workflowRunStore,
     IConfiguration configuration,
     RunConnectivityCheck? connectivityCheck = null,
-    ITalkNotifications? talkNotifications = null)
+    ITalkNotifications? talkNotifications = null,
+    CodingRuleStore? codingRules = null)
 {
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
     private readonly string _workspaceRoot = Path.Combine(Path.GetTempPath(), "maf-repository-workspaces");
@@ -76,6 +77,9 @@ public sealed class RepositorySessionService(
 
     public async Task<SessionSnapshot> CreateAsync(CreateSessionRequest request, CancellationToken cancellationToken = default)
     {
+        request = request with { CodingRulesSnapshot = request.IncludeCodingRules
+            ? (codingRules ?? throw new ConfigurationException("Coding Rules storage is unavailable.")).Snapshot(true)
+            : "" };
         RepositoryProvider provider = ParseProvider(request.SourceControl);
         request = request with { SourceControl = provider.ToString().ToLowerInvariant() };
         if (provider == RepositoryProvider.GitHub && string.IsNullOrWhiteSpace(request.GitHubToken))
@@ -446,6 +450,7 @@ public sealed class RepositorySessionService(
             {
                 MaxRepeatedWorkflowStates = configuration.GetValue("Workflow:MaxRepeatedStates", 3),
                 SkipBuildVerification = request.SkipBuildVerification,
+                CodingRules = request.CodingRulesSnapshot,
                 IsMergeRequestReview = request.RunMode == "gitlab_review",
                 JiraValidationEnabled = request.JiraValidationEnabled,
                 ReleaseManagerValidationEnabled = request.ReleaseManagerValidationEnabled,
@@ -612,6 +617,8 @@ public sealed class RepositorySessionService(
         request.JiraValidationEnabled,
         request.ReleaseManagerValidationEnabled,
         request.SkipBuildVerification,
+        request.IncludeCodingRules,
+        request.CodingRulesSnapshot,
         request.AutonomyLevel,
         request.TaskComplexity,
         request.RetryOnWorkflowAgent,
@@ -1314,7 +1321,12 @@ public sealed record CreateSessionRequest(
     int? MergeRequestIid = null,
     bool IncludeResolvedDiscussions = false,
     string MrReviewMode = MergeRequestReviewModes.Combined,
-    bool CommentIssuesOnSourceCode = false);
+    bool CommentIssuesOnSourceCode = false,
+    bool IncludeCodingRules = false)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string CodingRulesSnapshot { get; init; } = "";
+}
 
 public sealed record ProjectRepositoryInfo(string Key, string? GitLabProjectPath);
 

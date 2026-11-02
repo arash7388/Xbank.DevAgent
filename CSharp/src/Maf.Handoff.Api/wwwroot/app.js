@@ -117,7 +117,7 @@ function initializeSetupSteps() {
   agentsSettings.dataset.setupStep = 'agents';
 
   form.prepend(connectionSettings, agentsSettings, runSettings);
-  connectionSettings.append(repositorySettings, providerSettings);
+  connectionSettings.append(document.querySelector('#run-experience-settings'), repositorySettings, providerSettings);
 
   const qdrantSettings = document.createElement('fieldset');
   qdrantSettings.className = 'qdrant-settings';
@@ -140,6 +140,7 @@ function initializeSetupSteps() {
   connectionSettings.append(qdrantSettings);
   connectionSettings.append(cogniaSettings);
   const analysisSettings = document.createElement('fieldset');
+  analysisSettings.setAttribute('data-advanced-only', '');
   const analysisLegend = document.createElement('legend');
   analysisLegend.textContent = 'Code analysis';
   const analysisToggle = workflowCodeGraphEnabled.closest('label');
@@ -174,6 +175,8 @@ function initializeSetupSteps() {
   if (buildSettings) agentsSettings.append(buildSettings);
   const retrySettings = document.querySelector('#workflow-retry-settings');
   if (retrySettings) agentsSettings.append(retrySettings);
+  const codingRulesSettings = document.querySelector('#coding-rules-settings');
+  if (codingRulesSettings) agentsSettings.append(codingRulesSettings);
   agentsSettings.append(document.querySelector('#agent-turn-limits'), agentSettings);
   runSettings.append(instructionSettings, referenceSettings);
   [
@@ -187,6 +190,7 @@ function initializeSetupSteps() {
     [autonomySettings, 'autonomy'],
     [buildSettings, 'verification'],
     [retrySettings, 'retry'],
+    [codingRulesSettings, 'coding-rules'],
     [document.querySelector('#agent-turn-limits'), 'limits'],
     [instructionSettings, 'instruction'],
     [referenceSettings, 'references'],
@@ -356,7 +360,7 @@ function renderRunReview() {
     const card = document.createElement('section');
     card.className = 'run-review-card';
     card.setAttribute('data-review-category', category);
-    if (['autonomy', 'verification', 'retry', 'limits'].includes(category)) card.setAttribute('data-advanced-only', '');
+    if (['autonomy', 'verification', 'retry', 'limits', 'coding-rules', 'analysis'].includes(category)) card.setAttribute('data-advanced-only', '');
     const heading = document.createElement('div');
     heading.className = 'run-review-heading';
     const name = document.createElement('h3');
@@ -456,6 +460,8 @@ function renderRunReview() {
   if (autonomySettings) controls(section('Autonomy and completion', 'agents', 'autonomy'), autonomySettings);
   row(section('Build verification', 'agents', 'verification'), 'Build verification',
     document.querySelector('#build-project')?.checked ? 'Build after changes — report result' : 'Skipped — compilation will not be verified');
+  const codingRulesSettings = document.querySelector('#coding-rules-settings');
+  if (codingRulesSettings) controls(section('Coding Rules', 'agents', 'coding-rules'), codingRulesSettings);
   const agents = section('Agents and model settings', 'agents', 'models');
   agentModels.querySelectorAll('.agent-model-card').forEach(agent => {
     const card = document.createElement('section');
@@ -1349,6 +1355,7 @@ async function startAgentRun() {
     numberOfRetries: Number(values.get('numberOfRetries') ?? 2),
     taskComplexity: ['simple', 'normal', 'hard'][Number(values.get('taskComplexity') ?? 1)],
     skipBuildVerification: values.get('buildProject') !== 'on',
+    includeCodingRules: values.get('includeCodingRules') === 'on',
     jiraValidationEnabled: values.get('jiraValidationEnabled') === 'on',
     releaseManagerValidationEnabled: values.get('releaseManagerValidationEnabled') === 'on',
     autonomyLevel: Number(values.get('autonomyLevel') ?? 100),
@@ -2530,7 +2537,9 @@ else if (initialView === 'jira' && currentWorkflowStep === 'setup')
 async function initializeCodeGraph() {
   try {
     const config = await api('/api/codegraph/config');
-    workflowCodeGraphEnabled.checked = config.workflowEnabled;
+    if (!config.workflowEnabled) {
+      workflowCodeGraphEnabled.checked = false;
+    }
     workflowCodeGraphEnabled.disabled = !config.workflowEnabled;
     if (!config.workflowEnabled)
       workflowCodeGraphEnabled.title = 'Disabled by the server CodeGraph:Enabled setting.';

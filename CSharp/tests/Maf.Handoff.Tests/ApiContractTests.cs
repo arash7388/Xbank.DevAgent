@@ -242,6 +242,33 @@ public sealed class ApiContractTests(ApiContractTests.ApiFactory factory) : ICla
         Assert.Equal(before, store.ListRuns(100).Count);
     }
 
+    [Fact]
+    public async Task CodingRulesSupportCrudAndValidateInput()
+    {
+        using HttpClient client = factory.CreateClient();
+        using var invalid = await client.PostAsJsonAsync("/api/coding-rules", new { title = " ", content = "Rule" });
+        await AssertError(invalid, HttpStatusCode.BadRequest);
+        using var created = await client.PostAsJsonAsync("/api/coding-rules", new { title = "Naming", content = "Use PascalCase." });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        CodingRule rule = (await created.Content.ReadFromJsonAsync<CodingRule>())!;
+        Assert.True(rule.Enabled);
+        Assert.Contains((await client.GetFromJsonAsync<CodingRule[]>("/api/coding-rules"))!, item => item.Id == rule.Id);
+        using var disabled = await client.PutAsJsonAsync($"/api/coding-rules/{rule.Id}/enabled", new { enabled = false });
+        Assert.Equal(HttpStatusCode.NoContent, disabled.StatusCode);
+        Assert.False((await client.GetFromJsonAsync<CodingRule[]>("/api/coding-rules"))!.Single(item => item.Id == rule.Id).Enabled);
+        using var updated = await client.PutAsJsonAsync($"/api/coding-rules/{rule.Id}", new { title = "C# naming", content = "Use camelCase for locals." });
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        CodingRule updatedRule = (await updated.Content.ReadFromJsonAsync<CodingRule>())!;
+        Assert.Equal("C# naming", updatedRule.Title);
+        Assert.False(updatedRule.Enabled);
+        using var deleted = await client.DeleteAsync($"/api/coding-rules/{rule.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        using var missing = await client.PutAsJsonAsync($"/api/coding-rules/{rule.Id}", new { title = "Gone", content = "Rule" });
+        await AssertError(missing, HttpStatusCode.NotFound);
+        using var missingToggle = await client.PutAsJsonAsync($"/api/coding-rules/{rule.Id}/enabled", new { enabled = true });
+        await AssertError(missingToggle, HttpStatusCode.NotFound);
+    }
+
     private static async Task AssertError(HttpResponseMessage response, HttpStatusCode expected)
     {
         string body = await response.Content.ReadAsStringAsync();
@@ -273,6 +300,7 @@ public sealed class ApiContractTests(ApiContractTests.ApiFactory factory) : ICla
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Checkpointing:DatabasePath"] = Path.Combine(_root, "runs.db"),
+                    ["CodingRules:DatabasePath"] = Path.Combine(_root, "coding-rules.db"),
                     ["CodeGraph:Enabled"] = "false",
                     ["CodeGraph:RootPath"] = _root,
                     ["CodeGraph:DatabasePath"] = Path.Combine(_root, "graph.db"),

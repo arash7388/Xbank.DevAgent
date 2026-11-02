@@ -55,7 +55,7 @@ function verifySimple() {
     includeResolvedDiscussions: false, commentIssuesOnSourceCode: false,
     releaseManagerValidationEnabled: false, jiraValidationEnabled: true,
     autoCommit: false, autoPush: false, autoCreatePullRequest: false,
-    buildProject: true, retryOnWorkflowAgent: false,
+    buildProject: true, retryOnWorkflowAgent: false, includeCodingRules: false, codeGraphEnabled: true,
   })) assert.equal(get(`[name="${name}"]`).checked, expected, name);
   assert.equal(get('[name="mrReviewMode"][value="independent"]').checked, true);
   assert.equal(get('#autonomy-level').value, '100');
@@ -76,9 +76,13 @@ verifySimple();
 get('[name="runExperience"]:checked').value = 'advanced';
 get('#run-experience').handlers.change();
 assert.equal(context.document.documentElement.dataset.runExperience, 'advanced');
+assert.equal(get('[name="includeCodingRules"]').checked, true);
+assert.equal(get('[name="codeGraphEnabled"]').checked, true);
 cards.forEach(card => assert.ok(card.fields.provider.options.every(option => !option.disabled && !option.hidden)));
 // Advanced settings must be reset before they become hidden again.
 get('[name="autoPush"]').checked = true;
+get('[name="codeGraphEnabled"]').checked = false;
+get('[name="includeCodingRules"]').checked = true;
 get('[name="buildProject"]').checked = false;
 get('[name="jiraValidationEnabled"]').checked = false;
 get('#task-complexity').value = '2';
@@ -90,6 +94,11 @@ assert.equal(summaries, 3, 'Refresh step 5 after each mode change');
 assert.equal(requiredSyncs, 3, 'Validate keys for the providers offered by the mode');
 assert.match(html, /name="runExperience" type="radio" value="simple" checked/);
 assert.match(app, /control\.closest\?\.\('\[data-advanced-only\]'\)/);
-assert.match(app, /\['autonomy', 'verification', 'retry', 'limits'\]\.includes\(category\)/);
+assert.match(app, /\['autonomy', 'verification', 'retry', 'limits', 'coding-rules', 'analysis'\]\.includes\(category\)/);
+assert.match(app, /analysisSettings\.setAttribute\('data-advanced-only', ''\)/);
+assert.match(html, /id="codegraph-enabled" name="codeGraphEnabled" type="checkbox" checked>/);
+get('[name="codeGraphEnabled"]').disabled = true;
+get('#run-experience').handlers.change();
+assert.equal(get('[name="codeGraphEnabled"]').checked, false, 'Respect server-disabled CodeGraph in Simple Run');
 assert.match(fs.readFileSync(path.join(root, 'styles.css'), 'utf8'), /html\[data-run-experience="simple"\] \[data-advanced-only\] \{ display: none !important; \}/);
 console.log('Simple/Advanced Run defaults, mode transitions, providers, and summary visibility passed.');

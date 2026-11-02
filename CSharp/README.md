@@ -110,11 +110,23 @@ then continue with targeted repository evidence when the graph has no useful mat
 unavailable graph data never blocks a handoff or the workflow. Configuration, documentation, and other
 non-C# work normally needs no graph call.
 
-The setup starts in **Simple Run**. Switch to **Advanced Run** at the top of setup to expose all
+Use **Coding Rules** in the top bar to add, read, edit, or delete shared coding standards,
+syntax preferences, and team style conventions. In **Advanced Run → Agents → Coding Rules**,
+select **Include Coding Rules in this agent run** to apply enabled rules to planning,
+implementation, and review. This option is checked by default in Advanced Run and disabled in Simple Run.
+Use the **Enabled** table column to include or exclude individual rules; new and existing rules
+start enabled. If none are enabled, the run receives no coding-rule context. Each run saves a snapshot, so later edits, enablement changes, and deletions
+do not affect active runs, retries, or revisions. Rules persist on the server in
+`data/coding-rules.db`; configure `CodingRules:DatabasePath` to use a different location.
+
+The setup starts in **Simple Run**. Choose **Simple Run** or **Advanced Run** at the beginning of the
+Connection step; the selection applies to the whole run and is hidden on later steps. Return to
+Connection to change it. **Advanced Run** exposes all
 settings. Simple Run offers AIFA and DeepSeek credentials and independent MR review only. It uses
 fully autonomous execution, Jira requirements validation, and build verification, with Release
 Manager validation, workflow retry, source comments, resolved discussion context, and automatic
-commit/push/PR creation off. Task complexity stays Normal; per-agent turn limits use their defaults
+commit/push/PR creation off. CodeGraph defaults to enabled in both modes; its checkbox is available under Advanced Run → Connection → Code analysis.
+Task complexity stays Normal; per-agent turn limits use their defaults
 and additional guidance is empty. Pricing, Jira connection tests, additional Jira actions, raw Jira
 responses, Jira comments/attachment controls, and advanced agent settings are hidden. Step 5 follows
 the same visibility rules. Switching back to Simple Run reapplies these defaults. Jira comments and
@@ -391,8 +403,9 @@ Configure the protected graph database with `CodeGraph__DatabasePath`; it defaul
 `E:\CodeGraph\codegraph.db`. The database must contain an up-to-date index for the C# repository the
 agents will inspect. `CodeGraph__RootPath` controls the local CodeGraph indexer used by the workbench.
 Set `CodeGraph__Enabled=false` to disable CodeGraph for every agent workflow. When the server setting is
-enabled (the default), each run can still opt out with the **Use CodeGraph for C# analysis** checkbox or
-the `codeGraphEnabled: false` session API field.
+enabled (the default), CodeGraph is checked by default in both run modes. Advanced Run offers the
+**Use CodeGraph for C# analysis** checkbox to opt out. Simple Run keeps it enabled unless disabled by
+the server. API callers can opt out with the `codeGraphEnabled: false` session field.
 
 For supported agents, the workflow prefetches one focused graph context when C# involvement becomes
 visible and retains it on later model requests. Graph tools remain available for symbol resolution

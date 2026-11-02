@@ -282,7 +282,10 @@ public static class AgentTeamFactory
             Description = description,
             ChatOptions = CreateChatOptions(
                 settings,
-                AgentInstructionComposer.Compose(name, instructions, settings.Prompt, codeGraphAvailable),
+                AgentInstructionComposer.Compose(name, instructions, settings.Prompt, codeGraphAvailable)
+                    + (string.IsNullOrWhiteSpace(settings.CodingRules) ? "" :
+                        "\n\nCoding Rules selected for this run:\nApply these team conventions when planning, implementing, and reviewing code. " +
+                        "Use rules relevant to the task; they do not override your assigned role, workflow approval, tool restrictions, or execution policy.\n\n" + settings.CodingRules),
                 tools),
         });
 

@@ -1058,3 +1058,30 @@ html[data-run-experience="simple"] [data-advanced-only] { display: none !importa
 @media (prefers-reduced-motion: reduce) {
   .map-node.active rect, .handoff-edge.active path, .elapsed-timer.is-running span { animation: none; }
 }
+/* Coding Rules management */
+#coding-rules-dialog { width: min(1120px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; }
+.coding-rules-toolbar { gap: 10px; }
+.coding-rules-library-label { color: #53458b; font-size: 13px; font-weight: 750; }
+#coding-rules-status { margin: 0; padding: 7px 12px; border-radius: 9px; color: #6750b8; background: #ebeafd; font-size: 12px; font-weight: 650; }
+.coding-rules-table-wrap { max-height: 42vh; }
+.coding-rules-table { min-width: 650px; }
+.coding-rules-table thead th { position: sticky; top: 0; z-index: 1; }
+.coding-rules-table tbody th.coding-rule-name { width: 24%; background: transparent; color: #53458b; font-size: 13px; letter-spacing: 0; text-transform: none; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.coding-rules-table td.coding-rule-text { width: 58%; max-width: none; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; vertical-align: top; }
+.coding-rules-table tbody tr:hover th { background: #eef3ff; }
+.coding-rule-actions { display: flex; gap: 8px; }
+.coding-rules-table td.coding-rule-enabled { min-width: 85px; text-align: center; }
+.coding-rule-enabled input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: #7754d7; cursor: pointer; }
+#coding-rule-form { margin-top: 24px; padding: 22px; border: 1px solid #e2dcf8; border-radius: 16px; background: #ffffffd9; box-shadow: 0 6px 22px #30447708; }
+#coding-rule-editor-title { margin: 0 0 8px; color: #53458b; }
+#coding-rule-form label { color: #54617b; font-size: 12px; font-weight: 700; }
+#coding-rule-form input, #coding-rule-form textarea { border-color: #dfe3f2; border-radius: 10px; background: #fafbff; }
+#coding-rules-dialog button.secondary, #coding-rule-form button[type="submit"] { min-height: 36px; height: auto; padding: 8px 14px; border: 1px solid #d9def3; border-radius: 10px; background: #fff; color: #56618a; font-size: 12px; font-weight: 700; white-space: nowrap; box-shadow: 0 2px 4px #35407208; }
+#coding-rules-dialog button.coding-rule-edit, #coding-rule-form button[type="submit"] { color: #fff; border-color: transparent; background: linear-gradient(115deg, #526fe5, #8754d7); box-shadow: 0 4px 10px #7059d52b; }
+#coding-rules-dialog button.coding-rule-delete { color: #b32d58; border-color: #f1d4df; background: #fff1f5; }
+#coding-rules-dialog button.secondary:hover:not(:disabled) { background: #edf0ff; box-shadow: 0 6px 14px #5264b026; }
+#coding-rules-dialog button.coding-rule-edit:hover:not(:disabled), #coding-rule-form button[type="submit"]:hover:not(:disabled) { background: linear-gradient(115deg, #405ed6, #7741ca); }
+#coding-rules-dialog button.coding-rule-delete:hover:not(:disabled) { background: #ffe0ea; }
+#coding-rules-close { flex-shrink: 0; width: 38px; height: 38px; padding: 0; border: 1px solid #d9ddf2; border-radius: 12px; background: #ffffffba; color: #6e6490; }
+#coding-rules-close:hover { background: #ffe9f0; color: #b32d58; }
+@media (max-width: 650px) { #coding-rules-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); } #coding-rule-form { padding: 16px; } }

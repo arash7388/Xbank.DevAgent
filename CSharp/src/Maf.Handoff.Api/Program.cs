@@ -44,6 +44,8 @@ builder.Services.AddSingleton<SqliteLlmCheckpointStore>(_ =>
 builder.Services.AddSingleton<ILlmCheckpointStore>(services => services.GetRequiredService<SqliteLlmCheckpointStore>());
 builder.Services.AddSingleton<IWorkflowRunStore>(services => services.GetRequiredService<SqliteLlmCheckpointStore>());
 builder.Services.AddSingleton<RepositorySessionService>();
+builder.Services.AddSingleton<CodingRuleStore>(_ => new CodingRuleStore(
+    Path.Combine(builder.Environment.ContentRootPath, builder.Configuration["CodingRules:DatabasePath"] ?? "data/coding-rules.db")));
 builder.Services.AddHttpClient<RunConnectivityCheck>(client => client.Timeout = TimeSpan.FromSeconds(10))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<CodeGraphService>();
@@ -101,6 +103,25 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok", provider = "open
 app.MapGet("/api/agents/default-prompts", () => Results.Ok(AgentPrompts.Defaults));
 
 app.MapGet("/api/agents/tools", () => Results.Ok(AgentToolCatalog.ByAgent));
+
+app.MapGet("/api/coding-rules", (CodingRuleStore rules) => Results.Ok(rules.List()));
+app.MapPost("/api/coding-rules", (SaveCodingRuleRequest request, CodingRuleStore rules) =>
+{
+    CodingRule rule = rules.Save(null, request);
+    return Results.Created($"/api/coding-rules/{rule.Id}", rule);
+});
+app.MapPut("/api/coding-rules/{id:guid}", (Guid id, SaveCodingRuleRequest request, CodingRuleStore rules) =>
+    Results.Ok(rules.Save(id, request)));
+app.MapPut("/api/coding-rules/{id:guid}/enabled", (Guid id, SetCodingRuleEnabledRequest request, CodingRuleStore rules) =>
+{
+    rules.SetEnabled(id, request.Enabled);
+    return Results.NoContent();
+});
+app.MapDelete("/api/coding-rules/{id:guid}", (Guid id, CodingRuleStore rules) =>
+{
+    rules.Delete(id);
+    return Results.NoContent();
+});
 
 app.MapGet("/api/jira/issues/{key}", async (string key, JiraService jira, CancellationToken cancellationToken) =>
     Results.Ok(new { key, summary = await jira.GetIssueTitleByKeyAsync(key, cancellationToken) }));

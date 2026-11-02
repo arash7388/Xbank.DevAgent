@@ -26,6 +26,10 @@
     return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString();
   }
 
+  function runType(value) {
+    return { repository_change: 'Develop', gitlab_review: 'Review' }[value] || 'Unknown';
+  }
+
   function statusBadge(value) {
     const status = String(value || 'unknown');
     const tone = /^(completed|committed|pushed|pull_request_created|success)$/.test(status) ? 'success'
@@ -104,8 +108,8 @@
       if (version !== detailVersion) return;
       const run = log.run;
       details.replaceChildren(node('h3', `Run ${run.id}`));
-      details.append(table(['Status', 'Created', 'Started', 'Finished', 'Updated', 'Error'], [[
-        statusBadge(run.status), date(run.createdAt), date(run.startedAt), date(run.finishedAt), date(run.updatedAt), run.error,
+      details.append(table(['Run type', 'Status', 'Created', 'Started', 'Finished', 'Updated', 'Error'], [[
+        runType(run.workflowType), statusBadge(run.status), date(run.createdAt), date(run.startedAt), date(run.finishedAt), date(run.updatedAt), run.error,
       ]]));
       const agents = log.agentRuns || [];
       details.append(node('h3', `Agent runs (${agents.length})`));
@@ -157,7 +161,7 @@
         ? `Showing runs ${offset + 1}–${offset + runs.length}`
         : page === 0 ? 'No previous runs have been saved yet.' : 'No runs on this page. Go back or refresh the history.';
       if (!runs.length) return;
-      list.append(table(['Run ID', 'Status', 'Created', 'Started', 'Finished', 'Duration', 'Error', 'Details'],
+      list.append(table(['Run ID', 'Run type', 'Status', 'Created', 'Started', 'Finished', 'Duration', 'Error', 'Details'],
         runs.map(run => {
           const button = node('button', 'Explore →', 'secondary history-explore');
           button.type = 'button';
@@ -168,7 +172,7 @@
           });
           button.setAttribute('aria-pressed', 'false');
           const identity = node('code', run.id, 'history-run-id');
-          return [identity, statusBadge(run.status), date(run.createdAt), date(run.startedAt), date(run.finishedAt),
+          return [identity, runType(run.workflowType), statusBadge(run.status), date(run.createdAt), date(run.startedAt), date(run.finishedAt),
             duration(run.startedAt, run.finishedAt), run.error, button];
         })));
     } catch (error) {

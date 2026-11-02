@@ -16,6 +16,7 @@
       <button class="app-mode active" type="button" data-app-mode="workflow" aria-pressed="true">Agent workflow</button>
       <button class="app-mode" type="button" data-app-mode="codegraph" aria-pressed="false">Code graph</button>
       <button id="previous-runs-button" class="app-mode" type="button" aria-haspopup="dialog">Previous runs</button>
+      <button id="coding-rules-button" class="app-mode" type="button" aria-haspopup="dialog">Coding Rules</button>
     </nav>
     <div id="connection" class="connection"><span></span> Local service</div>
   </header>
@@ -260,11 +261,13 @@
     </section>
 
     <section class="setup-panel" data-workflow-panel="setup" aria-labelledby="setup-title">
-      <div id="run-experience" class="run-mode-options run-experience" role="radiogroup" aria-label="Run experience">
-        <label class="run-mode-option"><input name="runExperience" type="radio" value="simple" checked><span>Simple Run</span></label>
-        <label class="run-mode-option"><input name="runExperience" type="radio" value="advanced"><span>Advanced Run</span></label>
+      <div id="run-experience-settings">
+        <div id="run-experience" class="run-mode-options run-experience" role="radiogroup" aria-label="Run experience" aria-describedby="run-experience-guide">
+          <label class="run-mode-option"><input name="runExperience" type="radio" value="simple" checked><span>Simple Run</span></label>
+          <label class="run-mode-option"><input name="runExperience" type="radio" value="advanced"><span>Advanced Run</span></label>
+        </div>
+        <p id="run-experience-guide" class="field-guide">Choose once for this run. Simple Run uses default settings. Advanced Run lets you customize all settings.</p>
       </div>
-      <p class="field-guide">Simple Run uses default settings. Advanced Run lets you customize all settings.</p>
       <div class="section-heading">
         <div>
           <h2 id="setup-title">Set up a run</h2>
@@ -461,6 +464,12 @@
             <p id="pricing-status" class="field-guide">Loading current DeepSeek prices. Custom rates remain editable.</p>
             <div id="llm-model-prices" class="llm-model-prices"></div>
           </details>
+        </fieldset>
+
+        <fieldset id="coding-rules-settings" data-advanced-only>
+          <legend>Coding Rules</legend>
+          <label class="check-row"><input id="include-coding-rules" name="includeCodingRules" type="checkbox" checked><span>Include Coding Rules in this agent run</span></label>
+          <p class="field-guide">Apply enabled coding, syntax, and team style conventions to implementation and review. Manage rules using Coding Rules in the top bar. Enabled rules are captured when the run starts.</p>
         </fieldset>
 
         <fieldset id="autonomy-settings">
@@ -723,7 +732,36 @@
     </div>
   </dialog>
 
-  <script src="/run-history.js?v=20261028-2" defer></script>
+  <dialog id="coding-rules-dialog" class="run-history-dialog coding-rules-dialog" aria-labelledby="coding-rules-title">
+    <div class="run-history-shell coding-rules-content">
+      <div class="dialog-header">
+        <div><span class="run-history-eyebrow">TEAM CONVENTIONS</span><h2 id="coding-rules-title">Coding Rules</h2><p>Your team's coding standards, syntax preferences, and style conventions, all in one place.</p></div>
+        <button id="coding-rules-close" class="icon-button" type="button" aria-label="Close Coding Rules">×</button>
+      </div>
+      <div class="run-history-controls coding-rules-toolbar">
+        <span class="coding-rules-library-label">Rule library</span>
+        <p id="coding-rules-status" role="status" aria-live="polite"></p>
+        <span class="run-history-hint">Only enabled rules are included in agent runs</span>
+      </div>
+      <div id="coding-rules-error" class="form-error" role="alert" hidden></div>
+      <div id="coding-rules-list" aria-label="Saved coding rules"></div>
+      <form id="coding-rule-form">
+        <h3 id="coding-rule-editor-title">Add coding rule</h3>
+        <p class="field-guide">Describe a convention your agents should follow. Include examples to make it clear.</p>
+        <label for="coding-rule-title">Title</label>
+        <input id="coding-rule-title" required maxlength="160" placeholder="For example: C# naming conventions">
+        <label for="coding-rule-content">Rule</label>
+        <textarea id="coding-rule-content" required maxlength="8000" rows="6" placeholder="Describe the convention and give examples where useful."></textarea>
+        <div class="dialog-actions">
+          <button id="coding-rule-reset" class="secondary" type="button">Cancel edit</button>
+          <button type="submit">Save rule</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <script src="/coding-rules.js?v=20261101-2" defer></script>
+  <script src="/run-history.js?v=20261031-1" defer></script>
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>
   <script src="/autonomy.js?v=20261016-1" defer></script>
   <script src="/app.js?v=20261028-19" defer></script>

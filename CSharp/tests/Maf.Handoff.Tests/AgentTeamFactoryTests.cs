@@ -7,6 +7,24 @@ namespace Maf.Handoff.Tests;
 public sealed class AgentTeamFactoryTests
 {
     [Theory]
+    [InlineData(null)]
+    [InlineData("Use PascalCase for public members.")]
+    public async Task EveryEnabledAgentReceivesOnlySelectedCodingRules(string? rules)
+    {
+        RecordingChatClient client = new();
+        WorkflowSettings settings = new("https://example.test", "model", "key") { CodingRules = rules };
+        AgentTeam team = AgentTeamFactory.Create(
+            AgentNames.All.ToDictionary(name => name, _ => (IChatClient)client),
+            AgentNames.All.ToDictionary(name => name, _ => settings));
+        foreach (var agent in team.All)
+        {
+            await agent.RunAsync("Check conventions");
+            if (rules is null) Assert.DoesNotContain("Coding Rules selected for this run", client.Options!.Instructions);
+            else Assert.Contains(rules, client.Options!.Instructions);
+        }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ReviewTeamExcludesOtherAgentsAndGivesReviewerEditingTools(bool review)

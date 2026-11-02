@@ -13,6 +13,8 @@ public sealed record WorkflowSettings(
 
     public bool SkipBuildVerification { get; init; }
 
+    public string? CodingRules { get; init; }
+
     public bool IsMergeRequestReview { get; init; }
 
     public bool ReleaseManagerValidationEnabled { get; init; }

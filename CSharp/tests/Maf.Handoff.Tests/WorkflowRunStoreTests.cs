@@ -4,6 +4,28 @@ namespace Maf.Handoff.Core.Tests;
 
 public sealed class WorkflowRunStoreTests
 {
+    [Theory]
+    [InlineData("repository_change")]
+    [InlineData("gitlab_review")]
+    public void ReturnsSavedWorkflowTypeInHistoryAndDetails(string workflowType)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"maf-workflow-type-{Guid.NewGuid():N}");
+        try
+        {
+            string databasePath = Path.Combine(directory, "checkpoints.db");
+            Guid runId = Guid.NewGuid();
+            new SqliteLlmCheckpointStore(databasePath).Create(runId, workflowType, "{}", DateTimeOffset.UtcNow);
+
+            SqliteLlmCheckpointStore reopened = new(databasePath);
+            Assert.Equal(workflowType, Assert.Single(reopened.ListRuns()).WorkflowType);
+            Assert.Equal(workflowType, reopened.GetLog(runId).Run.WorkflowType);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void PagesRunsInStableNewestFirstOrder()
     {

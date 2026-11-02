@@ -46,10 +46,12 @@ const refresh = element('#run-history-refresh');
   assert.equal(requests[0], '/api/runs?limit=51&offset=0');
   assert.match(element('#run-history-message').textContent, /No previous runs/);
 
-  const run = { id: 'saved-run', status: 'failed', error: '<img src=x onerror=alert(1)>',
+  const run = { id: 'saved-run', workflowType: 'repository_change', status: 'failed', error: '<img src=x onerror=alert(1)>',
     createdAt: '2026-10-28T08:00:00Z', startedAt: '2026-10-28T08:00:00Z', finishedAt: '2026-10-28T08:01:05Z' };
   respond = () => ok([run]);
   await refresh.listeners.click();
+  assert.match(text(list), /Run type/);
+  assert.equal(find(list, item => item.tag === 'tbody').children[0].children[1].textContent, 'Develop');
   assert.match(text(list), /0h 1m 5s/);
   assert.match(text(list), /<img src=x onerror=alert\(1\)>/);
   assert.equal(find(list, item => item.tag === 'img'), undefined, 'Saved content must be rendered as text');
@@ -65,6 +67,16 @@ const refresh = element('#run-history-refresh');
     assert.ok(text(details).includes(expected), `Details should show ${expected}`);
   }
   assert.equal(details.hidden, false);
+  assert.equal(find(details, item => item.tag === 'tbody').children[0].children[0].textContent, 'Develop');
+
+  const reviewRun = { ...run, workflowType: 'gitlab_review' };
+  respond = () => ok([reviewRun]);
+  await refresh.listeners.click();
+  assert.equal(find(list, item => item.tag === 'tbody').children[0].children[1].textContent, 'Review');
+  respond = () => ok({ run: reviewRun });
+  find(list, item => item.tag === 'button').listeners.click();
+  await flush();
+  assert.equal(find(details, item => item.tag === 'tbody').children[0].children[0].textContent, 'Review');
 
   respond = () => ({ ok: false, status: 500 });
   await refresh.listeners.click();

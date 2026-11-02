@@ -28,6 +28,7 @@
   function applyExperience() {
     const simple = document.querySelector('[name="runExperience"]:checked').value === 'simple';
     document.documentElement.dataset.runExperience = simple ? 'simple' : 'advanced';
+    document.querySelector('[name="includeCodingRules"]').checked = !simple;
     if (simple) {
       document.querySelector('[name="mrReviewMode"][value="independent"]').checked = true;
       document.querySelector('#mr-review-mode').dispatchEvent(new Event('change'));
@@ -36,7 +37,10 @@
         ['releaseManagerValidationEnabled', false], ['jiraValidationEnabled', true],
         ['autoCommit', false], ['autoPush', false], ['autoCreatePullRequest', false],
         ['buildProject', true], ['retryOnWorkflowAgent', false],
+        ['includeCodingRules', false],
       ].forEach(([name, checked]) => { document.querySelector(`[name="${name}"]`).checked = checked; });
+      const codeGraph = document.querySelector('[name="codeGraphEnabled"]');
+      codeGraph.checked = !codeGraph.disabled;
       const autonomy = document.querySelector('#autonomy-level');
       autonomy.value = '100';
       autonomy.dispatchEvent(new Event('input'));
