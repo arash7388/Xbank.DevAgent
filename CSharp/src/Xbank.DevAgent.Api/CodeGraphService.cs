@@ -26,10 +26,10 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
 
     private readonly object _statusLock = new();
     private readonly bool _workflowEnabled = configuration.GetValue("CodeGraph:Enabled", true);
-    private readonly string _rootPath = Path.GetFullPath(configuration["CodeGraph:RootPath"] ?? @"C:\\Users\\a.masir\\source\\repos\\CodeGraph\\CodeGraph");
+    private readonly string _rootPath = Path.GetFullPath(configuration["CodeGraph:RootPath"] ?? @"C:\Users\a.masir\source\repos\CodeGraph\CodeGraph");
     private readonly string _agentDatabasePath = Path.GetFullPath(
         configuration["CodeGraph:DatabasePath"] ??
-        Path.Combine(configuration["CodeGraph:RootPath"] ?? @"C:\\Users\\a.masir\\source\\repos\\CodeGraph\\CodeGraph", "codegraph.db"));
+        Path.Combine(configuration["CodeGraph:RootPath"] ?? @"C:\Users\a.masir\source\repos\CodeGraph\CodeGraph", "codegraph.db"));
     private CodeGraphIndexStatus _status = new("idle", null, null, null, null, null, []);
     private bool _sawWorkspaceFailure;
     private bool _sawPackageAuditWarning;
@@ -38,7 +38,7 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
     {
         workflowEnabled = _workflowEnabled,
         rootPath = _rootPath,
-        indexerProject = Path.Combine(_rootPath, "CodeGraph", "CodeGraph.csproj"),
+        indexerProject = Path.Combine(_rootPath, "XBank.CodeGraph", "XBank.CodeGraph.csproj"),
         defaultDatabasePath = _agentDatabasePath,
         tools = new[] { "find_symbol", "get_neighbors", "get_context", "get_context_by_id" },
         tables = AllowedTables.OrderBy(x => x)
@@ -112,7 +112,7 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
     {
         var source = RequireExistingSource(request.SourcePath);
         var database = RequireDatabasePath(request.DatabasePath, mustExist: false);
-        var project = Path.Combine(_rootPath, "CodeGraph", "CodeGraph.csproj");
+        var project = Path.Combine(_rootPath, "XBank.CodeGraph", "XBank.CodeGraph.csproj");
         if (!File.Exists(project)) throw new ConfigurationException($"CodeGraph indexer was not found at '{project}'. Configure CodeGraph:RootPath.");
 
         lock (_statusLock)

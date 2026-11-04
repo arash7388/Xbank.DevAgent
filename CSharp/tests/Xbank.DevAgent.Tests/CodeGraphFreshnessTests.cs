@@ -88,9 +88,9 @@ public sealed class CodeGraphFreshnessTests : IDisposable
     {
         SeedDatabase();
         string indexerRoot = Path.Combine(_root, "indexer");
-        string projectDirectory = Path.Combine(indexerRoot, "CodeGraph");
+        string projectDirectory = Path.Combine(indexerRoot, "XBank.CodeGraph");
         Directory.CreateDirectory(projectDirectory);
-        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "CodeGraph.csproj"), """
+        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "XBank.CodeGraph.csproj"), """
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup>
             </Project>

@@ -439,8 +439,9 @@ check fails, including the regression tests documenting open defects. See the
 findings, and the remaining live-service and browser validation work.
 
 Configure the protected graph database with `CodeGraph__DatabasePath`; it defaults to
-`E:\CodeGraph\codegraph.db`. The database must contain an up-to-date index for the C# repository the
-agents will inspect. `CodeGraph__RootPath` controls the local CodeGraph indexer used by the workbench.
+`C:\Users\a.masir\source\repos\CodeGraph\CodeGraph\codegraph.db`. The database must contain an up-to-date index for the C# repository the
+agents will inspect. `CodeGraph__RootPath` points to the local indexer repository root; the workbench
+runs `XBank.CodeGraph/XBank.CodeGraph.csproj` beneath that root.
 Set `CodeGraph__Enabled=false` to disable CodeGraph for every agent workflow. When the server setting is
 enabled (the default), CodeGraph is checked by default in both run modes. Advanced Run offers the
 **Use CodeGraph for C# analysis** checkbox to opt out. Simple Run keeps it enabled unless disabled by
