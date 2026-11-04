@@ -126,7 +126,7 @@ Generated artifacts are local and ignored by Git; the assessment and test source
 To reproduce just the newly added C# scenarios:
 
 ```powershell
-dotnet test CSharp/tests/Xbank.DevAgent.Tests/Xbank.DevAgent.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~ApiContractTests|FullyQualifiedName~RepositoryScenarioTests|FullyQualifiedName~WorkflowDecisionScenarioTests|FullyQualifiedName~EnabledSecurityGateRequiresAnExplicitApproval"
+dotnet test CSharp/tests/Xbank.DevAgent/Xbank.DevAgent.Tests/Xbank.DevAgent.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~ApiContractTests|FullyQualifiedName~RepositoryScenarioTests|FullyQualifiedName~WorkflowDecisionScenarioTests|FullyQualifiedName~EnabledSecurityGateRequiresAnExplicitApproval"
 ```
 
 ## Validation still required before claiming complete coverage

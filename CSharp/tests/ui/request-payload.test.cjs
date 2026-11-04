@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const payload = require('./request-payload.cjs');
-const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
 
 for (const newline of ['\n', '\r\n']) {
   for (const provider of ['github', 'gitlab']) {

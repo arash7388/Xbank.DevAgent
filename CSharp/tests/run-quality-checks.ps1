@@ -16,8 +16,8 @@ try {
     & dotnet build Xbank.DevAgent.slnx -c $Configuration --verbosity minimal
     $summary.build = $LASTEXITCODE
     if ($summary.build -eq 0) {
-        & dotnet test tests/Xbank.DevAgent.Tests/Xbank.DevAgent.Tests.csproj -c $Configuration --no-build --no-restore `
-            --collect:'XPlat Code Coverage' --results-directory $results --logger 'trx;LogFileName=tests.trx' --verbosity minimal
+        & dotnet test Xbank.DevAgent.slnx -c $Configuration --no-build --no-restore `
+            --collect:'XPlat Code Coverage' --results-directory $results --logger 'trx;LogFilePrefix=tests' --verbosity minimal
         $summary.dotnet = $LASTEXITCODE
     }
 

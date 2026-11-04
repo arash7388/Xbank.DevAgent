@@ -7,9 +7,9 @@
       "request": "launch",
       "noDebug": true,
       "preLaunchTask": "build-csharp-release",
-      "program": "${workspaceFolder}/CSharp/src/Xbank.DevAgent.Api/bin/Release/net10.0/Xbank.DevAgent.Api.dll",
+      "program": "${workspaceFolder}/CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api/bin/Release/net10.0/Xbank.DevAgent.Api.dll",
       "args": [],
-      "cwd": "${workspaceFolder}/CSharp/src/Xbank.DevAgent.Api",
+      "cwd": "${workspaceFolder}/CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api",
       "stopAtEntry": false,
       "console": "internalConsole",
       "env": {
@@ -26,9 +26,9 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build-csharp-debug",
-      "program": "${workspaceFolder}/CSharp/src/Xbank.DevAgent.Api/bin/Debug/net10.0/Xbank.DevAgent.Api.dll",
+      "program": "${workspaceFolder}/CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api/bin/Debug/net10.0/Xbank.DevAgent.Api.dll",
       "args": [],
-      "cwd": "${workspaceFolder}/CSharp/src/Xbank.DevAgent.Api",
+      "cwd": "${workspaceFolder}/CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api",
       "stopAtEntry": false,
       "console": "internalConsole",
       "env": {

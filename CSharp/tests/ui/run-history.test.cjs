@@ -31,7 +31,7 @@ const context = {
   fetch: async url => { requests.push(url); return respond(url); },
 };
 element('#run-history-limit').value = '50';
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/run-history.js'), 'utf8'), context);
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/run-history.js'), 'utf8'), context);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const ok = data => ({ ok: true, json: async () => data });
 const list = element('#run-history-list');

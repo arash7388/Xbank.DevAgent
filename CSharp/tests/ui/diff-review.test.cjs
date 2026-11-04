@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
 const start = source.indexOf('const DIFF_VIEW_STORAGE_KEY');
 const end = source.indexOf('\nfunction setStatus(', start);
 assert.ok(start >= 0 && end > start, 'Diff review functions must exist in app.js.');

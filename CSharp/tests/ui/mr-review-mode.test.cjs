@@ -2,7 +2,7 @@ const assert = require('assert').strict;
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
 const nodes = Object.fromEntries(['input[name="runMode"]:checked', '#mr-review-settings', '#merge-request-iid', '#task', '#review-team-map', '#change-team-map']
   .map(id => [id, { value: '', required: true }]));
 const sourceRadios = [{ value: 'github' }, { value: 'gitlab' }];
@@ -122,6 +122,6 @@ for (const mode of ['independent', 'feedback', 'combined']) {
   assert.equal(resolved.disabled, mode === 'independent');
   assert.equal(sourceComments.disabled, mode === 'feedback');
 }
-const html = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/index.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/index.html'), 'utf8');
 assert.match(html, /<input name="commentIssuesOnSourceCode" type="checkbox">/);
 console.log('MR review mode selects GitLab and permits branch and task discovery.');

@@ -2,7 +2,7 @@ const assert = require('assert').strict;
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
 const rate = value => ({ value, dataset: {} });
 const prices = {
   'deepseek/deepseek-flash': { 'input-cost': rate('0.25'), 'cached-input-cost': rate('0.01'), 'output-cost': rate('0.8') },

@@ -3,7 +3,7 @@ using Xbank.DevAgent.Core;
 
 if (args.Length == 0 || args is ["--help"] or ["-h"])
 {
-    Console.WriteLine("Usage: dotnet run --project src/Xbank.DevAgent.Cli -- \"TASK\"");
+    Console.WriteLine("Usage: dotnet run --project src/Xbank.DevAgent/Xbank.DevAgent.Cli -- \"TASK\"");
     return args.Length == 0 ? 2 : 0;
 }
 

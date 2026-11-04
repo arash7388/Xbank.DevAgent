@@ -27,12 +27,12 @@ const catalog = { deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com',
   models: [['test-model', 'Test']], thinking: true, reasoningEffort: 'medium',
   supportsReasoningEffort: ['low', 'medium'], maxInputTokens: 128000, maxOutputTokens: 4096 } };
 const original = JSON.stringify(catalog);
-const html = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/index.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/index.html'), 'utf8');
 for (const id of ['analysis-input-limit', 'analysis-output-limit']) {
   const tag = html.match(new RegExp(`<input[^>]+id="${id}"[^>]*>`))[0];
   assert(!/\smax=/.test(tag), `${id} must not impose an upper bound`);
 }
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/task-analysis.js'), 'utf8'), {
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/task-analysis.js'), 'utf8'), {
   document: { getElementById: get, createElement: () => ({}) },
   providerCatalog: catalog, AbortController: class {
     constructor() { this.signal = { aborted: false }; }

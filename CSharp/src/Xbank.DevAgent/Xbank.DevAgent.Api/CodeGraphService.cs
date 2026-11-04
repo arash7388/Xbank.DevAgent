@@ -17,7 +17,7 @@ public sealed record CodeGraphNeighborsRequest(string DatabasePath, string Id, i
 public sealed record CodeGraphContextRequest(string DatabasePath, string Query, int MaxNodes = 25, int TokenBudget = 5000);
 public sealed record CodeGraphContextByIdRequest(string DatabasePath, string Id, int MaxNodes = 25, int TokenBudget = 5000);
 
-public sealed partial class CodeGraphService(IConfiguration configuration) : ICodeGraphTools
+public sealed partial class CodeGraphService(IConfiguration configuration, IHostEnvironment? environment = null) : ICodeGraphTools
 {
     private static readonly HashSet<string> AllowedTables = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -26,13 +26,29 @@ public sealed partial class CodeGraphService(IConfiguration configuration) : ICo
 
     private readonly object _statusLock = new();
     private readonly bool _workflowEnabled = configuration.GetValue("CodeGraph:Enabled", true);
-    private readonly string _rootPath = Path.GetFullPath(configuration["CodeGraph:RootPath"] ?? @"C:\Users\a.masir\source\repos\CodeGraph\CodeGraph");
+    private readonly string _rootPath = ResolveRootPath(configuration, environment);
     private readonly string _agentDatabasePath = Path.GetFullPath(
-        configuration["CodeGraph:DatabasePath"] ??
-        Path.Combine(configuration["CodeGraph:RootPath"] ?? @"C:\Users\a.masir\source\repos\CodeGraph\CodeGraph", "codegraph.db"));
+        configuration["CodeGraph:DatabasePath"] ?? Path.Combine("data", "codegraph.db"),
+        environment?.ContentRootPath ?? Directory.GetCurrentDirectory());
     private CodeGraphIndexStatus _status = new("idle", null, null, null, null, null, []);
     private bool _sawWorkspaceFailure;
     private bool _sawPackageAuditWarning;
+
+    private static string ResolveRootPath(IConfiguration configuration, IHostEnvironment? environment)
+    {
+        string contentRoot = environment?.ContentRootPath ?? Directory.GetCurrentDirectory();
+        if (!string.IsNullOrWhiteSpace(configuration["CodeGraph:RootPath"]))
+            return Path.GetFullPath(configuration["CodeGraph:RootPath"]!, contentRoot);
+
+        for (DirectoryInfo? directory = new(environment?.ContentRootPath ?? AppContext.BaseDirectory);
+             directory is not null; directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Xbank.DevAgent.slnx")))
+                return Path.Combine(directory.FullName, "src", "Xbank.CodeGraph");
+        }
+
+        return Path.GetFullPath(Path.Combine("src", "Xbank.CodeGraph"), contentRoot);
+    }
 
     public object GetConfiguration() => new
     {

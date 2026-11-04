@@ -2,7 +2,7 @@ const assert = require('assert').strict;
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8').replace(/\r\n/g, '\n');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8').replace(/\r\n/g, '\n');
 function input(id, value, min = 1, max = 2147483647) {
   return { id, value: String(value), min: String(min), max: String(max), validity: { valid: true }, handlers: {},
     addEventListener(event, callback) { this.handlers[event] = callback; },

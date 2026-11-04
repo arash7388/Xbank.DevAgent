@@ -7,7 +7,7 @@
       "command": "dotnet",
       "args": [
         "build",
-        "${workspaceFolder}/CSharp/src/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj",
+        "${workspaceFolder}/CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj",
         "--configuration",
         "Release"
       ],
@@ -20,7 +20,7 @@
       "command": "dotnet",
       "args": [
         "build",
-        "${workspaceFolder}/CSharp/src/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj",
+        "${workspaceFolder}/CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj",
         "--configuration",
         "Debug"
       ],

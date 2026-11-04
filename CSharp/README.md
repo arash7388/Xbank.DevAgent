@@ -4,7 +4,11 @@ Repository: [arash7388/Xbank.DevAgent](https://github.com/arash7388/Xbank.DevAge
 
 Open `Xbank.DevAgent.slnx` to work on the application. Build with
 `dotnet build Xbank.DevAgent.slnx` and start the browser workbench with
-`dotnet run --project src/Xbank.DevAgent.Api` from this directory.
+`dotnet run --project src/Xbank.DevAgent/Xbank.DevAgent.Api` from this directory.
+
+The solution groups DevAgent projects under `src/Xbank.DevAgent/` and the bundled
+CodeGraph projects under `src/Xbank.CodeGraph/`, with matching groups under `tests/`.
+CodeGraph was imported as source; its original repository and remote are independent.
 
 The application was renamed from MAF. Existing `MAF_*` environment variables,
 user-secrets identifiers, browser storage keys, database identifiers, and Jira
@@ -422,7 +426,7 @@ This is a local sample without user authentication. Do not expose it to an untru
 ```powershell
 dotnet restore
 dotnet test
-dotnet run --project src/Xbank.DevAgent.Api --urls http://127.0.0.1:8080
+dotnet run --project src/Xbank.DevAgent/Xbank.DevAgent.Api --urls http://127.0.0.1:8080
 ```
 
 Open `http://127.0.0.1:8080`.
@@ -439,9 +443,11 @@ check fails, including the regression tests documenting open defects. See the
 findings, and the remaining live-service and browser validation work.
 
 Configure the protected graph database with `CodeGraph__DatabasePath`; it defaults to
-`C:\Users\a.masir\source\repos\CodeGraph\CodeGraph\codegraph.db`. The database must contain an up-to-date index for the C# repository the
-agents will inspect. `CodeGraph__RootPath` points to the local indexer repository root; the workbench
-runs `XBank.CodeGraph/XBank.CodeGraph.csproj` beneath that root.
+`data/codegraph.db` beneath the API content root. The database must contain an up-to-date index for the C# repository the
+agents will inspect. The indexer defaults to the bundled `src/Xbank.CodeGraph` directory.
+`CodeGraph__RootPath` can override that location; the workbench runs
+`XBank.CodeGraph/XBank.CodeGraph.csproj` beneath that root. Published deployments that need indexing
+must provide the indexer sources and .NET SDK and configure this path when outside the solution tree.
 Set `CodeGraph__Enabled=false` to disable CodeGraph for every agent workflow. When the server setting is
 enabled (the default), CodeGraph is checked by default in both run modes. Advanced Run offers the
 **Use CodeGraph for C# analysis** checkbox to opt out. Simple Run keeps it enabled unless disabled by
@@ -579,7 +585,7 @@ and are never reused as source-control credentials. Blank UI tokens fall back to
 `GitLab__Token` in server configuration.
 
 For repeated local tests, save the GitLab token once with
-`dotnet user-secrets set "GitLab:Token" "YOUR_TOKEN" --project CSharp/src/Xbank.DevAgent.Api`
+`dotnet user-secrets set "GitLab:Token" "YOUR_TOKEN" --project CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api`
 from the repository root, then restart the app in Development mode. When configured, **Use saved
 GitLab token** is selected automatically. Clear that checkbox to enter a different token. Branch
 loading and workflow startup use the same credential choice, and the form checks repository access
@@ -624,7 +630,7 @@ Select **AIFA** for an agent to use `developer-model` at
 without the `Bearer` prefix, or save it on the server:
 
 ```powershell
-dotnet user-secrets set "Providers:AIFA:ApiKey" "YOUR_TOKEN" --project CSharp/src/Xbank.DevAgent.Api
+dotnet user-secrets set "Providers:AIFA:ApiKey" "YOUR_TOKEN" --project CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api
 ```
 
 Restart the API in Development mode after changing user secrets. In other environments, set

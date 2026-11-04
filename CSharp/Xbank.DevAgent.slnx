@@ -1,12 +1,20 @@
 <Solution>
-  <Folder Name="/src/">
-    <Project Path="src/Xbank.DevAgent.CodeGraph.Console/Xbank.DevAgent.CodeGraph.Console.csproj" />
-    <Project Path="src/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj" />
-    <Project Path="src/Xbank.DevAgent.Cli/Xbank.DevAgent.Cli.csproj" />
-    <Project Path="src/Xbank.DevAgent.Core/Xbank.DevAgent.Core.csproj" />
-    <Project Path="src/Xbank.DevAgent.Talk/Xbank.DevAgent.Talk.csproj" />
+  <Folder Name="/src/Xbank.DevAgent/">
+    <Project Path="src/Xbank.DevAgent/Xbank.DevAgent.CodeGraph.Console/Xbank.DevAgent.CodeGraph.Console.csproj" />
+    <Project Path="src/Xbank.DevAgent/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj" />
+    <Project Path="src/Xbank.DevAgent/Xbank.DevAgent.Cli/Xbank.DevAgent.Cli.csproj" />
+    <Project Path="src/Xbank.DevAgent/Xbank.DevAgent.Core/Xbank.DevAgent.Core.csproj" />
+    <Project Path="src/Xbank.DevAgent/Xbank.DevAgent.Talk/Xbank.DevAgent.Talk.csproj" />
   </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/Xbank.DevAgent.Tests/Xbank.DevAgent.Tests.csproj" />
+  <Folder Name="/src/Xbank.CodeGraph/">
+    <Project Path="src/Xbank.CodeGraph/XBank.CodeGraph/XBank.CodeGraph.csproj" />
+    <Project Path="src/Xbank.CodeGraph/XBank.CodeGraph.Contracts/XBank.CodeGraph.Contracts.csproj" />
+    <Project Path="src/Xbank.CodeGraph/XBank.CodeGraph.McpServer/XBank.CodeGraph.McpServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Xbank.DevAgent/">
+    <Project Path="tests/Xbank.DevAgent/Xbank.DevAgent.Tests/Xbank.DevAgent.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Xbank.CodeGraph/">
+    <Project Path="tests/Xbank.CodeGraph/XBank.CodeGraph.Tests/XBank.CodeGraph.Tests.csproj" />
   </Folder>
 </Solution>

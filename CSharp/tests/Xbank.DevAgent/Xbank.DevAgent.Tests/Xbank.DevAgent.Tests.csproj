@@ -18,8 +18,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Xbank.DevAgent.Core\Xbank.DevAgent.Core.csproj" />
-    <ProjectReference Include="..\..\src\Xbank.DevAgent.Api\Xbank.DevAgent.Api.csproj" />
+    <ProjectReference Include="../../../src/Xbank.DevAgent/Xbank.DevAgent.Core/Xbank.DevAgent.Core.csproj" />
+    <ProjectReference Include="../../../src/Xbank.DevAgent/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj" />
   </ItemGroup>
 
 </Project>

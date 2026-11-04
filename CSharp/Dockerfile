@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
-RUN dotnet publish src/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj \
+RUN dotnet publish src/Xbank.DevAgent/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj \
     --configuration Release --output /app/publish
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0
