@@ -1,7 +1,46 @@
-# Repository Change Workbench
+# Xbank.DevAgent
+
+Repository: [arash7388/Xbank.DevAgent](https://github.com/arash7388/Xbank.DevAgent).
+
+Open `Xbank.DevAgent.slnx` to work on the application. Build with
+`dotnet build Xbank.DevAgent.slnx` and start the browser workbench with
+`dotnet run --project src/Xbank.DevAgent.Api` from this directory.
+
+The application was renamed from MAF. Existing `MAF_*` environment variables,
+user-secrets identifiers, browser storage keys, database identifiers, and Jira
+report signatures are retained for compatibility with existing installations.
+
+Use **Task Analysis** in the top bar to explain a Jira task without starting a repository workflow.
+Enter a full issue key and select **Analyse task**, **Summarize task**, or both. Choose English or
+Persian output and optionally add an illustrative example. Persian results use right-to-left layout.
+Select a configured repository to validate the requirement against its current local checkout
+(`Projects:<project>:RepoPath`), including uncommitted changes. The model can list, search, and read
+source files through read-only tools, with file and line citations. Checkout commit, branch, and local
+change status are supplied as context. No repository selection means task-only analysis. Missing
+checkouts are reported as errors; inspection gaps are explicitly reported. Codebase inspection uses
+up to eight tool rounds, followed by a separate final explanation step. Intermediate inspection
+messages are not displayed as the result. Source reads support line-based pagination; partial output
+is reported only when it exceeds the remaining input allowance. Inspection does not execute builds,
+tests, or repository writes.
+
+Task Analysis has separate provider, model, thinking effort, API key, endpoint, token limits, and
+additional instructions. Its preferences are saved separately in the browser; API keys are kept only
+in memory. Configured server credentials are available for DeepSeek and AIFA when the key is blank.
+The result can be copied and generation can be stopped.
+
+The read-only `POST /api/task-analysis` endpoint loads the issue details, paginated comments, and
+attachment text using the existing Jira connection. Text documents, DOCX, and text-based PDFs use the
+existing extraction support and 5 MB attachment limit. Images, scanned PDFs without extractable text,
+and unsupported formats cannot be interpreted here. Unreadable files and content omitted because of
+input or extraction limits are reported with the result. Input and output token limits default to
+1,000,000 and 285,000 respectively. These are editable defaults; Task Analysis imposes no application
+ceiling on positive input/output token values. The output limit is
+forwarded to the model without the former 4,096-token cap. A conservative input allowance is shared
+between Jira evidence and codebase tool output; model/provider context constraints still apply.
+Task Analysis does not create a workflow run or modify Jira.
 
 Optional Talk notifications for finished steps, human input requests and workflow
-outcomes are available through the separate `Maf.Handoff.Talk` project. See
+outcomes are available through the separate `Xbank.DevAgent.Talk` project. See
 [Talk setup and delivery behavior](docs/talk-notifications.md). Notifications are disabled by default.
 
 Project scope: this C# application is the sole active project for requests and prompts. The sibling Python project is out of scope unless the user explicitly requests work on it. See `../AGENTS.md` and `AGENTS.md` for the mandatory agent instructions.
@@ -383,7 +422,7 @@ This is a local sample without user authentication. Do not expose it to an untru
 ```powershell
 dotnet restore
 dotnet test
-dotnet run --project src/Maf.Handoff.Api --urls http://127.0.0.1:8080
+dotnet run --project src/Xbank.DevAgent.Api --urls http://127.0.0.1:8080
 ```
 
 Open `http://127.0.0.1:8080`.
@@ -539,7 +578,7 @@ and are never reused as source-control credentials. Blank UI tokens fall back to
 `GitLab__Token` in server configuration.
 
 For repeated local tests, save the GitLab token once with
-`dotnet user-secrets set "GitLab:Token" "YOUR_TOKEN" --project CSharp/src/Maf.Handoff.Api`
+`dotnet user-secrets set "GitLab:Token" "YOUR_TOKEN" --project CSharp/src/Xbank.DevAgent.Api`
 from the repository root, then restart the app in Development mode. When configured, **Use saved
 GitLab token** is selected automatically. Clear that checkbox to enter a different token. Branch
 loading and workflow startup use the same credential choice, and the form checks repository access
@@ -584,7 +623,7 @@ Select **AIFA** for an agent to use `developer-model` at
 without the `Bearer` prefix, or save it on the server:
 
 ```powershell
-dotnet user-secrets set "Providers:AIFA:ApiKey" "YOUR_TOKEN" --project CSharp/src/Maf.Handoff.Api
+dotnet user-secrets set "Providers:AIFA:ApiKey" "YOUR_TOKEN" --project CSharp/src/Xbank.DevAgent.Api
 ```
 
 Restart the API in Development mode after changing user secrets. In other environments, set
@@ -617,10 +656,10 @@ not a verified service limit, and is not sent as a token limit in requests. Pric
 
 ## Projects
 
-- `Maf.Handoff.Core`: agents, handoff workflow, OpenAI-compatible client, Git and safe tools
-- `Maf.Handoff.Api`: session API and browser workbench
-- `Maf.Handoff.Cli`: advisory CLI using `OPENAI_*` environment variables
-- `Maf.Handoff.Tests`: configuration, topology, and repository-boundary tests
+- `Xbank.DevAgent.Core`: agents, handoff workflow, OpenAI-compatible client, Git and safe tools
+- `Xbank.DevAgent.Api`: session API and browser workbench
+- `Xbank.DevAgent.Cli`: advisory CLI using `OPENAI_*` environment variables
+- `Xbank.DevAgent.Tests`: configuration, topology, and repository-boundary tests
 
 See [the architecture](docs/architecture.md).
 

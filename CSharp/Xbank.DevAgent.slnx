@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Xbank.DevAgent.CodeGraph.Console/Xbank.DevAgent.CodeGraph.Console.csproj" />
+    <Project Path="src/Xbank.DevAgent.Api/Xbank.DevAgent.Api.csproj" />
+    <Project Path="src/Xbank.DevAgent.Cli/Xbank.DevAgent.Cli.csproj" />
+    <Project Path="src/Xbank.DevAgent.Core/Xbank.DevAgent.Core.csproj" />
+    <Project Path="src/Xbank.DevAgent.Talk/Xbank.DevAgent.Talk.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Xbank.DevAgent.Tests/Xbank.DevAgent.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -4,7 +4,7 @@ const { spawnSync } = require('child_process');
 
 const configuration = process.argv[2] || 'Release';
 assert.ok(['Debug', 'Release'].includes(configuration));
-const assembly = path.resolve(__dirname, `../../src/Maf.Handoff.Cli/bin/${configuration}/net10.0/Maf.Handoff.Cli.dll`);
+const assembly = path.resolve(__dirname, `../../src/Xbank.DevAgent.Cli/bin/${configuration}/net10.0/Xbank.DevAgent.Cli.dll`);
 // Never inherit provider credentials or workflow settings into a CLI smoke test.
 const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENAI_|AIFA_|MAF_)/i.test(key)));
 const cases = [

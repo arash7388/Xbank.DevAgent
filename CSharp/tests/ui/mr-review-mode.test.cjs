@@ -2,7 +2,7 @@ const assert = require('assert').strict;
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const source = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/wwwroot/app.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
 const nodes = Object.fromEntries(['input[name="runMode"]:checked', '#mr-review-settings', '#merge-request-iid', '#task', '#review-team-map', '#change-team-map']
   .map(id => [id, { value: '', required: true }]));
 const sourceRadios = [{ value: 'github' }, { value: 'gitlab' }];
@@ -16,6 +16,8 @@ const cards = agentCatalog.map(agent => {
     querySelector: selector => selector === '[data-field="enabled"]' ? toggle : label };
 });
 nodes['#agent-selection-guide'] = {};
+for (const selector of ['.steps [data-step="jira"] span', '#jira-title', '[data-change-source="manual"] strong',
+  'label[for="task"]', '#task + .field-guide', '#manual-change', '#empty-activity p']) nodes[selector] = {};
 const context = {
   document: {
     querySelector: id => id === '#source-control-gitlab' ? sourceRadios[1] : nodes[id],
@@ -23,6 +25,7 @@ const context = {
   },
   baseBranchInput: {}, sourceControlInput: {}, setRepositorySource(value) { this.provider = value; },
   loadOpenMergeRequests() {},
+  currentSetupStep: 'connection', setSetupStep() {},
   agentModels: { querySelectorAll: () => cards }, agentCatalog, syncAgentCardEnabled() {}, Event: class {},
 };
 vm.createContext(context);
@@ -31,6 +34,13 @@ const end = source.indexOf("document.querySelector('#use-saved-gitlab-token')", 
 vm.runInContext(source.slice(start, end), context);
 nodes['input[name="runMode"]:checked'].value = 'gitlab_review';
 context.syncMergeRequestMode();
+assert.equal(nodes['.steps [data-step="jira"] span'].textContent, 'Review request');
+assert.equal(nodes['#jira-title'].textContent, 'Choose your review request');
+assert.equal(nodes['[data-change-source="manual"] strong'].textContent, 'Type review instructions');
+assert.equal(nodes['label[for="task"]'].textContent, 'Additional review instructions (optional)');
+assert.ok(nodes['#task + .field-guide'].textContent.includes('MR source branch'));
+assert.ok(!nodes['#task + .field-guide'].textContent.includes('task number'));
+assert.ok(nodes['#task'].placeholder.includes('selected MR'));
 assert.equal(nodes['#mr-review-settings'].hidden, false);
 assert.equal(nodes['#merge-request-iid'].required, true);
 assert.equal(nodes['#task'].required, false);
@@ -48,6 +58,10 @@ for (const card of cards) {
 context.syncMergeRequestMode();
 nodes['input[name="runMode"]:checked'].value = 'change';
 context.syncMergeRequestMode();
+assert.equal(nodes['.steps [data-step="jira"] span'].textContent, 'Change request');
+assert.equal(nodes['#jira-title'].textContent, 'Choose your change request');
+assert.equal(nodes['label[for="task"]'].textContent, 'Requested code change');
+assert.ok(nodes['#task + .field-guide'].textContent.includes('task number'));
 assert.equal(nodes['#task'].required, true);
 assert.equal(context.baseBranchInput.disabled, false);
 assert.equal(context.sourceControlInput.disabled, false);
@@ -108,6 +122,6 @@ for (const mode of ['independent', 'feedback', 'combined']) {
   assert.equal(resolved.disabled, mode === 'independent');
   assert.equal(sourceComments.disabled, mode === 'feedback');
 }
-const html = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/wwwroot/index.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/index.html'), 'utf8');
 assert.match(html, /<input name="commentIssuesOnSourceCode" type="checkbox">/);
 console.log('MR review mode selects GitLab and permits branch and task discovery.');

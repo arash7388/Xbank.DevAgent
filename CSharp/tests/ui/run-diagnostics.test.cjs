@@ -1,5 +1,5 @@
 const assert = require('assert').strict;
-const diagnostics = require('../../src/Maf.Handoff.Api/wwwroot/run-diagnostics.js');
+const diagnostics = require('../../src/Xbank.DevAgent.Api/wwwroot/run-diagnostics.js');
 
 const text = '## Blockers\nRequest and issue differ.\n\n**Questions**\n1. Which scope should we follow?\nJIRA_INPUT_REQUIRED';
 const events = [

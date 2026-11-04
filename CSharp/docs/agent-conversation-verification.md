@@ -3,7 +3,7 @@
 Run the complete suite from the repository root:
 
 ```powershell
-dotnet test CSharp/Maf.HandoffWorkflow.slnx --no-restore
+dotnet test CSharp/Xbank.DevAgent.slnx --no-restore
 ```
 
 These tests execute real Microsoft Agent Framework workflows with scripted chat clients and local

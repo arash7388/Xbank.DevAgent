@@ -6,7 +6,7 @@ Scope: architectural review of the C# API, CLI/core workflow, repository tools, 
 
 ## Last three workflows
 
-Selected by `workflow_runs.created_at DESC` from `src/Maf.Handoff.Api/data/llm-checkpoints.db`, opened read-only. Times below are Tehran time on October 17. Stored provider-call counts exclude checkpoint hits; no checkpoint-hit records were found for these runs. Historical executions may precede some of the current source changes.
+Selected by `workflow_runs.created_at DESC` from `src/Xbank.DevAgent.Api/data/llm-checkpoints.db`, opened read-only. Times below are Tehran time on October 17. Stored provider-call counts exclude checkpoint hits; no checkpoint-hit records were found for these runs. Historical executions may precede some of the current source changes.
 
 | Run | Started | Stored outcome | Provider calls | Recorded input tokens | Evidence |
 |---|---|---|---:|---:|---|
@@ -98,6 +98,6 @@ Recovery acceptance scenarios should cover unchanged reviewer/developer ping-pon
 
 ## Validation
 
-`dotnet test CSharp/Maf.HandoffWorkflow.slnx --no-restore --verbosity quiet`: **543 passed, 3 failed, 546 total**. Re-running the three failures reproduces them. `AutomaticCompletionTests.cs:107` reflects `Validate` using static binding flags, but `RepositorySessionService.cs:479` defines it as an instance method. The resulting null reflection lookup throws `NullReferenceException` before the intended assertion. These tests currently do not validate completion dependencies.
+`dotnet test CSharp/Xbank.DevAgent.slnx --no-restore --verbosity quiet`: **543 passed, 3 failed, 546 total**. Re-running the three failures reproduces them. `AutomaticCompletionTests.cs:107` reflects `Validate` using static binding flags, but `RepositorySessionService.cs:479` defines it as an instance method. The resulting null reflection lookup throws `NullReferenceException` before the intended assertion. These tests currently do not validate completion dependencies.
 
 No production fixes were applied during this review. No agents or external writes were triggered. Read-only inspection helpers are under ignored `CSharp/artifacts/architecture-audit/`.

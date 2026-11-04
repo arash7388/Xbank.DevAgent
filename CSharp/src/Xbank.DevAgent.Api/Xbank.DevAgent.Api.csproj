@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Xbank.DevAgent.CodeGraph.Console\Xbank.DevAgent.CodeGraph.Console.csproj" />
+    <ProjectReference Include="..\Xbank.DevAgent.Core\Xbank.DevAgent.Core.csproj" />
+    <ProjectReference Include="..\Xbank.DevAgent.Talk\Xbank.DevAgent.Talk.csproj" />
+    <PackageReference Include="DocumentFormat.OpenXml" />
+    <PackageReference Include="PdfPig" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <UserSecretsId>maf-handoff-api-local</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

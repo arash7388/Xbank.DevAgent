@@ -13,10 +13,10 @@ $summary = [ordered]@{ configuration = $Configuration; build = 'not-run'; dotnet
 Push-Location $projectRoot
 try {
     # Release avoids the Debug DLLs commonly held open by Visual Studio.
-    & dotnet build Maf.HandoffWorkflow.slnx -c $Configuration --verbosity minimal
+    & dotnet build Xbank.DevAgent.slnx -c $Configuration --verbosity minimal
     $summary.build = $LASTEXITCODE
     if ($summary.build -eq 0) {
-        & dotnet test tests/Maf.Handoff.Tests/Maf.Handoff.Tests.csproj -c $Configuration --no-build --no-restore `
+        & dotnet test tests/Xbank.DevAgent.Tests/Xbank.DevAgent.Tests.csproj -c $Configuration --no-build --no-restore `
             --collect:'XPlat Code Coverage' --results-directory $results --logger 'trx;LogFileName=tests.trx' --verbosity minimal
         $summary.dotnet = $LASTEXITCODE
     }

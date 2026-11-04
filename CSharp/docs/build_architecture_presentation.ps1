@@ -108,7 +108,7 @@ function Add-SlideTitle($slide, [string]$title, [string]$kicker, [int]$number) {
     Add-Line $slide 40 92 920 92 $C.Line 1 | Out-Null
 }
 
-function Add-Footer($slide, [string]$text = "Repository Change Workbench  |  Architecture presentation") {
+function Add-Footer($slide, [string]$text = "Xbank.DevAgent  |  Architecture presentation") {
     Add-Line $slide 40 512 920 512 $C.Line 0.8 | Out-Null
     Add-Text $slide 40 518 640 12 $text 8.5 $C.Muted | Out-Null
     Add-Text $slide 780 518 140 12 "Microsoft Agent Framework" 8.5 $C.Muted "Aptos" $false 3 | Out-Null
@@ -412,9 +412,9 @@ try {
     Add-SlideTitle $s "Deployment is intentionally local and simple; the core stays reusable" "Physical architecture" 14
     Add-Box $s 40 124 530 335 $C.Fog $C.Line 10 | Out-Null
     Add-Text $s 62 144 490 20 "SOLUTION / PROCESS VIEW" 12 $C.Navy "Aptos" $true | Out-Null
-    Add-Node $s 75 190 195 84 "Maf.Handoff.Api" "ASP.NET endpoints`nstatic browser UI`nsession singleton" $C.BlueSoft $C.Blue
-    Add-Node $s 340 190 195 84 "Maf.Handoff.Cli" "advisory entry point`nenvironment settings" $C.Fog $C.Slate
-    Add-Node $s 206 326 195 92 "Maf.Handoff.Core" "agents + workflow`nprovider adapters`nrepo / GitHub boundaries" $C.PurpleSoft $C.Purple
+    Add-Node $s 75 190 195 84 "Xbank.DevAgent.Api" "ASP.NET endpoints`nstatic browser UI`nsession singleton" $C.BlueSoft $C.Blue
+    Add-Node $s 340 190 195 84 "Xbank.DevAgent.Cli" "advisory entry point`nenvironment settings" $C.Fog $C.Slate
+    Add-Node $s 206 326 195 92 "Xbank.DevAgent.Core" "agents + workflow`nprovider adapters`nrepo / GitHub boundaries" $C.PurpleSoft $C.Purple
     Add-Line $s 172 274 271 326 $C.Blue 2 $true | Out-Null
     Add-Line $s 438 274 336 326 $C.Slate 2 $true | Out-Null
     Add-Text $s 80 439 450 15 "Single web process | in-memory sessions | temp-directory clones" 10.5 $C.Slate "Aptos" $true 2 | Out-Null
@@ -441,7 +441,7 @@ try {
         Add-Text $s ($q.X+20) 340 230 61 $q.B 11.5 $C.Line | Out-Null
     }
     Add-Line $s 48 462 912 462 $C.Slate 1 | Out-Null
-    Add-Text $s 48 479 620 18 "Repository Change Workbench  |  C# reference implementation" 10.5 $C.Line | Out-Null
+    Add-Text $s 48 479 620 18 "Xbank.DevAgent  |  C# reference implementation" 10.5 $C.Line | Out-Null
     Add-Text $s 738 477 174 20 "END" 11 $C.Mint "Aptos" $true 3 | Out-Null
 
     if (Test-Path -LiteralPath $pptxPath) { Remove-Item -LiteralPath $pptxPath -Force }

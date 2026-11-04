@@ -2,8 +2,8 @@ const assert = require('assert').strict;
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const source = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/wwwroot/app.js'), 'utf8');
-const html = fs.readFileSync(path.join(__dirname, '../../src/Maf.Handoff.Api/wwwroot/index.html'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent.Api/wwwroot/index.html'), 'utf8');
 assert.match(html, /id="jira-include-comments"[^>]*checked/);
 
 function node(extra = {}) {

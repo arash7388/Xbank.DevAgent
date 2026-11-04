@@ -1,6 +1,6 @@
 # Talk notifications
 
-`src/Maf.Handoff.Talk` wraps the supplied POD Chat SDK separately from the workflow
+`src/Xbank.DevAgent.Talk` wraps the supplied POD Chat SDK separately from the workflow
 engine. The API registers its background sender and connects repository session
 events to it. The CLI does not currently send Talk notifications.
 
@@ -54,8 +54,8 @@ For example, set `Talk__Enabled`, `Talk__ThreadId`, `Talk__Token`, and the other
 `Talk__...` environment variables, or use the API project's user-secrets store:
 
 ```powershell
-dotnet user-secrets set 'Talk:Token' '<token>' --project src/Maf.Handoff.Api
-dotnet user-secrets set 'Talk:QueuePassword' '<password>' --project src/Maf.Handoff.Api
+dotnet user-secrets set 'Talk:Token' '<token>' --project src/Xbank.DevAgent.Api
+dotnet user-secrets set 'Talk:QueuePassword' '<password>' --project src/Xbank.DevAgent.Api
 ```
 
 Messages contain a run ID, step and status. `IncludeDetails` opts into sending
