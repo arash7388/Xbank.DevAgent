@@ -256,7 +256,23 @@ public sealed class JiraServiceTests
         Assert.Contains("Ready for release", handler.RequestBody);
     }
 
-    private static JiraService CreateService(RecordingHandler handler, string? acceptanceCriteriaField = null)
+    [Theory]
+    [InlineData(null)]
+    [InlineData("customfield_98765")]
+    public async Task RequesterUsesOnlyTheConfiguredCustomFieldForAnyProject(string? requesterField)
+    {
+        RecordingHandler handler = new("""{"key":"PROJECT-123"}""");
+        JiraService service = CreateService(handler, requesterField: requesterField);
+        await service.CreateIssueAsync(new("PROJECT", "Task", "Example", null));
+        using JsonDocument body = JsonDocument.Parse(handler.RequestBody!);
+        JsonElement fields = body.RootElement.GetProperty("fields");
+        Assert.False(fields.TryGetProperty("customfield_14836", out _));
+        if (requesterField is not null)
+            Assert.Equal("test-requester", fields.GetProperty(requesterField).GetString());
+    }
+
+    private static JiraService CreateService(RecordingHandler handler, string? acceptanceCriteriaField = null,
+        string? requesterField = "customfield_14836")
     {
         IConfiguration configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?>
@@ -266,6 +282,7 @@ public sealed class JiraServiceTests
                 ["Jira:Password"] = "test-password",
                 ["Jira:AuthMode"] = "Basic",
                 ["Jira:Requester"] = "test-requester",
+                ["Jira:RequesterField"] = requesterField,
                 ["Jira:AcceptanceCriteriaField"] = acceptanceCriteriaField,
             }).Build();
         return new JiraService(new HttpClient(handler), configuration);

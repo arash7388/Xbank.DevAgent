@@ -186,11 +186,13 @@ public sealed partial class JiraService(HttpClient httpClient, IConfiguration co
                 fields[field.Name] = JsonNode.Parse(field.Value.GetRawText());
             }
         }
-        if (input.ProjectKey.Equals("OPIM", StringComparison.OrdinalIgnoreCase) &&
-            !fields.ContainsKey("customfield_14836") &&
+        string? requesterField = _configuration["Jira:RequesterField"];
+        if (!string.IsNullOrWhiteSpace(requesterField) &&
             !string.IsNullOrWhiteSpace(_configuration["Jira:Requester"]))
         {
-            fields["customfield_14836"] = _configuration["Jira:Requester"];
+            if (!System.Text.RegularExpressions.Regex.IsMatch(requesterField, @"^customfield_[0-9]+$"))
+                throw new InvalidOperationException("Jira:RequesterField must be customfield_ followed by its numeric ID.");
+            if (!fields.ContainsKey(requesterField)) fields[requesterField] = _configuration["Jira:Requester"];
         }
 
         using JsonDocument response = await PostJsonAsync("rest/api/2/issue", new JsonObject { ["fields"] = fields }, cancellationToken);
@@ -251,9 +253,12 @@ public sealed partial class JiraService(HttpClient httpClient, IConfiguration co
 
     private void AddAuthentication(HttpRequestMessage request)
     {
-        string user = _configuration["Jira:User"] ?? throw new InvalidOperationException("Jira:User is required.");
+        string user = _configuration["Jira:User"] ?? "";
         string password = _configuration["Jira:Password"] ?? throw new InvalidOperationException("Jira:Password is required.");
         string authMode = _configuration["Jira:AuthMode"] ?? "Basic";
+        if (string.IsNullOrWhiteSpace(password)) throw new InvalidOperationException("Configure Jira credentials in Settings.");
+        if (authMode.Equals("Basic", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(user))
+            throw new InvalidOperationException("Jira username is required for Basic authentication.");
         request.Headers.Authorization = authMode.Equals("Bearer", StringComparison.OrdinalIgnoreCase)
             ? new AuthenticationHeaderValue("Bearer", password)
             : authMode.Equals("Basic", StringComparison.OrdinalIgnoreCase)

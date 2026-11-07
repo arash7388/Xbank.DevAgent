@@ -324,7 +324,7 @@ function syncRunModeCopy(review) {
     ['.jira-search-card h3', 'Find requirements for your review', 'Find your change request'],
     ['.jira-preview-actions .field-guide', 'Adds task requirements to your review request.', 'Adds task context to your change request.'],
     ['label[for="task"]', 'Additional review instructions (optional)', 'Requested code change'],
-    ['#task + .field-guide', 'Optionally add review scope, requirements, or feedback to address. The MR source branch is used automatically; approved pushes update the existing MR. The agent edits only an isolated clone.', 'Include expected behavior, constraints, and tests. For a manual request, include WEPOD-12345 or task number 12345. The task number is required to create the user/WEPOD-12345 branch. The agent edits only an isolated clone.'],
+    ['#task + .field-guide', 'Optionally add review scope, requirements, or feedback to address. The MR source branch is used automatically; approved pushes update the existing MR. The agent edits only an isolated clone.', 'Include expected behavior, constraints, and tests. For a manual request, include PROJECT-12345 or task number 12345. A Jira key creates user/PROJECT-12345; a bare task number creates user/TASK-12345. The agent edits only an isolated clone.'],
     ['#empty-activity p', 'Submit a review request to start reviewing the GitLab MR.', 'Submit a change request to start cloning and handoff orchestration.'],
     ['label:has(#auto-commit) span', 'Automatically commit reviewed changes on the MR source branch', 'Automatically commit reviewed changes on the task branch'],
     ['label:has(#auto-push) span', 'Automatically push fixes to the existing MR (includes commit)', 'Automatically push the task branch (includes commit)'],
@@ -724,7 +724,7 @@ const eventDateFormatter = new Intl.DateTimeFormat(undefined, {
 
 const providerCatalog = {
   aifa: {
-    name: 'AIFA', url: 'https://aifa-chatbot.dev.dotin.ir/v1',
+    name: 'AIFA', url: 'https://aifa.example.com/v1',
     toolCalling: true, vision: false, thinking: true,
     // Provisional metadata; confirm the service limits and tool support with its owner.
     maxInputTokens: 8192, maxOutputTokens: 2048,
@@ -1124,6 +1124,7 @@ async function loadDeepSeekPricing() {
 
 async function loadConfiguredProviders() {
   const configured = await api('/api/providers/configured');
+  if (configured.aifaEndpoint) providerCatalog.aifa.url = configured.aifaEndpoint;
   document.querySelector('#saved-gitlab-token-option').hidden = !configured.gitlabToken;
   document.querySelector('#use-saved-gitlab-token').checked = !!configured.gitlabToken;
   syncSavedGitLabToken();
@@ -1565,7 +1566,7 @@ document.querySelector('#modification-form').addEventListener('submit', async ev
 
 approveButton.addEventListener('click', () => {
   if (!document.querySelector('#target-branch').value) {
-    showError('Task number is required. Include WEPOD-12345 in the task description and start a new workflow.');
+    showError('Task number is required. Include PROJECT-12345 in the task description and start a new workflow.');
     return;
   }
   dialog.showModal();
@@ -2583,6 +2584,7 @@ async function initializeCodeGraph() {
     workflowCodeGraphEnabled.disabled = !config.workflowEnabled;
     if (!config.workflowEnabled)
       workflowCodeGraphEnabled.title = 'Disabled by the server CodeGraph:Enabled setting.';
+    codeGraphSource.value = config.indexerProject;
     codeGraphDb.value = config.defaultDatabasePath;
     config.tables.forEach(table => codeGraphTableSelect.add(new Option(table, table)));
     codeGraphTableSelect.value = 'nodes';
@@ -3037,7 +3039,7 @@ document.querySelectorAll('[data-jira-search]').forEach(button => button.addEven
   });
   const modes = {
     jql: ['JQL filter', 'ORDER BY updated DESC', 'Use a JQL query to filter tasks. Ctrl+Enter or ⌘+Enter to search.'],
-    project: ['Project key', 'e.g. OPIM', 'Find recently updated tasks in a project. Enter to search.'],
+    project: ['Project key', 'e.g. PROJECT', 'Find recently updated tasks in a project. Enter to search.'],
     text: ['Search text', 'e.g. deployment', 'Search task summaries and descriptions. Enter to search.'],
   };
   document.querySelector('#jira-search-label').textContent = modes[jiraSearchMode][0];

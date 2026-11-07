@@ -19,7 +19,7 @@ public sealed class AifaProviderTests
         using IChatClient client = ModelChatClientFactory.Create(settings, server);
         ChatResponse response = await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")]);
 
-        Assert.Equal("https://aifa-chatbot.dev.dotin.ir/v1/chat/completions", server.Url);
+        Assert.Equal($"{AifaRequestContext.Endpoint}/chat/completions", server.Url);
         Assert.Equal("Bearer test-token", server.Authorization);
         Assert.Equal("application/json", server.ContentType);
         Assert.Equal("beny", server.Headers["x-request-id"]);

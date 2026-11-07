@@ -1,6 +1,6 @@
 # Xbank.DevAgent
 
-Repository: [arash7388/Xbank.DevAgent](https://github.com/arash7388/Xbank.DevAgent).
+A local repository change workbench built on Microsoft Agent Framework.
 
 Open `Xbank.DevAgent.slnx` to work on the application. Build with
 `dotnet build Xbank.DevAgent.slnx` and start the browser workbench with
@@ -13,6 +13,26 @@ CodeGraph was imported as source; its original repository and remote are indepen
 The application was renamed from MAF. Existing `MAF_*` environment variables,
 user-secrets identifiers, browser storage keys, database identifiers, and Jira
 report signatures are retained for compatibility with existing installations.
+
+Open **Settings** in the top bar to manage repository names, remote URLs and absolute local
+checkout paths, a shared GitLab access token, optional repository-specific GitLab tokens, and
+Jira connection details. Choose **Personal access token (Bearer)** for a Jira PAT; Basic authentication
+also supports a username and password/API token. Requester and its custom field ID are optional;
+configure both to include the requester when creating issues.
+Local paths support Task Analysis; workflow runs continue to use isolated clones of remote repositories.
+
+Settings belong to the OS user running the API, not to individual browser visitors. They are stored
+outside the repository at `%LOCALAPPDATA%\Xbank.DevAgent\settings.protected` on Windows (the .NET
+local application data directory on other platforms). ASP.NET Core Data Protection encrypts the profile;
+its keys live in the adjacent `keys` directory and are protected with the current user's DPAPI on Windows.
+This is a local developer service, without separate authenticated web user profiles.
+Settings override server configuration and apply to new operations immediately. Reload the page when
+ready to refresh repository selectors. Existing environment variables and user secrets remain defaults
+until settings are saved. Saving replaces the complete repository list, including an empty list.
+Blank token inputs retain saved credentials; **Clear** removes them. Repository tokens take precedence
+over the shared GitLab token, and a token supplied explicitly for a run takes precedence over both.
+The settings API never returns tokens. Developer paths and Jira credentials must not be committed to
+shared app settings; configure them through Settings or local user secrets instead.
 
 Use **Task Analysis** in the top bar to explain a Jira task without starting a repository workflow.
 Enter a full issue key and select **Analyse task**, **Summarize task**, or both. Choose English or
@@ -404,7 +424,7 @@ saved token metadata retain their existing logs; their missing usage cannot be r
 ## Safety model
 
 - GitHub accepts HTTPS `github.com/{owner}/{repository}` URLs. GitLab accepts HTTPS URLs on the
-  configured `GitLab:Host`, including nested groups. This deployment defaults to `gitlab.dotin.ir`;
+  configured `GitLab:Host`, including nested groups. The default host is `gitlab.com`;
   set `GitLab__Host` to override the self-managed GitLab hostname.
 - Git credentials are passed to Git through process environment configuration, never clone URLs.
 - Repository tools are limited to bounded text-source list, search, read, write, status, and diff.
@@ -517,9 +537,9 @@ failures and truncation are reported in the model context. Images and scanned PD
 to text first. API callers can supply `jiraIssueKey` and `jiraAttachmentIds` on session creation;
 an empty list excludes all attachments for that task.
 
-Repository change branches use `user/WEPOD-12345`. The task number comes from the selected
-WEPOD Jira key, or from a key such as `WEPOD-12345` or an explicit `task number 12345`
-in the manual description. A missing or ambiguous task number returns a validation error
+Repository change branches use `user/PROJECT-12345`, preserving the selected Jira project's key.
+The issue key comes from the selected Jira task or a key such as `PROJECT-12345` in the description.
+A bare `task number 12345` creates `user/TASK-12345`. A missing or ambiguous identifier returns a validation error
 before cloning or running agents. Approval uses the generated branch; other branch names
 are rejected.
 
@@ -626,7 +646,9 @@ AIFA calls are free: every agent using AIFA reports $0 cost, including calls wit
 Input, cached input, and output rates are fixed at zero; other providers keep their configured pricing.
 
 Select **AIFA** for an agent to use `developer-model` at
-`https://aifa-chatbot.dev.dotin.ir/v1/chat/completions`. Enter the bearer token in **AIFA API key**
+your organization's endpoint. Set `AIFA_ENDPOINT` to its HTTPS base URL (including `/v1`) before
+starting either the API or CLI. The bundled `https://aifa.example.com/v1` is a placeholder.
+Enter the bearer token in **AIFA API key**
 without the `Bearer` prefix, or save it on the server:
 
 ```powershell
@@ -638,10 +660,10 @@ Restart the API in Development mode after changing user secrets. In other enviro
 empty. The token is never included in the configured-provider response or saved workflow configuration.
 
 Every AIFA call includes `x-user-id`, `x-session-id`, and `x-request-id`. Set `Providers:AIFA:UserId`
-to the identity assigned by the service; the supplied curl's `123` is the initial configuration value.
+to the identity assigned by the service; `123` is an example default, not a production identity.
 By default, all agents share the workflow's session ID and each model call gets a new request ID
-that stays unchanged during retries. To reproduce the supplied curl exactly, set
-`Providers:AIFA:SessionId` and `Providers:AIFA:RequestId` to `beny`. These settings also support
+that stays unchanged during retries. To use fixed session and request identities, set
+`Providers:AIFA:SessionId` and `Providers:AIFA:RequestId`. These settings also support
 environment variables with double underscores, such as `Providers__AIFA__UserId`.
 
 For the CLI, set `MAF_MODEL_PROVIDER=aifa` and `AIFA_API_KEY`. Optional variables are `AIFA_MODEL`

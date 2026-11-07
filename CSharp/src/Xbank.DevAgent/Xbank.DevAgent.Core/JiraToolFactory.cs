@@ -49,7 +49,7 @@ internal static class JiraToolFactory
             return new
             {
                 error = "invalid_issue_key",
-                message = "Provide a full Jira issue key such as WEPOD-42, not a project key, number, title, or URL. Use search_jira_issues to find the key or ask the user for clarification. Do not guess a project prefix.",
+                message = "Provide a full Jira issue key such as PROJECT-42, not a project key, number, title, or URL. Use search_jira_issues to find the key or ask the user for clarification. Do not guess a project prefix.",
             };
 
         return await read(key);

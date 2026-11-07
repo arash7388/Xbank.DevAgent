@@ -33,7 +33,7 @@ public sealed class RunPreflightTests
 
     [Theory]
     [InlineData("DeepSeek", "https://api.deepseek.com")]
-    [InlineData("AIFA", "https://aifa-chatbot.dev.dotin.ir/v1")]
+    [InlineData("AIFA", "https://aifa.example.com/v1")]
     public async Task ServerConfiguredKeysAreAccepted(string provider, string endpoint)
     {
         using ProbeHandler handler = new();

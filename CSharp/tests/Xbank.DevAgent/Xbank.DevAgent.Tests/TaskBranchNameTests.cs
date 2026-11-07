@@ -10,8 +10,10 @@ public sealed class TaskBranchNameTests
     [InlineData(null, "Fix WEPOD-12345: validation", "user/WEPOD-12345")]
     [InlineData(null, "See https://jira.example/browse/WEPOD-42", "user/WEPOD-42")]
     [InlineData(null, "Fix wepod-42; verify WEPOD-42", "user/WEPOD-42")]
-    [InlineData(null, "Task number 12345: fix validation", "user/WEPOD-12345")]
-    [InlineData(null, "task #42: fix validation", "user/WEPOD-42")]
+    [InlineData(null, "Task number 12345: fix validation", "user/TASK-12345")]
+    [InlineData(null, "task #42: fix validation", "user/TASK-42")]
+    [InlineData("OTHER-42", "Fix validation", "user/OTHER-42")]
+    [InlineData(null, "Fix PAYMENTS-42", "user/PAYMENTS-42")]
     public void ExtractsTaskNumber(string? jiraIssueKey, string task, string expected)
         => Assert.Equal(expected, TaskBranchName.FromTask(jiraIssueKey, task));
 
@@ -23,7 +25,7 @@ public sealed class TaskBranchNameTests
     [InlineData(null, "Fix WEPOD-12 and WEPOD-34")]
     [InlineData(null, "Task 12 and task 34")]
     [InlineData("WEPOD-", "Fix WEPOD-42")]
-    [InlineData("OTHER-42", "Fix validation")]
+    [InlineData(null, "Fix FIRST-42 and SECOND-42")]
     public void RejectsMissingInvalidOrAmbiguousTaskNumber(string? jiraIssueKey, string task)
         => Assert.Throws<ArgumentException>(() => TaskBranchName.FromTask(jiraIssueKey, task));
 

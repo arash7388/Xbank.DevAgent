@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Xbank.DevAgent</title>
-  <link rel="stylesheet" href="/styles.css?v=20261103-1">
+  <link rel="stylesheet" href="/styles.css?v=20261104-2">
 </head>
 <body>
   <header class="app-header">
@@ -18,6 +18,7 @@
       <button id="previous-runs-button" class="app-mode" type="button" aria-haspopup="dialog">Previous runs</button>
       <button id="coding-rules-button" class="app-mode" type="button" aria-haspopup="dialog">Coding Rules</button>
       <button id="task-analysis-button" class="app-mode" type="button" aria-haspopup="dialog">Task Analysis</button>
+      <button id="developer-settings-button" class="app-mode" type="button" aria-haspopup="dialog">Settings</button>
     </nav>
     <div id="connection" class="connection"><span></span> Local service</div>
   </header>
@@ -118,7 +119,7 @@
         <section class="codegraph-card jira-preview-card" aria-labelledby="jira-preview-title">
           <div class="card-heading"><div><span class="jira-section-label">03 · Review &amp; select</span><h3 id="jira-preview-title">Task details</h3><p>Review a search result, or open a task directly by its issue key.</p></div></div>
           <form id="jira-issue-form" class="jira-issue-form">
-            <div><label for="jira-issue-key">Issue key</label><input id="jira-issue-key" placeholder="e.g. OPIM-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required></div>
+            <div><label for="jira-issue-key">Issue key</label><input id="jira-issue-key" placeholder="e.g. PROJECT-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required></div>
             <button id="jira-issue-button" class="secondary" type="submit">Open issue</button>
           </form>
           <div id="jira-issue-error" class="form-error" role="alert" hidden></div>
@@ -134,8 +135,8 @@
           <div class="card-heading"><div><h3>Create issue</h3><p>Submit standard Jira fields and optional custom fields. Jira may require additional fields for the chosen project and issue type.</p></div></div>
           <form id="jira-create-form">
             <div class="jira-create-grid">
-              <div><label for="jira-create-project">Project key</label><input id="jira-create-project" value="OPIM" required></div>
-              <div><label for="jira-create-type">Issue type</label><input id="jira-create-type" value="Application Change" required></div>
+              <div><label for="jira-create-project">Project key</label><input id="jira-create-project" placeholder="PROJECT" required></div>
+              <div><label for="jira-create-type">Issue type</label><input id="jira-create-type" value="Task" required></div>
             </div>
             <label for="jira-create-summary">Summary</label>
             <input id="jira-create-summary" maxlength="255" required>
@@ -154,7 +155,7 @@
           <div class="card-heading"><div><h3>Add comment</h3><p>Post a comment to an existing Jira issue.</p></div></div>
           <form id="jira-comment-form">
             <label for="jira-comment-key">Issue key</label>
-            <input id="jira-comment-key" placeholder="WEPOD-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required>
+            <input id="jira-comment-key" placeholder="PROJECT-1234" pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+" required>
             <label for="jira-comment-text">Comment</label>
             <textarea id="jira-comment-text" required></textarea>
             <div class="jira-form-actions"><button id="jira-comment-button" class="primary" type="submit">Post comment</button></div>
@@ -330,7 +331,6 @@
               <div>
                 <label for="github-repository">GitHub repository URL</label>
                 <input id="github-repository" name="githubRepository" type="url"
-                       value="https://github.com/arash7388/JiraCommenter.git"
                        placeholder="https://github.com/owner/repository.git" disabled>
               </div>
               <div>
@@ -358,7 +358,7 @@
                   </label>
                 </div>
               </div>
-            <p class="field-guide">For self-managed GitLab, configure the server's <code>GitLab:Host</code> setting.</p>
+            <p class="field-guide">Manage repositories, paths, and saved credentials in Settings.</p>
           </section>
           <div id="run-mode" class="run-mode-options" role="radiogroup" aria-labelledby="run-mode-label">
             <span id="run-mode-label" class="run-mode-label">Run mode</span>
@@ -389,7 +389,7 @@
           <div>
             <label for="branch">Base branch</label>
             <div class="branch-input-row">
-            <input id="branch" name="branch" list="repository-branches" value="Develop" required aria-describedby="branch-status">
+            <input id="branch" name="branch" list="repository-branches" placeholder="main" required aria-describedby="branch-status">
             <datalist id="repository-branches"></datalist>
             <button id="refresh-branches" class="text-button" type="button">Refresh branches</button>
             </div>
@@ -497,7 +497,7 @@
           <label for="task">Requested code change / additional review instructions</label>
           <textarea id="task" name="task" rows="7" maxlength="20000" required
                     placeholder="Describe the change to implement for the selected Jira task, including expected behavior and tests."></textarea>
-          <p class="field-guide">Include expected behavior, constraints, and tests. For a manual request, include WEPOD-12345 or task number 12345. The task number is required to create the user/WEPOD-12345 branch. The agent edits only an isolated clone.</p>
+          <p class="field-guide">Include expected behavior, constraints, and tests. For a manual request, include PROJECT-12345 or task number 12345. A Jira key creates user/PROJECT-12345; a bare task number creates user/TASK-12345. The agent edits only an isolated clone.</p>
           <label class="check-row" for="codegraph-enabled">
             <input id="codegraph-enabled" name="codeGraphEnabled" type="checkbox" checked>
             <span>Use CodeGraph for C# analysis</span>
@@ -552,7 +552,7 @@
           <div id="cognia-fields" hidden>
             <label for="cognia-endpoint">Cognia endpoint</label>
             <input id="cognia-endpoint" type="url" autocomplete="off"
-                   value="http://cogniaapi.sandpod.ir" placeholder="https://cognia.example.com">
+                   placeholder="https://cognia.example.com">
             <div class="two-columns">
               <div>
                 <label for="cognia-client-id">Client ID</label>
@@ -679,7 +679,7 @@
       </div>
       <p>The approved patch will be committed to a new branch. The base branch is never updated directly.</p>
       <label for="target-branch">New branch</label>
-      <input id="target-branch" required placeholder="user/WEPOD-12345">
+      <input id="target-branch" required placeholder="user/PROJECT-12345">
       <label for="commit-message">Commit message</label>
       <input id="commit-message" value="Apply agent-proposed change" maxlength="200" required>
       <label class="check-row" for="push-branch">
@@ -817,6 +817,53 @@
     <article id="analysis-result" class="analysis-result" tabindex="0" aria-label="Task analysis result" hidden></article>
   </dialog>
 
+  <dialog id="developer-settings-dialog" aria-labelledby="developer-settings-title" aria-describedby="developer-settings-description">
+    <header class="settings-header">
+      <div class="settings-header-icon" aria-hidden="true">⚙</div>
+      <div class="settings-heading"><span class="settings-eyebrow">YOUR WORKSPACE</span><h2 id="developer-settings-title">Developer settings</h2><p id="developer-settings-description">Connect your tools and manage your repositories.</p></div>
+      <button id="developer-settings-close" type="button" aria-label="Close settings">✕</button>
+    </header>
+    <form id="developer-settings-form">
+      <div class="settings-body">
+      <p class="settings-security"><span aria-hidden="true">◆</span> Tokens are encrypted in the profile of the OS user running this service.</p>
+      <div class="settings-connections">
+      <fieldset class="settings-card settings-gitlab"><legend><span class="settings-section-icon" aria-hidden="true">G</span> GitLab <span class="settings-section-tag">SOURCE CONTROL</span></legend>
+        <p class="settings-card-description">One shared token for your GitLab repositories.</p>
+        <label for="settings-gitlab-host">GitLab host</label><input id="settings-gitlab-host" placeholder="gitlab.example.com">
+        <p class="settings-field-hint">Hostname only, without https:// or a path.</p>
+        <label for="settings-gitlab-token">Shared access token</label><input id="settings-gitlab-token" type="password" autocomplete="new-password">
+        <label class="settings-check"><input id="settings-gitlab-clear" type="checkbox"> Clear shared token</label>
+      </fieldset>
+      <fieldset class="settings-card settings-jira"><legend><span class="settings-section-icon" aria-hidden="true">J</span> Jira <span class="settings-section-tag">ISSUE TRACKING</span></legend>
+        <p class="settings-card-description">Connect the issues that drive your workflows.</p>
+        <label for="settings-jira-url">Base URL</label><input id="settings-jira-url" type="url" placeholder="https://jira.example.com">
+        <label for="settings-jira-auth">Authentication</label><select id="settings-jira-auth"><option value="Bearer">Personal access token (Bearer)</option><option value="Basic">Username and password / API token (Basic)</option></select>
+        <div class="settings-field-grid">
+        <div>
+        <label for="settings-jira-user">Username (required for Basic)</label><input id="settings-jira-user" autocomplete="username">
+        </div><div>
+        <label for="settings-jira-requester">Requester</label><input id="settings-jira-requester">
+        <label for="settings-jira-requester-field">Requester custom field (optional)</label><input id="settings-jira-requester-field" placeholder="customfield_12345" pattern="customfield_[0-9]+">
+        </div></div>
+        <label for="settings-jira-token">Personal access token / password</label><input id="settings-jira-token" type="password" autocomplete="new-password">
+        <label class="settings-check"><input id="settings-jira-clear" type="checkbox"> Clear Jira credential</label>
+      </fieldset>
+      </div>
+      <fieldset class="settings-card settings-repos"><legend><span class="settings-section-icon" aria-hidden="true">↗</span> Repositories <span class="settings-section-tag">CODEBASES</span></legend>
+        <p class="settings-card-description">Local paths are used for codebase analysis. Workflows clone the remote repository. A repository token overrides the shared GitLab token.</p>
+        <div id="settings-repositories"></div>
+        <p class="settings-empty">No repositories yet. Add a repository to connect your codebase.</p>
+        <button id="settings-add-repository" type="button"><span aria-hidden="true">＋</span> Add repository</button>
+      </fieldset>
+      <p class="settings-help">Leave token fields empty to keep saved credentials. Select “Clear” to remove them. Changes apply to new operations.</p>
+      </div>
+      <footer class="settings-footer">
+      <p id="developer-settings-status" role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="settings-reload" type="button" hidden>Reload page</button><button class="primary" type="submit">Save settings</button></div>
+      </footer>
+    </form>
+  </dialog>
+  <script src="/developer-settings.js?v=20261104-2" defer></script>
   <script src="/coding-rules.js?v=20261101-2" defer></script>
   <script src="/run-history.js?v=20261031-1" defer></script>
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>

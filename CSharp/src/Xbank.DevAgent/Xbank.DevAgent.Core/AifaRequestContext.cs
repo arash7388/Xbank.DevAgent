@@ -2,11 +2,13 @@ namespace Xbank.DevAgent.Core;
 
 public sealed record AifaRequestContext(string UserId, string SessionId, string? RequestId = null)
 {
-    public const string Host = "aifa-chatbot.dev.dotin.ir";
-    public const string Endpoint = "https://aifa-chatbot.dev.dotin.ir/v1";
+    public static string Endpoint => Environment.GetEnvironmentVariable("AIFA_ENDPOINT")?.Trim() is { Length: > 0 } endpoint
+        ? endpoint : "https://aifa.example.com/v1";
     public const string Model = "developer-model";
 
-    public static bool IsAifa(Uri endpoint) => endpoint.Host.Equals(Host, StringComparison.OrdinalIgnoreCase);
+    public static bool IsAifa(Uri endpoint) => Uri.TryCreate(Endpoint, UriKind.Absolute, out Uri? configured)
+        && endpoint.Scheme.Equals(configured.Scheme, StringComparison.OrdinalIgnoreCase)
+        && endpoint.Authority.Equals(configured.Authority, StringComparison.OrdinalIgnoreCase);
 
     public void Validate()
     {

@@ -4,4 +4,11 @@
 .git
 .vs
 artifacts
+.artifacts
+data
 .env
+.env.*
+**/*.protected
+**/*.pfx
+**/*.p12
+**/*.key

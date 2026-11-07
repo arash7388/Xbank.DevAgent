@@ -32,7 +32,19 @@ public sealed class SolutionIndexer(GraphStore store, IndexOptions opt)
         ws.WorkspaceFailed += (_, e) =>
         {
             if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
-                Console.Error.WriteLine($"[msbuild] {e.Diagnostic.Message}");
+            {
+                // Shared projects are containers, not standalone compilations. Their
+                // C# files are loaded through the projects importing their .projitems.
+                // Roslyn reports their unsupported extension as a failure even when
+                // every compilable project in the solution loaded successfully.
+                bool sharedProjectContainer = System.Text.RegularExpressions.Regex.IsMatch(
+                    e.Diagnostic.Message,
+                    @"^Cannot open project '[^'\r\n]+\.shproj' because the file extension '\.shproj' is not associated with a language\.$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                Console.Error.WriteLine(sharedProjectContainer
+                    ? $"[msbuild info] Shared project container skipped: {e.Diagnostic.Message}"
+                    : $"[msbuild] {e.Diagnostic.Message}");
+            }
         };
 
         Console.WriteLine($"در حال باز کردن {solutionPath} ...");

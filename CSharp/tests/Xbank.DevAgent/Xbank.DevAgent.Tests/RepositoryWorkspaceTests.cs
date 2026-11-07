@@ -361,9 +361,9 @@ public sealed class RepositoryWorkspaceTests
     public void RepositoryValidationAcceptsConfiguredSelfManagedGitLabHost()
     {
         RepositoryWorkspace.ValidateRepositoryUrl(
-            "https://gitlab.dotin.ir/platform/orders.git",
+            "https://gitlab.example.test/platform/orders.git",
             RepositoryProvider.GitLab,
-            "gitlab.dotin.ir");
+            "gitlab.example.test");
     }
 
     [Fact]
@@ -373,9 +373,9 @@ public sealed class RepositoryWorkspaceTests
             RepositoryWorkspace.ValidateRepositoryUrl(
                 "https://untrusted.example/platform/orders.git",
                 RepositoryProvider.GitLab,
-                "gitlab.dotin.ir"));
+                "gitlab.example.test"));
 
-        Assert.Contains("gitlab.dotin.ir", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("gitlab.example.test", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

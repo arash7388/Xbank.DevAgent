@@ -24,6 +24,7 @@ public sealed class ApiContractTests(ApiContractTests.ApiFactory factory) : ICla
     [InlineData("/api/agents/default-prompts")]
     [InlineData("/api/agents/tools")]
     [InlineData("/api/projects")]
+    [InlineData("/api/settings")]
     [InlineData("/api/providers/configured")]
     [InlineData("/api/jira/settings")]
     [InlineData("/api/codegraph/config")]
@@ -43,6 +44,7 @@ public sealed class ApiContractTests(ApiContractTests.ApiFactory factory) : ICla
     [Theory]
     [InlineData("/")]
     [InlineData("/app.js")]
+    [InlineData("/developer-settings.js")]
     [InlineData("/styles.css")]
     public async Task WorkbenchAssetsAreServedWithNoCache(string route)
     {
@@ -308,6 +310,7 @@ public sealed class ApiContractTests(ApiContractTests.ApiFactory factory) : ICla
                     ["Providers:AIFA:ApiKey"] = Secret,
                     ["GitLab:Token"] = Secret,
                     ["Jira:Token"] = Secret,
+                    ["Jira:Password"] = Secret,
                     ["Logging:LogLevel:Default"] = "Warning",
                 });
             });

@@ -1,8 +1,19 @@
+using Microsoft.AspNetCore.DataProtection;
 using Xbank.DevAgent.Api;
 using Xbank.DevAgent.Core;
 using Xbank.DevAgent.Talk;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+string profileDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Xbank.DevAgent");
+DeveloperSettingsStore developerSettings = new(Path.Combine(profileDirectory, "settings.protected"),
+    DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(profileDirectory, "keys")), protection =>
+    {
+        protection.SetApplicationName("Xbank.DevAgent");
+        if (OperatingSystem.IsWindows()) protection.ProtectKeysWithDpapi();
+    })
+        .CreateProtector("Xbank.DevAgent.DeveloperSettings.v1"));
+((IConfigurationBuilder)builder.Configuration).Add(developerSettings);
+builder.Services.AddSingleton(developerSettings);
 builder.Services.AddTalkNotifications(builder.Configuration);
 builder.Services.AddHttpClient<GitHubPullRequestClient>(client =>
 {
@@ -98,6 +109,17 @@ StaticFileOptions workbenchFiles = new()
 };
 app.UseStaticFiles(workbenchFiles);
 
+app.MapGet("/api/settings", (DeveloperSettingsStore store, IConfiguration configuration, HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Ok(store.Read(configuration));
+});
+app.MapPut("/api/settings", (DeveloperSettings request, DeveloperSettingsStore store, IConfiguration configuration) =>
+{
+    store.Save(request, configuration);
+    return Results.NoContent();
+});
+
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", provider = "openai-compatible" }));
 
 app.MapGet("/api/agents/default-prompts", () => Results.Ok(AgentPrompts.Defaults));
@@ -167,13 +189,14 @@ app.MapGet("/api/providers/configured", (IConfiguration configuration) => Result
 {
     deepseek = !string.IsNullOrWhiteSpace(configuration["Providers:DeepSeek:ApiKey"]),
     aifa = !string.IsNullOrWhiteSpace(configuration["Providers:AIFA:ApiKey"]),
-    gitlabToken = !string.IsNullOrWhiteSpace(configuration["GitLab:Token"]),
+    aifaEndpoint = AifaRequestContext.Endpoint,
+    gitlabToken = !string.IsNullOrWhiteSpace(configuration["GitLab:Token"]) ||
+        DeveloperSettingsStore.Projects(configuration).Any(project => !string.IsNullOrWhiteSpace(project["Token"])),
 }));
 
 app.MapGet("/api/projects", (IConfiguration configuration) =>
 {
-    ProjectRepositoryInfo[] projects = configuration.GetSection("Projects")
-        .GetChildren()
+    ProjectRepositoryInfo[] projects = DeveloperSettingsStore.Projects(configuration)
         .Select(project => new ProjectRepositoryInfo(
             project["Key"] ?? project.Key,
             project["GitLabProjectPath"]))
@@ -193,7 +216,7 @@ app.MapPost("/api/repositories/merge-requests", async (
     if (!string.Equals(request.SourceControl, "gitlab", StringComparison.OrdinalIgnoreCase))
         throw new ArgumentException("Merge request selection requires GitLab.");
     string token = string.IsNullOrWhiteSpace(request.AccessToken)
-        ? configuration["GitLab:Token"] ?? "" : request.AccessToken.Trim();
+        ? DeveloperSettingsStore.GitLabToken(configuration, request.RepositoryUrl) ?? "" : request.AccessToken.Trim();
     return Results.Ok(await client.ListOpenAsync(request.RepositoryUrl.Trim(), token, cancellationToken));
 });
 
@@ -207,7 +230,7 @@ app.MapPost("/api/repositories/branches", async (
         _ => throw new ArgumentException("Source control must be either 'github' or 'gitlab'."),
     };
     string? token = string.IsNullOrWhiteSpace(request.AccessToken)
-        ? configuration[provider == RepositoryProvider.GitHub ? "GitHub:Token" : "GitLab:Token"]
+        ? (provider == RepositoryProvider.GitHub ? configuration["GitHub:Token"] : DeveloperSettingsStore.GitLabToken(configuration, request.RepositoryUrl))
         : request.AccessToken.Trim();
     return Results.Ok(await RepositoryWorkspace.ListBranchesAsync(
         request.RepositoryUrl.Trim(), token, cancellationToken, provider, configuration["GitLab:Host"]));

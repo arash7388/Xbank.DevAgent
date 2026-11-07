@@ -88,7 +88,7 @@ public sealed class RepositorySessionService(
         }
         else if (provider == RepositoryProvider.GitLab && string.IsNullOrWhiteSpace(request.GitLabToken))
         {
-            request = request with { GitLabToken = configuration["GitLab:Token"] };
+            request = request with { GitLabToken = DeveloperSettingsStore.GitLabToken(configuration, request.RepositoryUrl) };
         }
         GitLabMergeRequestReview? review = null;
         if (request.RunMode is not ("change" or "gitlab_review"))

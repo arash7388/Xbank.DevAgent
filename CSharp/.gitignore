@@ -4,5 +4,14 @@
 **/TestResults/
 **/*.user
 artifacts/
+.artifacts/
 data/
 .env
+.env.*
+!.env.example
+**/appsettings.Local.json
+**/appsettings.*.local.json
+*.protected
+*.pfx
+*.p12
+*.key

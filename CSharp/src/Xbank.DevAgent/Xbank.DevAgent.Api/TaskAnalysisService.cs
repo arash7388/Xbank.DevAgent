@@ -36,7 +36,7 @@ public sealed class TaskAnalysisService(IJiraIssueSearch jira, IConfiguration co
     public RepositoryWorkspace? OpenCodebase(string? projectKey)
     {
         if (string.IsNullOrWhiteSpace(projectKey)) return null;
-        IConfigurationSection? project = configuration.GetSection("Projects").GetChildren()
+        IConfigurationSection? project = DeveloperSettingsStore.Projects(configuration)
             .FirstOrDefault(item => string.Equals(item["Key"] ?? item.Key, projectKey, StringComparison.OrdinalIgnoreCase));
         if (project is null) throw new ArgumentException("Select a configured repository for codebase validation.");
         string? path = project["RepoPath"];

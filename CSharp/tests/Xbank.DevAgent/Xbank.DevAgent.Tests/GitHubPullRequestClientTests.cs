@@ -19,7 +19,7 @@ public sealed class GitHubPullRequestClientTests
             return new HttpResponseMessage(HttpStatusCode.Created)
             {
                 Content = new StringContent(
-                    """{"number":42,"html_url":"https://github.com/arash7388/JiraCommenter/pull/42"}""",
+                    """{"number":42,"html_url":"https://github.com/example/repository/pull/42"}""",
                     Encoding.UTF8,
                     "application/json"),
             };
@@ -30,7 +30,7 @@ public sealed class GitHubPullRequestClientTests
         GitHubPullRequestClient client = new(httpClient);
 
         PullRequestResult result = await client.CreateAsync(
-            "https://github.com/arash7388/JiraCommenter.git",
+            "https://github.com/example/repository.git",
             "secret-token",
             "Update project key",
             "agent/change-1",
@@ -39,9 +39,9 @@ public sealed class GitHubPullRequestClientTests
             CancellationToken.None);
 
         Assert.Equal(42, result.Number);
-        Assert.Equal("https://github.com/arash7388/JiraCommenter/pull/42", result.Url);
+        Assert.Equal("https://github.com/example/repository/pull/42", result.Url);
         Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
-        Assert.Equal("https://api.github.com/repos/arash7388/JiraCommenter/pulls", capturedRequest.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://api.github.com/repos/example/repository/pulls", capturedRequest.RequestUri!.AbsoluteUri);
         Assert.Equal("Bearer", capturedRequest.Headers.Authorization!.Scheme);
         Assert.Equal("secret-token", capturedRequest.Headers.Authorization.Parameter);
         Assert.Contains("application/vnd.github+json", capturedRequest.Headers.Accept.Select(value => value.MediaType));
@@ -66,7 +66,7 @@ public sealed class GitHubPullRequestClientTests
         GitHubPullRequestClient client = new(httpClient);
 
         RepositoryException exception = await Assert.ThrowsAsync<RepositoryException>(() => client.CreateAsync(
-            "https://github.com/arash7388/JiraCommenter.git",
+            "https://github.com/example/repository.git",
             "secret-token",
             "Update project key",
             "agent/change-1",
