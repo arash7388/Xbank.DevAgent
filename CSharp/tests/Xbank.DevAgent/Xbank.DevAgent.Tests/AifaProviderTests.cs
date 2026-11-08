@@ -126,7 +126,7 @@ public sealed class AifaProviderTests
     [InlineData("https://env.example/v1", "https://config.example/v1", "https://env.example/v1")]
     [InlineData(" ", "https://config.example/v1", "https://config.example/v1")]
     [InlineData(null, " https://config.example/v1 ", "https://config.example/v1")]
-    [InlineData(null, null, "https://aifa.example.com/v1")]
+    [InlineData(null, null, "https://aifa-chatbot.dev.dotin.ir")]
     public void ResolvesEndpointWithEnvironmentPrecedence(string? environmentEndpoint, string? configuredEndpoint, string expected) =>
         Assert.Equal(expected, AifaRequestContext.ResolveEndpoint(environmentEndpoint, configuredEndpoint));
 

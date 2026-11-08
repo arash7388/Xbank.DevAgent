@@ -724,7 +724,7 @@ const eventDateFormatter = new Intl.DateTimeFormat(undefined, {
 
 const providerCatalog = {
   aifa: {
-    name: 'AIFA', url: 'https://aifa.example.com/v1',
+    name: 'AIFA', url: 'https://aifa-chatbot.dev.dotin.ir',
     toolCalling: true, vision: false, thinking: true,
     // Provisional metadata; confirm the service limits and tool support with its owner.
     maxInputTokens: 81920, maxOutputTokens: 20480,

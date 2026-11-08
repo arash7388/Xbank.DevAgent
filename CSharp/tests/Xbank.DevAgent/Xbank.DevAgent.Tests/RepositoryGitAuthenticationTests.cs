@@ -51,6 +51,60 @@ public sealed class RepositoryGitAuthenticationTests
 
         Assert.Equal("0", info.Environment["GIT_TERMINAL_PROMPT"]);
         Assert.Equal("Never", info.Environment["GCM_INTERACTIVE"]);
-        Assert.Equal("1", info.Environment["GIT_CONFIG_COUNT"]);
+        Assert.Equal("2", info.Environment["GIT_CONFIG_COUNT"]);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("test-token")]
+    public async Task ClonesLongPathsWhenGlobalConfigurationDisablesThem(string? accessToken)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "maf-long-paths", Guid.NewGuid().ToString("N"));
+        string source = Path.Combine(root, "source");
+        string clone = Path.Combine(root, new string('w', 60));
+        string configPath = Path.Combine(root, "gitconfig");
+        string relativePath = Path.Combine("XBank.Marketing", "XBank.Marketing.Infrastructure.EF.SqlMigrations",
+            "Migrations", "20260721000000_AddNotifiableAndMessagePatternToScoreTransactionMetaData.Designer.cs");
+        Directory.CreateDirectory(source);
+        try
+        {
+            await File.WriteAllTextAsync(configPath, "[core]\nlongpaths = false\nautocrlf = false\n");
+            await Git(source, "init", "--initial-branch=main");
+            await Git(source, "config", "core.longpaths", "true");
+            string sourceFile = Path.Combine(source, relativePath);
+            Assert.True(Path.Combine(clone, relativePath).Length > 260);
+            Directory.CreateDirectory(Path.GetDirectoryName(sourceFile)!);
+            await File.WriteAllTextAsync(Path.Combine(source, ".gitattributes"), "* -text\n");
+            await File.WriteAllTextAsync(sourceFile, "class Migration { }\n");
+            await Git(source, "add", ".");
+            await Git(source, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "-c", "commit.gpgSign=false", "commit", "-m", "Long path");
+
+            await Git(root, "clone", "--", source, clone);
+
+            string cloneFile = Path.Combine(clone, relativePath);
+            Assert.Equal("class Migration { }\n", (await File.ReadAllTextAsync(cloneFile)).Replace("\r\n", "\n"));
+            Assert.Equal("true", (await Git(clone, "config", "--local", "--get", "core.longpaths")).Trim());
+        }
+        finally
+        {
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(root, recursive: true);
+        }
+
+        async Task<string> Git(string directory, params string[] arguments)
+        {
+            ProcessStartInfo info = RepositoryWorkspace.CreateGitStartInfo(
+                directory, arguments, RepositoryProvider.GitHub, accessToken);
+            info.Environment["GIT_CONFIG_GLOBAL"] = configPath;
+            info.Environment.Remove("GIT_CONFIG_PARAMETERS");
+            using Process process = Process.Start(info)!;
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            Task<string> error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.True(process.ExitCode == 0, await error);
+            return await output;
+        }
     }
 }

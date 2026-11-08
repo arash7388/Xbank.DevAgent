@@ -2,7 +2,7 @@ namespace Xbank.DevAgent.Core;
 
 public sealed record AifaRequestContext(string UserId, string SessionId, string? RequestId = null)
 {
-    private const string DefaultEndpoint = "https://aifa.example.com/v1";
+    private const string DefaultEndpoint = "https://aifa-chatbot.dev.dotin.ir";
 
     /// <summary>Endpoint supplied by application configuration when the environment variable is absent.</summary>
     public static string? ConfiguredEndpoint { get; private set; }

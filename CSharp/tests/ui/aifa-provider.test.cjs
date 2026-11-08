@@ -35,7 +35,7 @@ for (const invalid of ['', '0', '-1', '1.5', '2147483648']) {
 }
 fields['max-agent-turns'].value = '60';
 assert.equal(configured.provider.name, 'AIFA');
-assert.equal(configured.provider.url, 'https://aifa.example.com/v1');
+assert.equal(configured.provider.url, 'https://aifa-chatbot.dev.dotin.ir');
 assert.equal(configured.provider.id, 'developer-model');
 assert.equal(configured.provider.thinking, true);
 assert.equal(configured.provider.reasoningEffort, 'low');
