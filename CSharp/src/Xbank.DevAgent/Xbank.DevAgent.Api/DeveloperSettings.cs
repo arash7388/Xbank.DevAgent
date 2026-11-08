@@ -7,9 +7,9 @@ namespace Xbank.DevAgent.Api;
 public sealed record DeveloperRepository(string Key, string RepoPath, string GitLabProjectPath,
     string? Token = null, bool HasToken = false);
 public sealed record DeveloperSettings(string GitLabHost, string JiraBaseUrl, string JiraUser,
-    string JiraRequester, string JiraAuthMode, DeveloperRepository[] Repositories,
+    string JiraAuthMode, DeveloperRepository[] Repositories,
     string? GitLabToken = null, string? JiraToken = null,
-    bool HasGitLabToken = false, bool HasJiraToken = false, string JiraRequesterField = "");
+    bool HasGitLabToken = false, bool HasJiraToken = false);
 
 // A local installation has one OS user, rather than authenticated web accounts.
 // The encrypted profile is deliberately kept outside the checkout.
@@ -44,13 +44,12 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
 
     public DeveloperSettings Read(IConfiguration configuration) => new(
         configuration["GitLab:Host"] ?? "", configuration["Jira:BaseUrl"] ?? "",
-        configuration["Jira:User"] ?? "", configuration["Jira:Requester"] ?? "",
+        configuration["Jira:User"] ?? "",
         configuration["Jira:AuthMode"] ?? "Bearer",
         Projects(configuration).Select(p => new DeveloperRepository(p["Key"] ?? p.Key,
             p["RepoPath"] ?? "", p["GitLabProjectPath"] ?? "", HasToken: !string.IsNullOrWhiteSpace(p["Token"]))).ToArray(),
         HasGitLabToken: !string.IsNullOrWhiteSpace(configuration["GitLab:Token"]),
-        HasJiraToken: !string.IsNullOrWhiteSpace(configuration["Jira:Password"]),
-        JiraRequesterField: configuration["Jira:RequesterField"] ?? "");
+        HasJiraToken: !string.IsNullOrWhiteSpace(configuration["Jira:Password"]));
 
     public void Save(DeveloperSettings settings, IConfiguration configuration)
     {
@@ -58,11 +57,6 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
         ArgumentNullException.ThrowIfNull(settings.GitLabHost);
         ArgumentNullException.ThrowIfNull(settings.JiraBaseUrl);
         ArgumentNullException.ThrowIfNull(settings.JiraUser);
-        ArgumentNullException.ThrowIfNull(settings.JiraRequester);
-        ArgumentNullException.ThrowIfNull(settings.JiraRequesterField);
-        if (settings.JiraRequesterField.Length > 0 &&
-            !System.Text.RegularExpressions.Regex.IsMatch(settings.JiraRequesterField, @"^customfield_[0-9]+$"))
-            throw new ArgumentException("Jira requester field must be customfield_ followed by its numeric ID.");
         if (settings.JiraAuthMode == "Basic" && string.IsNullOrWhiteSpace(settings.JiraUser))
             throw new ArgumentException("Jira username is required for Basic authentication.");
         if (settings.Repositories.Length > 200) throw new ArgumentException("At most 200 repositories are supported.");
@@ -91,8 +85,6 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
                 ["GitLab:Token"] = settings.GitLabToken?.Trim() ?? configuration["GitLab:Token"] ?? "",
                 ["Jira:BaseUrl"] = settings.JiraBaseUrl.Trim().TrimEnd('/'),
                 ["Jira:User"] = settings.JiraUser.Trim(),
-                ["Jira:Requester"] = settings.JiraRequester.Trim(),
-                ["Jira:RequesterField"] = settings.JiraRequesterField,
                 ["Jira:AuthMode"] = settings.JiraAuthMode,
                 ["Jira:Password"] = settings.JiraToken?.Trim() ?? configuration["Jira:Password"] ?? "",
             };

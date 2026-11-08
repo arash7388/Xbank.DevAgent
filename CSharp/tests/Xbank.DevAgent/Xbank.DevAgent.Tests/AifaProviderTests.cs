@@ -122,6 +122,14 @@ public sealed class AifaProviderTests
         Assert.Equal(server.Ids[0], server.Ids[1]);
     }
 
+    [Theory]
+    [InlineData("https://env.example/v1", "https://config.example/v1", "https://env.example/v1")]
+    [InlineData(" ", "https://config.example/v1", "https://config.example/v1")]
+    [InlineData(null, " https://config.example/v1 ", "https://config.example/v1")]
+    [InlineData(null, null, "https://aifa.example.com/v1")]
+    public void ResolvesEndpointWithEnvironmentPrecedence(string? environmentEndpoint, string? configuredEndpoint, string expected) =>
+        Assert.Equal(expected, AifaRequestContext.ResolveEndpoint(environmentEndpoint, configuredEndpoint));
+
     private sealed class RetryHandler : HttpMessageHandler
     {
         public List<string> Ids = [];

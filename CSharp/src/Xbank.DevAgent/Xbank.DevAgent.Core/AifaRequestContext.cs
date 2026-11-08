@@ -2,8 +2,22 @@ namespace Xbank.DevAgent.Core;
 
 public sealed record AifaRequestContext(string UserId, string SessionId, string? RequestId = null)
 {
-    public static string Endpoint => Environment.GetEnvironmentVariable("AIFA_ENDPOINT")?.Trim() is { Length: > 0 } endpoint
-        ? endpoint : "https://aifa.example.com/v1";
+    private const string DefaultEndpoint = "https://aifa.example.com/v1";
+
+    /// <summary>Endpoint supplied by application configuration when the environment variable is absent.</summary>
+    public static string? ConfiguredEndpoint { get; private set; }
+
+    public static string Endpoint => ResolveEndpoint(Environment.GetEnvironmentVariable("AIFA_ENDPOINT"), ConfiguredEndpoint);
+
+    public static void ConfigureEndpoint(string? endpoint) =>
+        ConfiguredEndpoint = string.IsNullOrWhiteSpace(endpoint) ? null : endpoint.Trim();
+
+    // AIFA_ENDPOINT keeps precedence so a process-level override always wins over stored settings.
+    public static string ResolveEndpoint(string? environmentEndpoint, string? configuredEndpoint) =>
+        environmentEndpoint?.Trim() is { Length: > 0 } fromEnvironment ? fromEnvironment
+        : configuredEndpoint?.Trim() is { Length: > 0 } fromConfiguration ? fromConfiguration
+        : DefaultEndpoint;
+
     public const string Model = "developer-model";
 
     public static bool IsAifa(Uri endpoint) => Uri.TryCreate(Endpoint, UriKind.Absolute, out Uri? configured)

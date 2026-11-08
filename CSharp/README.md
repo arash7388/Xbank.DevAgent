@@ -17,8 +17,7 @@ report signatures are retained for compatibility with existing installations.
 Open **Settings** in the top bar to manage repository names, remote URLs and absolute local
 checkout paths, a shared GitLab access token, optional repository-specific GitLab tokens, and
 Jira connection details. Choose **Personal access token (Bearer)** for a Jira PAT; Basic authentication
-also supports a username and password/API token. Requester and its custom field ID are optional;
-configure both to include the requester when creating issues.
+also supports a username and password/API token.
 Local paths support Task Analysis; workflow runs continue to use isolated clones of remote repositories.
 
 Settings belong to the OS user running the API, not to individual browser visitors. They are stored
@@ -647,7 +646,13 @@ Input, cached input, and output rates are fixed at zero; other providers keep th
 
 Select **AIFA** for an agent to use `developer-model` at
 your organization's endpoint. Set `AIFA_ENDPOINT` to its HTTPS base URL (including `/v1`) before
-starting either the API or CLI. The bundled `https://aifa.example.com/v1` is a placeholder.
+starting either the API or CLI, or save it once for the API with user secrets:
+
+```powershell
+dotnet user-secrets set "Providers:AIFA:Endpoint" "https://YOUR-AIFA-HOST/v1" --project CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api
+```
+
+`AIFA_ENDPOINT` takes precedence when both are set. The bundled `https://aifa.example.com/v1` is a placeholder.
 Enter the bearer token in **AIFA API key**
 without the `Bearer` prefix, or save it on the server:
 

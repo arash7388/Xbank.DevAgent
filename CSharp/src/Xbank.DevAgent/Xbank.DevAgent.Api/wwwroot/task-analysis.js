@@ -148,8 +148,14 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload), signal: pending.signal,
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || data.message || `Task Analysis failed (${response.status}).`);
+      const body = await response.text();
+      let data = null;
+      try { data = body ? JSON.parse(body) : null; } catch { /* Non-JSON error pages fall back to their text below. */ }
+      if (!response.ok) {
+        const detail = data?.error || data?.message || body.trim();
+        throw new Error(detail ? detail.slice(0, 500) : `Task Analysis failed (${response.status}).`);
+      }
+      if (!data) throw new Error('Task Analysis returned an unexpected response.');
       result.textContent = data.text;
       result.lang = data.outputLanguage === 'Persian' ? 'fa' : 'en';
       result.dir = data.outputLanguage === 'Persian' ? 'rtl' : 'ltr';

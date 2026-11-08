@@ -224,7 +224,7 @@ public sealed class JiraServiceTests
     }
 
     [Fact]
-    public async Task CreateIssueUsesConfiguredRequesterAndAdditionalFields()
+    public async Task CreateIssueUsesAdditionalFields()
     {
         RecordingHandler handler = new("""{"key":"OPIM-123"}""");
         JiraService service = CreateService(handler);
@@ -239,7 +239,7 @@ public sealed class JiraServiceTests
         var fields = body.RootElement.GetProperty("fields");
         Assert.Equal("OPIM", fields.GetProperty("project").GetProperty("key").GetString());
         Assert.Equal("Wepod Deployment", fields.GetProperty("customfield_24001").GetString());
-        Assert.Equal("test-requester", fields.GetProperty("customfield_14836").GetString());
+        Assert.False(fields.TryGetProperty("customfield_14836", out _));
     }
 
     [Fact]
@@ -256,23 +256,7 @@ public sealed class JiraServiceTests
         Assert.Contains("Ready for release", handler.RequestBody);
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("customfield_98765")]
-    public async Task RequesterUsesOnlyTheConfiguredCustomFieldForAnyProject(string? requesterField)
-    {
-        RecordingHandler handler = new("""{"key":"PROJECT-123"}""");
-        JiraService service = CreateService(handler, requesterField: requesterField);
-        await service.CreateIssueAsync(new("PROJECT", "Task", "Example", null));
-        using JsonDocument body = JsonDocument.Parse(handler.RequestBody!);
-        JsonElement fields = body.RootElement.GetProperty("fields");
-        Assert.False(fields.TryGetProperty("customfield_14836", out _));
-        if (requesterField is not null)
-            Assert.Equal("test-requester", fields.GetProperty(requesterField).GetString());
-    }
-
-    private static JiraService CreateService(RecordingHandler handler, string? acceptanceCriteriaField = null,
-        string? requesterField = "customfield_14836")
+    private static JiraService CreateService(RecordingHandler handler, string? acceptanceCriteriaField = null)
     {
         IConfiguration configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?>
@@ -281,8 +265,6 @@ public sealed class JiraServiceTests
                 ["Jira:User"] = "test-user",
                 ["Jira:Password"] = "test-password",
                 ["Jira:AuthMode"] = "Basic",
-                ["Jira:Requester"] = "test-requester",
-                ["Jira:RequesterField"] = requesterField,
                 ["Jira:AcceptanceCriteriaField"] = acceptanceCriteriaField,
             }).Build();
         return new JiraService(new HttpClient(handler), configuration);

@@ -36,7 +36,7 @@ const get = selector => {
 };
 let fail = false;
 const calls = [];
-const settings = { gitLabHost: 'gitlab.test', jiraBaseUrl: 'https://jira.test', jiraUser: '', jiraRequester: '', jiraAuthMode: 'Bearer',
+const settings = { gitLabHost: 'gitlab.test', jiraBaseUrl: 'https://jira.test', jiraUser: '', jiraAuthMode: 'Bearer',
   hasGitLabToken: true, hasJiraToken: true,
   repositories: [{ key: '<script>example</script>', repoPath: 'C:\\repo', gitLabProjectPath: 'https://gitlab.test/team/repo.git', hasToken: true }] };
 const context = {

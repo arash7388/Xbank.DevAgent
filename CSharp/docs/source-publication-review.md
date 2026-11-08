@@ -11,8 +11,6 @@ output, and XML metadata inside the presentation and bundled NuGet packages.
 - Removed the personal GitHub repository default and internal Cognia endpoint from the UI.
 - Made the AIFA base URL configurable with `AIFA_ENDPOINT` for both API and CLI; the built-in
   URL is an example placeholder. Browser workflows obtain the configured endpoint from the API.
-- Made Jira requester custom field IDs configurable in Settings (`Jira:RequesterField`).
-  Issue creation no longer assumes a particular organization's Jira project or custom field.
 - Branch generation accepts any Jira project key. Bare task numbers use `TASK` as their prefix.
 - Replaced organization hostnames and personal repository names in test fixtures with examples.
 - Removed 52 generated files from Git tracking under `CSharp/.artifacts/`, including copied

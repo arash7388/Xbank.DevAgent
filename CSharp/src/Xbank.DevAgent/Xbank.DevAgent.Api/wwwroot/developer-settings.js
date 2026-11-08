@@ -94,7 +94,7 @@
     try {
       const settings = await request();
       if (current !== revision) return;
-      for (const [name, key] of [['gitlab-host', 'gitLabHost'], ['jira-url', 'jiraBaseUrl'], ['jira-user', 'jiraUser'], ['jira-requester', 'jiraRequester'], ['jira-requester-field', 'jiraRequesterField'], ['jira-auth', 'jiraAuthMode']]) field(name).value = settings[key] || '';
+      for (const [name, key] of [['gitlab-host', 'gitLabHost'], ['jira-url', 'jiraBaseUrl'], ['jira-user', 'jiraUser'], ['jira-auth', 'jiraAuthMode']]) field(name).value = settings[key] || '';
       field('gitlab-token').placeholder = settings.hasGitLabToken ? 'Token saved — leave blank to keep' : 'No shared token saved';
       field('jira-token').placeholder = settings.hasJiraToken ? 'Credential saved — leave blank to keep' : 'No credential saved';
       settings.repositories.forEach(addRepository);
@@ -120,8 +120,7 @@
     try {
       await request({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         gitLabHost: field('gitlab-host').value.trim(), gitLabToken: secret(field('gitlab-token'), field('gitlab-clear')),
-        jiraBaseUrl: field('jira-url').value.trim(), jiraUser: field('jira-user').value.trim(), jiraRequester: field('jira-requester').value.trim(),
-        jiraRequesterField: field('jira-requester-field').value.trim(),
+        jiraBaseUrl: field('jira-url').value.trim(), jiraUser: field('jira-user').value.trim(),
         jiraAuthMode: field('jira-auth').value, jiraToken: secret(field('jira-token'), field('jira-clear')),
         repositories: snapshot.map(row => row.readSettings()),
       }) });
