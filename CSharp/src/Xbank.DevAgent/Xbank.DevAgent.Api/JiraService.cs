@@ -186,14 +186,6 @@ public sealed partial class JiraService(HttpClient httpClient, IConfiguration co
                 fields[field.Name] = JsonNode.Parse(field.Value.GetRawText());
             }
         }
-        string? requesterField = _configuration["Jira:RequesterField"];
-        if (!string.IsNullOrWhiteSpace(requesterField) &&
-            !string.IsNullOrWhiteSpace(_configuration["Jira:Requester"]))
-        {
-            if (!System.Text.RegularExpressions.Regex.IsMatch(requesterField, @"^customfield_[0-9]+$"))
-                throw new InvalidOperationException("Jira:RequesterField must be customfield_ followed by its numeric ID.");
-            if (!fields.ContainsKey(requesterField)) fields[requesterField] = _configuration["Jira:Requester"];
-        }
 
         using JsonDocument response = await PostJsonAsync("rest/api/2/issue", new JsonObject { ["fields"] = fields }, cancellationToken);
         string key = ReadString(response.RootElement, "key");

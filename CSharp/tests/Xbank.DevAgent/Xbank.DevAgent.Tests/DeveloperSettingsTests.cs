@@ -23,7 +23,7 @@ public sealed class DeveloperSettingsTests : IDisposable
         return (store, configuration);
     }
 
-    private DeveloperSettings Settings() => new("gitlab.test", "https://jira.test", "", "", "Bearer",
+    private DeveloperSettings Settings() => new("gitlab.test", "https://jira.test", "", "Bearer",
         [new("first", _directory, "https://gitlab.test/team/first.git", "repo-secret")],
         GitLabToken: "shared-secret", JiraToken: "jira-secret");
 

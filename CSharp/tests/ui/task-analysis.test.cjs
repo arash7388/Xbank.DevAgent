@@ -22,7 +22,8 @@ const saved = new Map([['maf-task-analysis-settings-v1', JSON.stringify({
   provider: 'deepseek', model: 'test-model', effort: 'medium', prompt: 'Keep my existing guidance',
   'input-limit': 128000, 'output-limit': 4096,
 })]]);
-let payload, fail = false;
+let payload, failure = null;
+let plainTextFailure = null;
 const catalog = { deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com',
   models: [['test-model', 'Test']], thinking: true, reasoningEffort: 'medium',
   supportsReasoningEffort: ['low', 'medium'], maxInputTokens: 128000, maxOutputTokens: 4096 } };
@@ -41,12 +42,17 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgen
   Option: function(text, value) { this.text = text; this.value = value; },
   localStorage: { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value) },
   fetch: async (url, options) => {
-    if (url === '/api/projects') return { ok: true, json: async () => [{ key: 'sample-repo', gitLabProjectPath: 'https://gitlab.example/repo.git' }] };
+    if (url === '/api/projects') {
+      const projects = [{ key: 'sample-repo', gitLabProjectPath: 'https://gitlab.example/repo.git' }];
+      return { ok: true, json: async () => projects, text: async () => JSON.stringify(projects) };
+    }
     assert.equal(url, '/api/task-analysis');
     payload = JSON.parse(options.body);
-    return { ok: !fail, json: async () => fail ? { error: 'Jira unavailable' } : {
+    if (plainTextFailure) return { ok: false, status: 500, text: async () => plainTextFailure };
+    const data = failure ? { error: 'Jira unavailable' } : {
       issueKey: 'TASK-1', outputLanguage: 'Persian', text: '<script>untrusted</script>', notices: ['Unreadable screenshot'],
-    } };
+    };
+    return { ok: !failure, text: async () => JSON.stringify(data) };
   },
 });
 (async () => {
@@ -77,9 +83,13 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgen
   assert.equal(get('analysis-notices').children[0].textContent, 'Unreadable screenshot');
   assert([...saved.values()].every(value => !value.includes('private-key')));
   assert.equal(JSON.stringify(catalog), original);
-  fail = true;
+  failure = true;
   await get('task-analysis-form').handlers.submit({ preventDefault() {} });
   assert.equal(get('analysis-error').textContent, 'Jira unavailable');
+  assert.equal(get('analysis-submit').disabled, false);
+  plainTextFailure = 'System.ClientModel.ClientResultException: The model provider rejected the request';
+  await get('task-analysis-form').handlers.submit({ preventDefault() {} });
+  assert.equal(get('analysis-error').textContent, plainTextFailure);
   assert.equal(get('analysis-submit').disabled, false);
   console.log('Task Analysis UI tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

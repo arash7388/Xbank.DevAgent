@@ -727,7 +727,7 @@ const providerCatalog = {
     name: 'AIFA', url: 'https://aifa.example.com/v1',
     toolCalling: true, vision: false, thinking: true,
     // Provisional metadata; confirm the service limits and tool support with its owner.
-    maxInputTokens: 8192, maxOutputTokens: 2048,
+    maxInputTokens: 81920, maxOutputTokens: 20480,
     reasoningEffort: 'low', supportsReasoningEffort: ['low', 'medium', 'high', 'xhigh', 'max'],
     models: [['developer-model', 'developer-model']],
     defaultPricing: { 'developer-model': { input: 0, cachedInput: 0, output: 0 } },
@@ -739,8 +739,9 @@ const providerCatalog = {
     reasoningEffort: 'low', supportsReasoningEffort: ['low', 'high', 'max'],
     models: [
       ['gpt-5.4-mini', 'Gpt5.4-Mini'],
-      ['gpt-5.6-sol', 'Gpt-5.6-Sol'],
-      ['gpt-5.6-terra', 'Gpt-5.6.Terra'],
+      ['gpt-6.1-sol', 'Gpt-6.1-Sol'],
+      ['gpt-6.1-terra', 'Gpt-6.1.Terra'],
+      ['gpt-6.1-luna', 'Gpt-6.1.luna'],
     ],
   },
   deepseek: {

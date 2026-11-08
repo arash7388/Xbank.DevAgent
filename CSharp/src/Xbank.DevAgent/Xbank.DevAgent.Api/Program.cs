@@ -4,6 +4,8 @@ using Xbank.DevAgent.Core;
 using Xbank.DevAgent.Talk;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+// Providers:AIFA:Endpoint can come from user secrets or appsettings; AIFA_ENDPOINT still wins at runtime.
+AifaRequestContext.ConfigureEndpoint(builder.Configuration["Providers:AIFA:Endpoint"]);
 string profileDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Xbank.DevAgent");
 DeveloperSettingsStore developerSettings = new(Path.Combine(profileDirectory, "settings.protected"),
     DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(profileDirectory, "keys")), protection =>
@@ -94,6 +96,24 @@ app.Use(async (context, next) =>
     {
         await WriteErrorAsync(context, StatusCodes.Status503ServiceUnavailable,
             $"The configured remote service could not be reached: {exception.Message}");
+    }
+    catch (System.ClientModel.ClientResultException exception)
+    {
+        string detail = exception.Message.ReplaceLineEndings(" ").Trim();
+        context.RequestServices.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("ModelProvider")
+            .LogWarning(exception, "Model provider request failed with status {Status}.", exception.Status);
+        await WriteErrorAsync(context, StatusCodes.Status502BadGateway,
+            $"The model provider rejected the request: {(detail.Length > 800 ? detail[..800] : detail)}");
+    }
+    catch (Exception exception)
+    {
+        // Always answer with JSON so browser clients never receive an HTML or plain-text error page.
+        context.RequestServices.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("UnhandledRequest")
+            .LogError(exception, "Unhandled exception for {Method} {Path}.", context.Request.Method, context.Request.Path);
+        await WriteErrorAsync(context, StatusCodes.Status500InternalServerError,
+            "The server could not complete the request. Check the API console for details.");
     }
 });
 

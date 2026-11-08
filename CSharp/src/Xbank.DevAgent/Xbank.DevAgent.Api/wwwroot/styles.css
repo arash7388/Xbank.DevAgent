@@ -1159,7 +1159,6 @@ html[data-run-experience="simple"] [data-advanced-only] { display: none !importa
 #developer-settings-dialog input::placeholder { color: #758096; opacity: 1; }
 #developer-settings-dialog input:focus, #developer-settings-dialog select:focus { border-color: var(--settings-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--settings-accent) 14%, transparent); }
 #developer-settings-dialog .settings-field-hint { margin-top: 5px; color: #758096; font-size: 11px; }
-.settings-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 #developer-settings-dialog .settings-check { display: flex; align-items: center; gap: 9px; width: fit-content; min-height: 32px; margin: 12px 0 0; color: #65718a; font-weight: 500; cursor: pointer; }
 #developer-settings-dialog input[type="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; min-height: 16px; padding: 0; margin: 0; accent-color: var(--settings-accent); box-shadow: none; cursor: pointer; }
 #developer-settings-dialog .settings-check:has(input:checked) { color: #a73355; }
@@ -1198,5 +1197,5 @@ html[data-run-experience="simple"] [data-advanced-only] { display: none !importa
 }
 @media (max-width: 460px) {
   .settings-header-icon, .settings-section-tag { display: none; }
-  #developer-settings-dialog .settings-repository, .settings-field-grid { grid-template-columns: minmax(0, 1fr); }
+  #developer-settings-dialog .settings-repository { grid-template-columns: minmax(0, 1fr); }
 }
