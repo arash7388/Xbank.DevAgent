@@ -150,10 +150,6 @@ function initializeSetupSteps() {
 
   const jiraConnection = document.createElement('fieldset');
   jiraConnection.innerHTML = '<legend>Jira connection</legend><p id="jira-server-settings" class="field-guide">Loading server Jira settings…</p>';
-  const jiraConnectionRow = document.createElement('div');
-  jiraConnectionRow.className = 'jira-connection-row';
-  jiraConnectionRow.append(document.querySelector('#jira-check-connection'), document.querySelector('#jira-connection-status'));
-  jiraConnection.append(jiraConnectionRow);
   connectionSettings.append(jiraConnection);
 
   const jiraSetup = document.querySelector('#jira-panel');
@@ -215,6 +211,7 @@ function initializeSetupSteps() {
     setSetupStep(previous);
   });
   document.querySelector('#setup-next').addEventListener('click', () => {
+    syncRequiredProviderKeys();
     if (currentSetupStep === 'request') { form.requestSubmit(); return; }
     if (currentSetupStep === 'jira' && !validateChangeRequestSource()) return;
     const panel = document.querySelector(`[data-setup-step="${currentSetupStep}"]`);
@@ -342,13 +339,7 @@ function syncRunModeCopy(review) {
     ? 'Optionally add review scope, requirements, or feedback to address for the selected MR.'
     : 'Describe the change to implement for the selected Jira task, including expected behavior and tests.';
 }
-document.querySelector('#use-saved-gitlab-token').addEventListener('change', () => {
-  syncSavedGitLabToken();
-  document.querySelector('[name="includeResolvedDiscussions"]').disabled = !['feedback', 'combined'].includes(
-    document.querySelector('input[name="mrReviewMode"]:checked')?.value || 'combined') || sourceControl !== 'gitlab';
-  loadRepositoryBranches();
-});
-document.querySelectorAll('#github-repository, #gitlab-repository, #github-token, #gitlab-token')
+document.querySelectorAll('#github-repository, #gitlab-repository, #github-token')
   .forEach(input => input.addEventListener('change', loadRepositoryBranches));
 document.querySelector('#refresh-branches').addEventListener('click', loadRepositoryBranches);
 workflowSteps.forEach(button => {
@@ -366,6 +357,7 @@ function showSetupStepForControl(control) {
 
 function prepareRunReview() {
   clearError();
+  syncRequiredProviderKeys();
   if (sourceControlInput.value === 'gitlab' && !gitLabRepositoryInput.value) {
     setSetupStep('connection');
     showError('Select a configured GitLab project before continuing.');
@@ -554,22 +546,15 @@ function setRepositorySource(sourceControl) {
       if (control.type === 'url') control.required = active;
     });
   });
-  syncSavedGitLabToken();
   loadRepositoryBranches();
-}
-
-function syncSavedGitLabToken() {
-  const saved = document.querySelector('#use-saved-gitlab-token');
-  document.querySelector('#gitlab-token').disabled = sourceControlInput.value !== 'gitlab' || saved.checked;
 }
 
 function readRepositoryConnection() {
   const sourceControl = sourceControlInput.value;
-  const useSaved = sourceControl === 'gitlab' && document.querySelector('#use-saved-gitlab-token').checked;
   return {
     sourceControl,
     repositoryUrl: document.querySelector(`#${sourceControl}-repository`).value.trim(),
-    accessToken: useSaved ? null : document.querySelector(`#${sourceControl}-token`).value.trim() || null,
+    accessToken: sourceControl === 'gitlab' ? null : document.querySelector('#github-token').value.trim() || null,
   };
 }
 
@@ -1126,9 +1111,6 @@ async function loadDeepSeekPricing() {
 async function loadConfiguredProviders() {
   const configured = await api('/api/providers/configured');
   if (configured.aifaEndpoint) providerCatalog.aifa.url = configured.aifaEndpoint;
-  document.querySelector('#saved-gitlab-token-option').hidden = !configured.gitlabToken;
-  document.querySelector('#use-saved-gitlab-token').checked = !!configured.gitlabToken;
-  syncSavedGitLabToken();
   Object.entries(configured).forEach(([providerId, isConfigured]) => {
     if (!isConfigured || !providerKeys[providerId]) return;
     configuredProviderKeys.add(providerId);

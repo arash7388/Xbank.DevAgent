@@ -5,7 +5,7 @@
   const advanced = element => element.setAttribute('data-advanced-only', '');
   document.querySelectorAll([
     '#autonomy-settings', '#workflow-retry-settings', '#build-verification-settings',
-    '.llm-pricing-settings', '.jira-connection-row', '.jira-additional-actions',
+    '.llm-pricing-settings', '.jira-additional-actions',
     '#task-complexity', 'label[for="task-complexity"]', '#task-complexity-label',
     '#complexity-stops', '#task-complexity-description', '#agent-turn-limits .autonomy-scale',
   ].join(', ')).forEach(advanced);

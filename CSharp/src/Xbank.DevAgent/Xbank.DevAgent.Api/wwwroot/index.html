@@ -41,7 +41,6 @@
           <h2 id="jira-title">Choose your change request</h2>
           <p>Select a Jira task with your desired filters, or type a change manually.</p>
         </div>
-        <button id="jira-check-connection" class="secondary" type="button">Test connection</button>
       </div>
       <div class="change-source-choice" role="group" aria-label="Change request source">
         <button type="button" class="jira-search-tab active" data-change-source="jira" aria-pressed="true"><span class="change-choice-icon" aria-hidden="true">J</span><span><strong>Select a Jira task</strong><small>Search your backlog and bring task details into the workflow.</small></span></button>
@@ -56,7 +55,6 @@
       </section>
       <div id="change-source-error" class="form-error" role="alert" hidden></div>
       <div class="jira-content" id="jira-change-panel">
-        <span id="jira-connection-status" class="jira-connection-status" role="status" aria-live="polite">Connection not checked.</span>
         <div id="jira-selection" class="jira-selection" hidden>
           <div><span class="jira-eyebrow">Selected for this workflow</span><p id="jira-selected-task" role="status" aria-live="polite">No Jira task selected.</p></div>
           <button id="jira-clear-selection" class="secondary" type="button">Clear selection</button>
@@ -347,16 +345,6 @@
               <p id="project-status" class="field-guide" role="status">Loading configured projects…</p>
             </div>
             <input id="gitlab-repository" name="gitlabRepository" type="hidden">
-              <div>
-                <label for="gitlab-token">GitLab access token</label>
-                <div class="gitlab-token-row">
-                  <input id="gitlab-token" name="gitlabToken" type="password"
-                       autocomplete="off" placeholder="Uses the server-local default when blank">
-                  <label id="saved-gitlab-token-option" class="check-row" hidden>
-                    <input id="use-saved-gitlab-token" type="checkbox">
-                    Use saved GitLab token
-                  </label>
-                </div>
               </div>
             <p class="field-guide">Manage repositories, paths, and saved credentials in Settings.</p>
           </section>
@@ -452,6 +440,8 @@
             <div>
               <label for="aifa-key">AIFA</label>
               <input id="aifa-key" data-provider-key="aifa" type="password" autocomplete="off" placeholder="AIFA bearer token">
+              <label class="check-row" for="remember-aifa-token"><input id="remember-aifa-token" type="checkbox" aria-describedby="aifa-token-storage-status"><span>Remember AIFA token on this browser</span></label>
+              <p id="aifa-token-storage-status" class="field-guide" role="status">When selected, stores the token locally for future runs. Uncheck to remove the saved copy.</p>
             </div>
             <div>
               <label for="claude-key">Claude</label>
@@ -841,6 +831,11 @@
         <label for="settings-jira-user">Username (required for Basic)</label><input id="settings-jira-user" autocomplete="username">
         <label for="settings-jira-token">Personal access token / password</label><input id="settings-jira-token" type="password" autocomplete="new-password">
         <label class="settings-check"><input id="settings-jira-clear" type="checkbox"> Clear Jira credential</label>
+        <p class="settings-field-hint">Save settings before testing updated Jira credentials.</p>
+        <div class="jira-connection-row">
+          <button id="jira-check-connection" class="secondary" type="button">Test connection</button>
+          <span id="jira-connection-status" class="jira-connection-status" role="status" aria-live="polite">Connection not checked.</span>
+        </div>
       </fieldset>
       </div>
       <fieldset class="settings-card settings-repos"><legend><span class="settings-section-icon" aria-hidden="true">↗</span> Repositories <span class="settings-section-tag">CODEBASES</span></legend>
@@ -865,5 +860,6 @@
   <script src="/app.js?v=20261103-1" defer></script>
   <script src="/task-analysis.js?v=20261107-1" defer></script>
   <script src="/run-settings.js?v=20261028-1" defer></script>
+  <script src="/aifa-token-storage.js?v=20261109-1" defer></script>
 </body>
 </html>

@@ -5,8 +5,6 @@ const vm = require('vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/wwwroot/app.js'), 'utf8');
 const controls = {
-  '#use-saved-gitlab-token': { checked: true },
-  '#gitlab-token': { value: 'stale-browser-value', disabled: false },
   '#github-token': { value: ' github-token ' },
   '#gitlab-repository': { value: ' https://gitlab.example/group/repo.git ' },
   '#github-repository': { value: 'https://github.com/owner/repo.git' },
@@ -34,27 +32,16 @@ const context = {
   },
 };
 vm.createContext(context);
-vm.runInContext(source.slice(source.indexOf('function syncSavedGitLabToken()'),
+vm.runInContext(source.slice(source.indexOf('function readRepositoryConnection()'),
   source.indexOf('async function loadRepositoryBranches()')), context);
 
-context.syncSavedGitLabToken();
-assert.equal(controls['#gitlab-token'].disabled, true);
 assert.equal(context.readRepositoryConnection().accessToken, null);
 assert.equal(context.readRepositoryConnection().repositoryUrl, 'https://gitlab.example/group/repo.git');
 
-controls['#use-saved-gitlab-token'].checked = false;
-context.syncSavedGitLabToken();
-assert.equal(controls['#gitlab-token'].disabled, false);
-assert.equal(context.readRepositoryConnection().accessToken, 'stale-browser-value');
-controls['#gitlab-token'].value = '  ';
-assert.equal(context.readRepositoryConnection().accessToken, null);
-
 context.sourceControlInput.value = 'github';
-controls['#use-saved-gitlab-token'].checked = true;
 assert.equal(context.readRepositoryConnection().accessToken, 'github-token');
 
 context.sourceControlInput.value = 'gitlab';
-controls['#gitlab-token'].value = 'stale-browser-value';
 const submitStart = source.indexOf("form.addEventListener('submit'");
 vm.runInContext(source.slice(submitStart, source.indexOf('\nfunction readAgentConfigurations(', submitStart)), context);
 

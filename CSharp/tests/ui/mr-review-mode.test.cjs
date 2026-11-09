@@ -30,7 +30,7 @@ const context = {
 };
 vm.createContext(context);
 const start = source.indexOf('function syncMergeRequestMode()');
-const end = source.indexOf("document.querySelector('#use-saved-gitlab-token')", start);
+const end = source.indexOf("document.querySelectorAll('#github-repository, #gitlab-repository, #github-token')", start);
 vm.runInContext(source.slice(start, end), context);
 nodes['input[name="runMode"]:checked'].value = 'gitlab_review';
 context.syncMergeRequestMode();

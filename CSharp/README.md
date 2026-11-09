@@ -199,6 +199,12 @@ reasoning-effort selector. All agents default to DeepSeek `deepseek-flash` with 
 but can be configured individually. Provider credentials are entered once and reused only by agents
 assigned to that provider. Endpoints and capability metadata remain internal.
 
+Select **Remember AIFA token on this browser** beside the AIFA key to save it in browser local
+storage and restore it on future visits, including after a browser restart. Saving is off by default.
+Edits update the saved token while selected; clearing the field or unchecking removes the saved copy.
+Unchecking keeps the current input available for the run. The saved token is accessible to scripts
+on this origin and anyone using the same browser profile.
+
 Before starting a run, **Review & confirm** shows the full change request, repository and service
 settings, enabled and disabled agents, model selections, reasoning, guidance, token pricing, and
 selected reference and Jira attachments. Credentials appear only as configured or missing.
@@ -432,7 +438,8 @@ saved token metadata retain their existing logs; their missing usage cannot be r
 - Git hooks and Git LFS smudge execution are disabled for clone, commit, and push operations.
 - Changes remain in an isolated clone until approval.
 - Approval creates a new branch and commit. Push is optional and never targets the base branch.
-- Tokens are held only in the server's in-memory session. They are not returned by the API.
+- Tokens are held in the server's in-memory session and are not returned by the API. AIFA tokens
+  are also saved in browser local storage when **Remember AIFA token on this browser** is selected.
 - Supporting documents are processed in memory for plain text search, with optional indexing into a
   per-run Qdrant collection for semantic search. References are deleted when the workflow ends
   (or after the configured short expiry). They are never
