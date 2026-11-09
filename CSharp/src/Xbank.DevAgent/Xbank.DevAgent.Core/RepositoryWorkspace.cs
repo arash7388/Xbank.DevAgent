@@ -767,6 +767,12 @@ public sealed partial class RepositoryWorkspace
         foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
+            if (startInfo.ArgumentList.Count == 1 && argument == "clone")
+            {
+                // Persist before the initial checkout so subsequent Git operations also support long paths.
+                startInfo.ArgumentList.Add("--config");
+                startInfo.ArgumentList.Add("core.longpaths=true");
+            }
         }
 
         string emptyHooksPath = Path.Combine(Path.GetTempPath(), "maf-empty-git-hooks");
@@ -794,6 +800,10 @@ public sealed partial class RepositoryWorkspace
             startInfo.Environment[$"GIT_CONFIG_VALUE_{configIndex}"] = $"Authorization: Basic {credentials}";
             configIndex++;
         }
+
+        startInfo.Environment[$"GIT_CONFIG_KEY_{configIndex}"] = "core.longpaths";
+        startInfo.Environment[$"GIT_CONFIG_VALUE_{configIndex}"] = "true";
+        configIndex++;
 
         startInfo.Environment["GIT_CONFIG_COUNT"] = configIndex.ToString(
             System.Globalization.CultureInfo.InvariantCulture);
