@@ -49,6 +49,15 @@ internal sealed class AiRequestRetryHandler : DelegatingHandler
                 $"The model provider at {request.RequestUri?.Host} rejected the API key or token (HTTP 401). " +
                 "Update the credential for this provider in the UI or server configuration, verify that it is active and matches the endpoint, then start a new run.");
         }
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            response.Dispose();
+            throw new ConfigurationException(
+                $"The model provider at {request.RequestUri?.Host} returned HTTP 404 (Not Found). " +
+                "Check the failing agent's model endpoint and model ID in the UI or server configuration. " +
+                "Verify the provider's API base URL and that the model is available to your account, then start a new run. " +
+                "This response came from the model provider, not the Jira API.");
+        }
         return response;
     }
 

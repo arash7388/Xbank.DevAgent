@@ -37,7 +37,6 @@ public sealed class AiRequestRetryHandlerTests
     [InlineData(200)]
     [InlineData(400)]
     [InlineData(403)]
-    [InlineData(404)]
     [InlineData(422)]
     public async Task SuccessAndPermanentErrorsAreNotRetried(int status)
     {
@@ -80,6 +79,56 @@ public sealed class AiRequestRetryHandlerTests
             await foreach (var update in client.GetStreamingResponseAsync(
                 [new Microsoft.Extensions.AI.ChatMessage(Microsoft.Extensions.AI.ChatRole.User, "hello")])) { }
         });
+        Assert.Equal(1, server.Calls);
+    }
+
+    [Fact]
+    public async Task MissingModelEndpointIsActionableWithoutRetryingOrLeakingResponse()
+    {
+        TrackedContent body = new();
+        RecordingHandler server = new((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.NotFound) { Content = body }));
+        using HttpClient client = new(new AiRequestRetryHandler(server));
+
+        ConfigurationException error = await Assert.ThrowsAsync<ConfigurationException>(
+            () => client.GetAsync("https://user:password@provider.test/private-path?token=secret"));
+
+        Assert.Contains("provider.test", error.Message);
+        Assert.Contains("HTTP 404", error.Message);
+        Assert.Contains("model endpoint and model ID", error.Message);
+        Assert.Contains("not the Jira API", error.Message);
+        Assert.DoesNotContain("secret", error.Message);
+        Assert.DoesNotContain("password", error.Message);
+        Assert.DoesNotContain("private-path", error.Message);
+        Assert.DoesNotContain("Error response", error.Message);
+        Assert.Equal(1, server.Calls);
+        Assert.True(body.Disposed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ModelClientPropagatesNotFoundAsConfigurationError(bool streaming)
+    {
+        RecordingHandler server = new((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using Microsoft.Extensions.AI.IChatClient client = ModelChatClientFactory.Create(
+            new WorkflowSettings("https://provider.test/v1", "test-model", "test-token"), server);
+
+        ConfigurationException error = await Assert.ThrowsAsync<ConfigurationException>(async () =>
+        {
+            Microsoft.Extensions.AI.ChatMessage[] messages =
+                [new(Microsoft.Extensions.AI.ChatRole.User, "hello")];
+            if (streaming)
+            {
+                await foreach (var update in client.GetStreamingResponseAsync(messages)) { }
+            }
+            else
+            {
+                await client.GetResponseAsync(messages);
+            }
+        });
+
+        Assert.Contains("HTTP 404", error.Message);
         Assert.Equal(1, server.Calls);
     }
 
