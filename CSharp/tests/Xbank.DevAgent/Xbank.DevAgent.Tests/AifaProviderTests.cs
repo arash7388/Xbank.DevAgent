@@ -66,6 +66,7 @@ public sealed class AifaProviderTests
         ChatResponse response = await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")]);
 
         Assert.Equal($"{AifaRequestContext.Endpoint}/chat/completions", server.Url);
+        Assert.Equal("/v1/chat/completions", new Uri(server.Url!).AbsolutePath);
         Assert.Equal("Bearer test-token", server.Authorization);
         Assert.Equal("application/json", server.ContentType);
         Assert.Equal("beny", server.Headers["x-request-id"]);
