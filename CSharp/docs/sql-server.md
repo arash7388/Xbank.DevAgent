@@ -2,6 +2,9 @@
 
 The C# API manages an Alyio MCP MSSQL process over stdio for each workbench operation and each enabled workflow run. A run holds its connection settings until it finishes or is cancelled. Changes apply to new operations and runs.
 
+SQL Server MCP is disabled by default (`SqlServer:Enabled` is `false` in `appsettings.json`).
+It starts only when access is explicitly enabled in Settings or the SQL Server workbench.
+
 ## Setup
 
 Install .NET 10, then run from the CSharp directory:
