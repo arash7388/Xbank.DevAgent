@@ -19,6 +19,9 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('const providerCatalog ='), source.indexOf('const agentCatalog =')), context);
+const appsettings = JSON.parse(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgent/Xbank.DevAgent.Api/appsettings.json'), 'utf8'));
+context.sharedAifaEndpoint = appsettings.Providers.AIFA.Endpoint;
+vm.runInContext('providerCatalog.aifa.url = sharedAifaEndpoint', context);
 vm.runInContext(source.slice(source.indexOf('function isAgentCardEnabled('), source.indexOf('function syncAgentCardEnabled(')), context);
 vm.runInContext(source.slice(source.indexOf('function readAgentConfigurations('), source.indexOf("cancelButton.addEventListener(")), context);
 
@@ -35,7 +38,7 @@ for (const invalid of ['', '0', '-1', '1.5', '2147483648']) {
 }
 fields['max-agent-turns'].value = '60';
 assert.equal(configured.provider.name, 'AIFA');
-assert.equal(configured.provider.url, 'https://aifa-chatbot.dev.dotin.ir');
+assert.equal(configured.provider.url, appsettings.Providers.AIFA.Endpoint);
 assert.equal(configured.provider.id, 'developer-model');
 assert.equal(configured.provider.thinking, true);
 assert.equal(configured.provider.reasoningEffort, 'low');

@@ -5,11 +5,12 @@ using Microsoft.Extensions.Configuration;
 namespace Xbank.DevAgent.Api;
 
 public sealed record DeveloperRepository(string Key, string RepoPath, string GitLabProjectPath,
-    string? Token = null, bool HasToken = false);
+    string? Token = null, bool HasToken = false, string Database = "", string DefaultBaseBranch = "");
 public sealed record DeveloperSettings(string GitLabHost, string JiraBaseUrl, string JiraUser,
     string JiraAuthMode, DeveloperRepository[] Repositories,
     string? GitLabToken = null, string? JiraToken = null,
-    bool HasGitLabToken = false, bool HasJiraToken = false);
+    bool HasGitLabToken = false, bool HasJiraToken = false,
+    SqlServerSettings? SqlServer = null);
 
 // A local installation has one OS user, rather than authenticated web accounts.
 // The encrypted profile is deliberately kept outside the checkout.
@@ -30,15 +31,23 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
         configuration.GetSection(configuration["DeveloperSettings:Saved"] == "true"
             ? "DeveloperRepositories" : "Projects").GetChildren();
 
-    public static string? GitLabToken(IConfiguration configuration, string repositoryUrl)
+    private static IConfigurationSection? Repository(IConfiguration configuration, string repositoryUrl)
     {
         string Normalize(string value)
         {
             string normalized = value.Trim().TrimEnd('/');
             return normalized.EndsWith(".git", StringComparison.OrdinalIgnoreCase) ? normalized[..^4] : normalized;
         }
-        IConfigurationSection? project = Projects(configuration).FirstOrDefault(p =>
+        return Projects(configuration).FirstOrDefault(p =>
             string.Equals(Normalize(p["GitLabProjectPath"] ?? ""), Normalize(repositoryUrl), StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static string? RepositoryDatabase(IConfiguration configuration, string repositoryUrl) =>
+        Repository(configuration, repositoryUrl)?["Database"]?.Trim();
+
+    public static string? GitLabToken(IConfiguration configuration, string repositoryUrl)
+    {
+        IConfigurationSection? project = Repository(configuration, repositoryUrl);
         return string.IsNullOrWhiteSpace(project?["Token"]) ? configuration["GitLab:Token"] : project["Token"];
     }
 
@@ -47,9 +56,11 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
         configuration["Jira:User"] ?? "",
         configuration["Jira:AuthMode"] ?? "Bearer",
         Projects(configuration).Select(p => new DeveloperRepository(p["Key"] ?? p.Key,
-            p["RepoPath"] ?? "", p["GitLabProjectPath"] ?? "", HasToken: !string.IsNullOrWhiteSpace(p["Token"]))).ToArray(),
+            p["RepoPath"] ?? "", p["GitLabProjectPath"] ?? "", HasToken: !string.IsNullOrWhiteSpace(p["Token"]),
+            Database: p["Database"] ?? "", DefaultBaseBranch: p["DefaultBaseBranch"] ?? "")).ToArray(),
         HasGitLabToken: !string.IsNullOrWhiteSpace(configuration["GitLab:Token"]),
-        HasJiraToken: !string.IsNullOrWhiteSpace(configuration["Jira:Password"]));
+        HasJiraToken: !string.IsNullOrWhiteSpace(configuration["Jira:Password"]),
+        SqlServer: SqlServerSettings.Read(configuration));
 
     public void Save(DeveloperSettings settings, IConfiguration configuration)
     {
@@ -70,6 +81,10 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
         {
             ArgumentNullException.ThrowIfNull(repository);
             ArgumentNullException.ThrowIfNull(repository.RepoPath);
+            if (repository.DefaultBaseBranch is null || repository.DefaultBaseBranch.Any(char.IsControl))
+                throw new ArgumentException("Default base branch must not contain control characters.");
+            if (repository.Database is null || repository.Database.Trim().Length > 128 || repository.Database.Any(char.IsControl))
+                throw new ArgumentException("Repository database must be at most 128 characters without control characters.");
             if (string.IsNullOrWhiteSpace(repository.Key) || !keys.Add(repository.Key.Trim()))
                 throw new ArgumentException("Repository names must be nonempty and unique.");
             ValidateUrl(repository.GitLabProjectPath, "Repository URL");
@@ -78,6 +93,10 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
         }
         lock (_gate)
         {
+            SqlServerSettings sqlServer = settings.SqlServer ?? SqlServerSettings.Read(configuration);
+            string connectionString = sqlServer.ConnectionString ?? configuration["SqlServer:ConnectionString"] ?? "";
+            string password = sqlServer.Password ?? configuration["SqlServer:Password"] ?? "";
+            SqlServerSettings.Validate(sqlServer, connectionString, password);
             Dictionary<string, string?> next = new(StringComparer.OrdinalIgnoreCase)
             {
                 ["DeveloperSettings:Saved"] = "true",
@@ -87,6 +106,17 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
                 ["Jira:User"] = settings.JiraUser.Trim(),
                 ["Jira:AuthMode"] = settings.JiraAuthMode,
                 ["Jira:Password"] = settings.JiraToken?.Trim() ?? configuration["Jira:Password"] ?? "",
+                ["SqlServer:Enabled"] = sqlServer.Enabled.ToString(),
+                ["SqlServer:ConnectionString"] = connectionString,
+                ["SqlServer:Username"] = sqlServer.Username.Trim(),
+                ["SqlServer:Password"] = password,
+                ["SqlServer:Server"] = sqlServer.Server.Trim(),
+                ["SqlServer:Database"] = sqlServer.Database.Trim(),
+                ["SqlServer:UseWindowsAuthentication"] = sqlServer.UseWindowsAuthentication.ToString(),
+                ["SqlServer:UseConnectionString"] = sqlServer.UseConnectionString.ToString(),
+                ["SqlServer:TrustServerCertificate"] = sqlServer.TrustServerCertificate.ToString(),
+                ["SqlServer:MaxRows"] = sqlServer.MaxRows.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["SqlServer:CommandTimeoutSeconds"] = sqlServer.CommandTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
             };
             int index = 0;
             foreach (DeveloperRepository repository in settings.Repositories)
@@ -95,6 +125,8 @@ public sealed class DeveloperSettingsStore(string path, IDataProtector protector
                 next[prefix + "Key"] = repository.Key.Trim();
                 next[prefix + "RepoPath"] = repository.RepoPath.Trim();
                 next[prefix + "GitLabProjectPath"] = repository.GitLabProjectPath.Trim();
+                next[prefix + "Database"] = repository.Database.Trim();
+                next[prefix + "DefaultBaseBranch"] = repository.DefaultBaseBranch.Trim();
                 IConfigurationSection? previous = Projects(configuration).FirstOrDefault(p =>
                     string.Equals(p["Key"] ?? p.Key, repository.Key.Trim(), StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(p["GitLabProjectPath"], repository.GitLabProjectPath.Trim(), StringComparison.OrdinalIgnoreCase));

@@ -130,9 +130,9 @@ public static class AgentToolCatalog
             name => name switch
             {
                 AgentNames.Jira => [GetJiraIssueDetails, GetJiraIssueComments, ReportJiraProblem, AskJiraClarification, SearchJiraIssues, GetJiraIssueTitle, ListJiraAttachments, ReadJiraAttachment, .. ReadTools],
-                AgentNames.Developer => [.. DeveloperTools, .. CodeGraphTools, ReportJiraScopeChange],
+                AgentNames.Developer => [.. DeveloperTools, .. CodeGraphTools, .. SqlServerToolFactory.Definitions, ReportJiraScopeChange],
                 AgentNames.Planner or AgentNames.Reviewer or AgentNames.Security =>
-                    [.. ReadTools, .. CodeGraphTools],
+                    [.. ReadTools, .. CodeGraphTools, .. SqlServerToolFactory.Definitions],
                 _ => ReadTools,
             });
 }

@@ -9,8 +9,8 @@ output, and XML metadata inside the presentation and bundled NuGet packages.
 - Replaced internal GitLab/Jira connection defaults with public GitLab and an unset Jira URL.
   The repository list starts empty; developers configure their own repositories in Settings.
 - Removed the personal GitHub repository default and internal Cognia endpoint from the UI.
-- Made the AIFA base URL configurable with `AIFA_ENDPOINT` for both API and CLI; the built-in
-  URL is an example placeholder. Browser workflows obtain the configured endpoint from the API.
+- The shared AIFA base URL is stored in the API's committed `appsettings.json` and bundled with
+  both API and CLI. Browser workflows obtain the endpoint from the API; credentials remain per user.
 - Branch generation accepts any Jira project key. Bare task numbers use `TASK` as their prefix.
 - Replaced organization hostnames and personal repository names in test fixtures with examples.
 - Removed 52 generated files from Git tracking under `CSharp/.artifacts/`, including copied

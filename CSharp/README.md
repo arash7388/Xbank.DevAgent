@@ -2,6 +2,8 @@
 
 A local repository change workbench built on Microsoft Agent Framework.
 
+SQL Server schema, data, migration history and query-plan inspection are available through Alyio MCP MSSQL. See [SQL Server setup and usage](docs/sql-server.md) for installation, encrypted settings and agent access.
+
 Open `Xbank.DevAgent.slnx` to work on the application. Build with
 `dotnet build Xbank.DevAgent.slnx` and start the browser workbench with
 `dotnet run --project src/Xbank.DevAgent/Xbank.DevAgent.Api` from this directory.
@@ -36,6 +38,18 @@ shared app settings; configure them through Settings or local user secrets inste
 Use **Task Analysis** in the top bar to explain a Jira task without starting a repository workflow.
 Enter a full issue key and select **Analyse task**, **Summarize task**, or both. Choose English or
 Persian output and optionally add an illustrative example. Persian results use right-to-left layout.
+Check **Include Related Codebase** to read the issue's `xbank.*` Jira components and automatically
+fetch matching GitLab repositories. Each component must match a repository name in Settings or the
+project name at the end of its configured GitLab URL, ignoring case. All matching components are
+included. A fresh, temporary checkout of each repository's advertised default branch is fetched using
+the repository-specific PAT, falling back to the shared GitLab PAT. The configured GitLab host must
+match the repository URL. No local checkout is required, and local uncommitted changes are excluded.
+The model uses read-only tools to inspect source and cites repository names, files and line numbers.
+Missing or ambiguous mappings, missing PATs, fetch failures and uninspected repositories are reported
+as evidence limitations; the Jira explanation still runs. Temporary checkouts are removed when the
+analysis finishes, fails or is cancelled. PATs are not included in the model context or browser request.
+
+With **Include Related Codebase** unchecked, the existing manual repository selection remains available.
 Select a configured repository to validate the requirement against its current local checkout
 (`Projects:<project>:RepoPath`), including uncommitted changes. The model can list, search, and read
 source files through read-only tools, with file and line citations. Checkout commit, branch, and local
@@ -273,7 +287,7 @@ with build diagnostics, without starting another repair cycle. Uncheck it to ski
 notification records that compilation was not verified. The choice appears in run confirmation and
 saved configuration. API clients can set `skipBuildVerification: true` to skip the build.
 
-Workflow comments focus on critical points, with at most three short bullets. The final posted text is capped at 1,000 characters, including signature and headings; excess section content is truncated, preserving both sections. Every workflow comment passes through `JiraCommentHandler`, which adds `[MAF-AI:v1]` and two sections:
+Workflow comments focus on critical points, with at most three short bullets. The final posted text is capped at 1,000 characters, including signature and headings; excess section content is truncated, preserving both sections. Every workflow comment passes through `JiraCommentHandler`, which adds `Developer Agent Points` and two sections:
 **محصول: مسائل و نیازمندی‌ها** for Product issues, requirements, acceptance criteria, and decisions;
 **ملاحظات فنی** for technical considerations and validation blockers. Reporting instructions limit the
 combined content to three short bullets and 800 characters, keeping detailed evidence in the run log.
@@ -412,6 +426,14 @@ Every outbound model call is also saved in `ai_calls` before contacting the prov
 the agent/model/endpoint, request and response JSON, provider response ID and finish reason, usage,
 input/cache-hit/cache-miss/output/reasoning/total token columns, configured rates, estimated cost,
 streaming mode, status, timing, and errors. Partial streamed usage survives cancellation or failure.
+
+AIFA requests also print a `[AIFA HTTP request; credentials redacted; POSIX shell cURL]` entry to
+the server's standard error before sending. It includes the actual URL, identity headers and full
+JSON payload, including the model ID, for comparing requests between machines. Authentication and
+unknown headers are replaced with `[REDACTED]`; supply your credentials locally to replay the command
+in a POSIX shell such as Git Bash. The payload can contain repository content and task text, so review
+it before sharing logs. Streaming requests are logged too; transport retries reuse the same logged request.
+
 `run_usage` stores cumulative run and agent totals after every call change, including completed,
 failed, cancelled, pending, and missing-usage counts. Provider cache-hit and cache-miss call counts can
 overlap: one call can contain both kinds of input. Unknown cache usage is reported separately.
@@ -651,15 +673,11 @@ A real request must also supply developer and release-manager entries.
 AIFA calls are free: every agent using AIFA reports $0 cost, including calls without token usage.
 Input, cached input, and output rates are fixed at zero; other providers keep their configured pricing.
 
-Select **AIFA** for an agent to use `developer-model` at
-your organization's endpoint. Set `AIFA_ENDPOINT` to its HTTPS base URL (including `/v1`) before
-starting either the API or CLI, or save it once for the API with user secrets:
-
-```powershell
-dotnet user-secrets set "Providers:AIFA:Endpoint" "https://aifa-chatbot.dev.dotin.ir" --project CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api
-```
-
-`AIFA_ENDPOINT` takes precedence when both are set. The bundled `https://aifa-chatbot.dev.dotin.ir` is a placeholder.
+Select **AIFA** for an agent to use `developer-model` at the shared organizational endpoint.
+The API and CLI read `Providers:AIFA:Endpoint` from
+`src/Xbank.DevAgent/Xbank.DevAgent.Api/appsettings.json`, which is committed and bundled with both apps.
+Set its HTTPS API base URL there; include `/v1` only if the service uses that path.
+The endpoint is common to all users. Environment variables and user secrets do not override it.
 Enter the bearer token in **AIFA API key**
 without the `Bearer` prefix, or save it on the server:
 

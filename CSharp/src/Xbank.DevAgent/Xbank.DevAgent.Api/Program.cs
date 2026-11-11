@@ -4,8 +4,8 @@ using Xbank.DevAgent.Core;
 using Xbank.DevAgent.Talk;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-// Providers:AIFA:Endpoint can come from user secrets or appsettings; AIFA_ENDPOINT still wins at runtime.
-AifaRequestContext.ConfigureEndpoint(builder.Configuration["Providers:AIFA:Endpoint"]);
+// The organization endpoint is shared in source control, independently of per-user credentials.
+AifaRequestContext.ConfigureEndpointFromFile(Path.Combine(builder.Environment.ContentRootPath, "appsettings.json"));
 string profileDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Xbank.DevAgent");
 DeveloperSettingsStore developerSettings = new(Path.Combine(profileDirectory, "settings.protected"),
     DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(profileDirectory, "keys")), protection =>
@@ -62,6 +62,7 @@ builder.Services.AddSingleton<CodingRuleStore>(_ => new CodingRuleStore(
 builder.Services.AddHttpClient<RunConnectivityCheck>(client => client.Timeout = TimeSpan.FromSeconds(10))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<CodeGraphService>();
+builder.Services.AddSingleton<SqlServerService>();
 
 WebApplication app = builder.Build();
 
@@ -142,6 +143,27 @@ app.MapPut("/api/settings", (DeveloperSettings request, DeveloperSettingsStore s
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", provider = "openai-compatible" }));
 
+app.MapGet("/api/sql-server", (IConfiguration configuration, HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Ok(SqlServerSettings.Read(configuration));
+});
+app.MapPut("/api/sql-server/enabled", (SqlServerEnableRequest request, DeveloperSettingsStore store, IConfiguration configuration) =>
+{
+    DeveloperSettings settings = store.Read(configuration);
+    store.Save(settings with { SqlServer = settings.SqlServer! with { Enabled = request.Enabled } }, configuration);
+    return Results.NoContent();
+});
+app.MapPost("/api/sql-server/execute", async (SqlServerRequest request, SqlServerService service,
+    HttpContext context, CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    await using SqlServerConnection? connection = await service.OpenAsync(cancellationToken);
+    if (connection is null) return Results.Conflict(new { error = "Enable SQL Server access before connecting." });
+    string result = await connection.ExecuteAsync(request, cancellationToken);
+    return Results.Content(result, "application/json");
+});
+
 app.MapGet("/api/agents/default-prompts", () => Results.Ok(AgentPrompts.Defaults));
 
 app.MapPost("/api/task-analysis", async (TaskAnalysisRequest request, JiraService jira,
@@ -219,7 +241,8 @@ app.MapGet("/api/projects", (IConfiguration configuration) =>
     ProjectRepositoryInfo[] projects = DeveloperSettingsStore.Projects(configuration)
         .Select(project => new ProjectRepositoryInfo(
             project["Key"] ?? project.Key,
-            project["GitLabProjectPath"]))
+            project["GitLabProjectPath"],
+            project["DefaultBaseBranch"] ?? ""))
         .Where(project => !string.IsNullOrWhiteSpace(project.Key))
         .OrderBy(project => project.Key, StringComparer.OrdinalIgnoreCase)
         .ToArray();

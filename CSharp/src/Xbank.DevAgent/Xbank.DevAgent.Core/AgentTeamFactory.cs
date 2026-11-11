@@ -19,12 +19,13 @@ public static class AgentTeamFactory
         string? workflowId = null,
         IJiraIssueSearch? jira = null,
         IWorkflowUserInput? userInput = null,
-        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
+        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null,
+        ISqlServerTools? sqlServer = null)
     {
         var names = settings.IsMergeRequestReview ? AgentNames.ReviewRequired : AgentNames.Required;
         Dictionary<string, IChatClient> clients = names.ToDictionary(name => name, _ => chatClient);
         Dictionary<string, WorkflowSettings> settingsByAgent = names.ToDictionary(name => name, _ => settings);
-        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId, jira, userInput, jiraIntakeCheckpoint);
+        return Create(clients, settingsByAgent, workspace, referenceDocuments, codeGraphTools, codeGraphAudit, toolCallStore, workflowId, jira, userInput, jiraIntakeCheckpoint, sqlServer);
     }
 
     public static AgentTeam Create(
@@ -38,7 +39,8 @@ public static class AgentTeamFactory
         string? workflowId = null,
         IJiraIssueSearch? jira = null,
         IWorkflowUserInput? userInput = null,
-        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
+        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null,
+        ISqlServerTools? sqlServer = null)
     {
         bool review = Get(settingsByAgent, AgentNames.Reviewer).IsMergeRequestReview;
         if (review)
@@ -183,6 +185,9 @@ public static class AgentTeamFactory
             {
                 tools.AddRange(CodeGraphToolFactory.Create(codeGraphTools!, codeGraphAudit!, agentName));
             }
+
+            if (sqlServer is not null && SqlServerToolFactory.IsUsefulFor(agentName))
+                tools.AddRange(SqlServerToolFactory.Create(sqlServer));
 
             return tools.Count == 0 ? null : AuditTools(tools, agentName);
         }

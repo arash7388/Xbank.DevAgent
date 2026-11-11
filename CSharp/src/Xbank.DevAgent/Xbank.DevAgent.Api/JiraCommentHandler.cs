@@ -8,7 +8,12 @@ namespace Xbank.DevAgent.Api;
 public static class JiraCommentHandler
 {
     public const int MaxCommentLength = 1000;
-    public const string Signature = "[MAF-AI:v1]";
+    public const string Signature = "Developer Agent Points";
+    private const string PreviousSignature = "[MAF-AI:v1]";
+
+    private static bool HasSignature(string? text) =>
+        text?.StartsWith(Signature + "\n", StringComparison.Ordinal) is true ||
+        text?.StartsWith(PreviousSignature + "\n", StringComparison.Ordinal) is true;
     public const string ProductHeading = "محصول: مسائل و نیازمندی‌ها";
     public const string TechnicalHeading = "ملاحظات فنی";
     private const string EmptySection = "موردی گزارش نشده است.";
@@ -19,7 +24,7 @@ public static class JiraCommentHandler
         string suffix = string.IsNullOrWhiteSpace(reporterMention) ? "" : "\n\n" + reporterMention;
         if (suffix.Length > 0 && text.EndsWith(suffix, StringComparison.Ordinal))
             text = text[..^suffix.Length];
-        if (text.StartsWith(Signature + "\n", StringComparison.Ordinal) && text.IndexOf("\n\n", StringComparison.Ordinal) is int end && end >= 0)
+        if (HasSignature(text) && text.IndexOf("\n\n", StringComparison.Ordinal) is int end && end >= 0)
             text = text[(end + 2)..];
         (string product, string technical) = Sections(text);
         string sender = scopeChange ? "عامل پیاده‌سازی Xbank.DevAgent — تغییر دامنهٔ محصول" : "عامل Jira در Xbank.DevAgent — بررسی محصول";
@@ -77,9 +82,8 @@ public static class JiraCommentHandler
         foreach (JsonObject comment in comments.OfType<JsonObject>())
         {
             string? body = comment["body"] is JsonValue value && value.TryGetValue<string>(out string? text) ? text : null;
-            bool signed = body?.StartsWith(Signature + "\n", StringComparison.Ordinal) is true ||
-                body?.StartsWith(Signature + "\r\n", StringComparison.Ordinal) is true;
             string? normalized = body?.Replace("\r\n", "\n", StringComparison.Ordinal);
+            bool signed = HasSignature(normalized);
             bool legacy = normalized?.StartsWith("گزارش بررسی آمادگی تسک توسط عامل Jira\n", StringComparison.Ordinal) is true ||
                 normalized?.StartsWith("گزارش تغییرات خارج از شرح تسک Jira\n", StringComparison.Ordinal) is true;
             comment["mafOrigin"] = signed ? "agent" : legacy ? "legacy_agent" : "external";

@@ -16,6 +16,7 @@ public sealed class HandoffWorkflowRunner
     private readonly IWorkflowUserInput? _userInput;
     private readonly ILlmCheckpointStore? _checkpointStore;
     private readonly string? _jiraCacheScope;
+    private readonly ISqlServerTools? _sqlServer;
 
     public HandoffWorkflowRunner(
         WorkflowSettings settings,
@@ -26,7 +27,8 @@ public sealed class HandoffWorkflowRunner
         ILlmCheckpointStore? checkpointStore = null,
         IJiraIssueSearch? jira = null,
         IWorkflowUserInput? userInput = null,
-        string? jiraCacheScope = null)
+        string? jiraCacheScope = null,
+        ISqlServerTools? sqlServer = null)
     {
         _settings = settings;
         _workspace = workspace;
@@ -37,6 +39,7 @@ public sealed class HandoffWorkflowRunner
         _userInput = userInput;
         _checkpointStore = checkpointStore;
         _jiraCacheScope = jiraCacheScope;
+        _sqlServer = sqlServer;
     }
 
     public HandoffWorkflowRunner(
@@ -47,7 +50,8 @@ public sealed class HandoffWorkflowRunner
         ILlmCheckpointStore? checkpointStore = null,
         IJiraIssueSearch? jira = null,
         IWorkflowUserInput? userInput = null,
-        string? jiraCacheScope = null)
+        string? jiraCacheScope = null,
+        ISqlServerTools? sqlServer = null)
     {
         _settingsByAgent = settingsByAgent;
         _workspace = workspace;
@@ -57,6 +61,7 @@ public sealed class HandoffWorkflowRunner
         _userInput = userInput;
         _checkpointStore = checkpointStore;
         _jiraCacheScope = jiraCacheScope;
+        _sqlServer = sqlServer;
     }
 
     public IAsyncEnumerable<RunEvent> RunAsync(
@@ -122,7 +127,8 @@ public sealed class HandoffWorkflowRunner
                 workflowId,
                 _jira,
                 _userInput,
-                CreateJiraIntakeCheckpoint(task, settingsByAgent, workflowId, checkpointMetrics, usageCollector));
+                CreateJiraIntakeCheckpoint(task, settingsByAgent, workflowId, checkpointMetrics, usageCollector),
+                _sqlServer);
         }
         else
         {
@@ -151,7 +157,8 @@ public sealed class HandoffWorkflowRunner
                 workflowId,
                 _jira,
                 _userInput,
-                CreateJiraIntakeCheckpoint(task, settingsByAgent, workflowId, checkpointMetrics, usageCollector));
+                CreateJiraIntakeCheckpoint(task, settingsByAgent, workflowId, checkpointMetrics, usageCollector),
+                _sqlServer);
         }
         string status = "stopped_without_release_approval";
         string? activeAgent = null;

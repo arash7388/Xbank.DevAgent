@@ -1,22 +1,33 @@
+using System.Text.Json;
+
 namespace Xbank.DevAgent.Core;
 
 public sealed record AifaRequestContext(string UserId, string SessionId, string? RequestId = null)
 {
-    private const string DefaultEndpoint = "https://aifa-chatbot.dev.dotin.ir";
+    private static readonly Lazy<string> BundledEndpoint = new(() =>
+        ReadEndpoint(Path.Combine(AppContext.BaseDirectory, "appsettings.json")));
 
-    /// <summary>Endpoint supplied by application configuration when the environment variable is absent.</summary>
+    /// <summary>Shared endpoint loaded from appsettings.json by the application host.</summary>
     public static string? ConfiguredEndpoint { get; private set; }
 
-    public static string Endpoint => ResolveEndpoint(Environment.GetEnvironmentVariable("AIFA_ENDPOINT"), ConfiguredEndpoint);
+    public static string Endpoint => ConfiguredEndpoint ?? BundledEndpoint.Value;
 
-    public static void ConfigureEndpoint(string? endpoint) =>
-        ConfiguredEndpoint = string.IsNullOrWhiteSpace(endpoint) ? null : endpoint.Trim();
+    public static void ConfigureEndpointFromFile(string path) => ConfiguredEndpoint = ReadEndpoint(path);
 
-    // AIFA_ENDPOINT keeps precedence so a process-level override always wins over stored settings.
-    public static string ResolveEndpoint(string? environmentEndpoint, string? configuredEndpoint) =>
-        environmentEndpoint?.Trim() is { Length: > 0 } fromEnvironment ? fromEnvironment
-        : configuredEndpoint?.Trim() is { Length: > 0 } fromConfiguration ? fromConfiguration
-        : DefaultEndpoint;
+    internal static string ReadEndpoint(string path)
+    {
+        using JsonDocument settings = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        });
+        if (!settings.RootElement.TryGetProperty("Providers", out JsonElement providers)
+            || !providers.TryGetProperty("AIFA", out JsonElement aifa)
+            || !aifa.TryGetProperty("Endpoint", out JsonElement endpoint)
+            || endpoint.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(endpoint.GetString()))
+            throw new ConfigurationException("Providers:AIFA:Endpoint is required in appsettings.json.");
+        return ModelProviderDefinition.NormalizeEndpoint(endpoint.GetString()!);
+    }
 
     public const string Model = "developer-model";
 
@@ -38,10 +49,11 @@ public sealed record AifaRequestContext(string UserId, string SessionId, string?
     }
 }
 
-internal sealed class AifaRequestHandler(AifaRequestContext context, HttpMessageHandler innerHandler)
+internal sealed class AifaRequestHandler(AifaRequestContext context, HttpMessageHandler innerHandler,
+    Action<string>? logRequest = null)
     : DelegatingHandler(innerHandler)
 {
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         if (request.RequestUri is not null && AifaRequestContext.IsAifa(request.RequestUri))
         {
@@ -49,7 +61,10 @@ internal sealed class AifaRequestHandler(AifaRequestContext context, HttpMessage
             request.Headers.Add("x-request-id", context.RequestId ?? Guid.NewGuid().ToString("N"));
             request.Headers.Add("x-session-id", context.SessionId);
             request.Headers.Add("x-user-id", context.UserId);
+
+            string curl = await AifaCurlLog.FormatAsync(request, cancellationToken);
+            (logRequest ?? Console.Error.WriteLine)($"[AIFA HTTP request; credentials redacted; POSIX shell cURL] {curl}");
         }
-        return base.SendAsync(request, cancellationToken);
+        return await base.SendAsync(request, cancellationToken);
     }
 }

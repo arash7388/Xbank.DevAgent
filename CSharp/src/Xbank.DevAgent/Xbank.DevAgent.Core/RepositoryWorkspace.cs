@@ -110,6 +110,33 @@ public sealed partial class RepositoryWorkspace
         return workspace;
     }
 
+    public static async Task<RepositoryWorkspace> CloneDefaultBranchAsync(string repositoryUrl, string accessToken,
+        string workspaceRoot, CancellationToken cancellationToken, string gitLabHost)
+    {
+        ValidateRepositoryUrl(repositoryUrl, RepositoryProvider.GitLab, gitLabHost);
+        RepositoryWorkspace remote = new(Path.GetTempPath(), repositoryUrl, string.Empty, accessToken)
+        {
+            _provider = RepositoryProvider.GitLab,
+        };
+        GitResult head = await remote.RunGitAsync(remote.RootPath,
+            ["ls-remote", "--symref", "--", repositoryUrl, "HEAD"], cancellationToken);
+        if (head.ExitCode != 0) throw new RepositoryException("Unable to read the GitLab repository's default branch.");
+        string branch = ParseDefaultBranch(head.StandardOutput);
+        return await CloneAsync(repositoryUrl, branch, accessToken, workspaceRoot, cancellationToken,
+            RepositoryProvider.GitLab, gitLabHost);
+    }
+
+    internal static string ParseDefaultBranch(string output)
+    {
+        const string prefix = "ref: refs/heads/";
+        string? line = output.Split('\n', StringSplitOptions.TrimEntries)
+            .FirstOrDefault(value => value.StartsWith(prefix, StringComparison.Ordinal) && value.EndsWith("\tHEAD", StringComparison.Ordinal));
+        if (line is null) throw new RepositoryException("GitLab did not advertise a default branch for this repository.");
+        string branch = line[prefix.Length..^5];
+        ValidateBranchName(branch);
+        return branch;
+    }
+
     internal async Task PullBaseBranchAsync(CancellationToken cancellationToken)
     {
         GitResult result = await RunGitAsync(

@@ -11,9 +11,10 @@
   const notices = get('analysis-notices');
   const repository = get('analysis-repository');
   const repositoryStatus = get('analysis-repository-status');
+  const includeRelated = get('analysis-include-related-codebase');
   const storageKey = 'maf-task-analysis-settings-v2';
   const fields = ['analyse', 'summarize', 'sample', 'language', 'provider', 'model', 'effort',
-    'endpoint', 'custom-model', 'input-limit', 'output-limit', 'prompt', 'repository'];
+    'endpoint', 'custom-model', 'input-limit', 'output-limit', 'prompt', 'repository', 'include-related-codebase'];
   let pending = null;
   let savedRepository = '';
   let repositoriesLoading = false;
@@ -75,16 +76,23 @@
       repository.value = projects.some(project => project.key === selected) ? selected : '';
       savedRepository = repository.value;
       updateRepositoryStatus();
-      if (!projects.length) repositoryStatus.textContent = 'No repositories are configured. Add a project with a local RepoPath in server settings.';
+      if (!projects.length) repositoryStatus.textContent = 'No repositories are configured. Add repositories and a GitLab connection in Settings; a local path is only needed for manual checkout validation.';
     } catch (failure) { repositoryStatus.textContent = failure.message; }
-    finally { repository.disabled = false; repositoriesLoading = false; }
+    finally { repositoriesLoading = false; repository.disabled = includeRelated.checked; }
   }
   function updateRepositoryStatus() {
+    repository.disabled = includeRelated.checked || repositoriesLoading;
+    if (includeRelated.checked) {
+      repositoryStatus.textContent = 'Jira xbank.* components select matching repositories from Settings. Their GitLab default branches are fetched with the repository PAT or shared PAT; local changes are excluded. Missing mappings or fetch failures appear with the result.';
+      return;
+    }
     repositoryStatus.textContent = repository.value
       ? `${repository.value}: validate against its configured local checkout, including local changes. Source access is read-only.`
       : 'Task context only. Select a repository to validate requirements against its current local codebase.';
   }
   repository.addEventListener('change', () => { savedRepository = repository.value; updateRepositoryStatus(); });
+  includeRelated.addEventListener('change', updateRepositoryStatus);
+  updateRepositoryStatus();
   get('analysis-repositories-refresh').addEventListener('click', loadRepositories);
   get('task-analysis-button').addEventListener('click', () => { dialog.showModal(); loadRepositories(); });
   function stop() { pending?.abort(); }
@@ -102,7 +110,7 @@
     event.preventDefault();
     if (pending) return;
     error.hidden = true;
-    if (repositoriesLoading) {
+    if (repositoriesLoading && !includeRelated.checked) {
       error.textContent = 'Wait for the repository list to finish loading before generating.';
       error.hidden = false;
       return;
@@ -117,7 +125,8 @@
     const outputLanguage = get('analysis-language').value;
     const issueKey = get('analysis-issue').value.trim().toUpperCase();
     const payload = {
-      issueKey, outputLanguage, projectKey: repository.value || null,
+      issueKey, outputLanguage, projectKey: includeRelated.checked ? null : (repository.value || null),
+      includeRelatedCodebase: includeRelated.checked,
       analyseTask: get('analysis-analyse').checked,
       summarizeTask: get('analysis-summarize').checked,
       includeSample: get('analysis-sample').checked,
@@ -142,7 +151,7 @@
     get('analysis-copy').disabled = true;
     result.hidden = true;
     notices.replaceChildren();
-    status.textContent = `Reading ${issueKey}, comments, and attachments${payload.projectKey ? `; inspecting ${payload.projectKey}` : ''}, then generating…`;
+    status.textContent = `Reading ${issueKey}, comments, and attachments${payload.includeRelatedCodebase ? '; fetching related GitLab codebases' : payload.projectKey ? `; inspecting ${payload.projectKey}` : ''}, then generating…`;
     try {
       const response = await fetch('/api/task-analysis', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

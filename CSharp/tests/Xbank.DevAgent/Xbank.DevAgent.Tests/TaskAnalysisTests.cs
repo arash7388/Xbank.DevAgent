@@ -118,6 +118,60 @@ public sealed class TaskAnalysisTests
         new("analysis-model", "Analysis", "https://api.deepseek.com", true, false,
             input, 4096, true, "medium", ["low", "medium", "high"]), "test-key", "Focus on user behavior.");
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RelatedCodebasesAreOptInAndTheirSourceReachesFinalExplanation(bool enabled)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+            ["GitLab:Host"] = "gitlab.test", ["GitLab:Token"] = "private-pat",
+            ["Projects:first:Key"] = "xbank.first", ["Projects:first:GitLabProjectPath"] = "https://gitlab.test/group/first.git",
+            ["Projects:second:Key"] = "xbank.second", ["Projects:second:GitLabProjectPath"] = "https://gitlab.test/group/second.git",
+        }).Build();
+        int fetches = 0;
+        string? temporaryRoot = null;
+        var loader = new TaskAnalysisCodebaseLoader(config, async (repository, root, cancellationToken) =>
+        {
+            fetches++;
+            temporaryRoot = root;
+            string checkout = Path.Combine(root, repository.Component);
+            Directory.CreateDirectory(checkout);
+            async Task Git(params string[] args)
+            {
+                var start = new System.Diagnostics.ProcessStartInfo("git") {
+                    WorkingDirectory = checkout, UseShellExecute = false, CreateNoWindow = true,
+                    RedirectStandardError = true, RedirectStandardOutput = true,
+                };
+                foreach (string arg in args) start.ArgumentList.Add(arg);
+                using var process = System.Diagnostics.Process.Start(start)!;
+                await process.WaitForExitAsync(cancellationToken);
+                Assert.Equal(0, process.ExitCode);
+            }
+            await Git("init");
+            await Git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "Initial");
+            await File.WriteAllTextAsync(Path.Combine(checkout, "Requirement.cs"), "// Evidence from " + repository.Component, cancellationToken);
+            return RepositoryWorkspace.OpenExisting(checkout);
+        });
+        var jira = new Evidence { Components = ["xbank.first", "xbank.second"] };
+        var service = new TaskAnalysisService(jira, config, loader);
+        var model = Model();
+        var client = new RecordingClient { ReadSource = true, Repositories = ["xbank.first", "xbank.second"] };
+        var result = await service.GenerateAsync(new("TASK-1", model, IncludeRelatedCodebase: enabled), model.ToSettings(10, 1), client);
+        Assert.Equal("Requirement explanation", result.Text);
+        Assert.Equal(enabled ? 2 : 0, fetches);
+        Assert.Equal(1, jira.DetailsCalls);
+        if (enabled)
+        {
+            Assert.Contains("Evidence from xbank.first", client.Messages[1].Text);
+            Assert.Contains("Evidence from xbank.second", client.Messages[1].Text);
+            Assert.DoesNotContain(result.Notices, notice => notice.Contains("did not inspect"));
+            Assert.NotNull(temporaryRoot);
+            Assert.False(Directory.Exists(temporaryRoot));
+        }
+        else Assert.Null(client.Options!.Tools);
+        Assert.DoesNotContain("private-pat", string.Join('\n', client.Messages.Select(message => message.Text)));
+    }
+
     [Fact]
     public async Task LoadsPagedCommentsAndAttachmentsWithIndependentLanguageAndModelOptions()
     {
@@ -157,6 +211,20 @@ public sealed class TaskAnalysisTests
         Assert.Contains("Do not add an illustrative example", client.Messages[0].Text);
     }
 
+    [Fact]
+    public async Task UnmatchedRelatedComponentIsReportedInFinalExplanationWithoutSourceTools()
+    {
+        var client = new RecordingClient();
+        var model = Model();
+        var service = new TaskAnalysisService(new Evidence { Components = ["xbank.unmapped"] }, new ConfigurationBuilder().Build());
+        var result = await service.GenerateAsync(new("TASK-1", model, IncludeRelatedCodebase: true), model.ToSettings(10, 1), client);
+        Assert.Equal("Requirement explanation", result.Text);
+        Assert.Contains(result.Notices, notice => notice.Contains("xbank.unmapped") && notice.Contains("no configured repository"));
+        Assert.Contains("xbank.unmapped", client.Messages[1].Text);
+        Assert.Contains("No codebase is available", client.Messages[0].Text);
+        Assert.Null(client.Options!.Tools);
+    }
+
     [Theory]
     [InlineData(false, false, "English", "TASK-1")]
     [InlineData(true, false, "French", "TASK-1")]
@@ -180,13 +248,17 @@ public sealed class TaskAnalysisTests
 
     private sealed class Evidence : IJiraIssueSearch
     {
+        public string[] Components { get; init; } = [];
+        public int DetailsCalls { get; private set; }
         public List<int> CommentOffsets { get; } = [];
         public List<int> AttachmentOffsets { get; } = [];
         public bool LargeAttachment { get; init; }
         public Task<JsonElement> GetIssueDetailsAsync(string key, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(JsonSerializer.SerializeToElement(new { key, fields = new { summary = "Requirement", description = "Expected behavior" } }));
+            DetailsCalls++;
+            return Task.FromResult(JsonSerializer.SerializeToElement(new { key, fields = new { summary = "Requirement", description = "Expected behavior",
+                components = Components.Select(name => new { name }) } }));
         }
         public Task<JsonElement> GetIssueCommentsAsync(string key, int startAt = 0, int maxResults = 50, CancellationToken cancellationToken = default)
         {
@@ -210,6 +282,7 @@ public sealed class TaskAnalysisTests
     {
         public bool ReadSource { get; init; }
         public int ToolRounds { get; init; } = 1;
+        public string[]? Repositories { get; init; }
         private int _toolCalls;
         public List<(ChatMessage[] Messages, ChatOptions? Options)> Calls { get; } = [];
         public ChatMessage[] Messages { get; private set; } = [];
@@ -224,6 +297,10 @@ public sealed class TaskAnalysisTests
                 if (_toolCalls++ >= ToolRounds)
                     return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant,
                         "I'll inspect the marketing codebase for the UserActivity implementation before explaining.")));
+                if (Repositories is not null)
+                    return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                        Repositories.Select(repository => (AIContent)new FunctionCallContent($"read-{_toolCalls}-{repository}", "read_repository_file",
+                            new Dictionary<string, object?> { ["path"] = "Requirement.cs", ["repository"] = repository })).ToList())));
                 return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant,
                     [new TextContent("I'll inspect the marketing codebase."),
                      new FunctionCallContent($"read-{_toolCalls}", "read_repository_file", new Dictionary<string, object?> { ["path"] = "Requirement.cs" })])));

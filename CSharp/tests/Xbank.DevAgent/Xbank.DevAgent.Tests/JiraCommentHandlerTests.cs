@@ -6,6 +6,32 @@ namespace Xbank.DevAgent.Tests;
 public sealed class JiraCommentHandlerTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UsesNewHeadingAndReformatsPreviousSignatureWithoutDuplicatingIt(bool scopeChange)
+    {
+        string formatted = JiraCommentHandler.Format("Product point", scopeChange);
+        Assert.StartsWith("Developer Agent Points\n", formatted);
+        string previous = formatted.Replace("Developer Agent Points\n", "[MAF-AI:v1]\n", StringComparison.Ordinal);
+        Assert.Equal(formatted, JiraCommentHandler.Format(previous, scopeChange));
+    }
+
+    [Theory]
+    [InlineData("Developer Agent Points\n", "agent")]
+    [InlineData("Developer Agent Points\r\n", "agent")]
+    [InlineData("[MAF-AI:v1]\n", "agent")]
+    [InlineData("[MAF-AI:v1]\r\n", "agent")]
+    [InlineData("Other comment\n", "external")]
+    public void RecognizesBothCommentSignatures(string heading, string origin)
+    {
+        string body = heading + "Comment text";
+        JsonElement response = JsonSerializer.SerializeToElement(new { comments = new[] { new { body } } });
+        JsonElement comment = JiraCommentHandler.Annotate(response).GetProperty("comments")[0];
+        Assert.Equal(origin, comment.GetProperty("mafOrigin").GetString());
+        Assert.Equal(body, comment.GetProperty("body").GetString());
+    }
+
+    [Theory]
     [InlineData(false, 2000, 2000)]
     [InlineData(true, 2000, 2000)]
     [InlineData(false, 2000, 20)]

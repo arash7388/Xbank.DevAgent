@@ -28,6 +28,50 @@ public sealed class DeveloperSettingsTests : IDisposable
         GitLabToken: "shared-secret", JiraToken: "jira-secret");
 
     [Fact]
+    public void DefaultBaseBranchesSurviveReloadAndCanBeClearedIndependently()
+    {
+        var (store, configuration) = Create();
+        Assert.Equal("", Assert.Single(store.Read(configuration).Repositories).DefaultBaseBranch);
+        store.Save(Settings() with { Repositories = [
+            new("first", _directory, "https://gitlab.test/team/first.git", DefaultBaseBranch: " develop "),
+            new("second", _directory, "https://gitlab.test/team/second.git", DefaultBaseBranch: "release/service")] }, configuration);
+        var (reloaded, reloadedConfiguration) = Create();
+        DeveloperSettings saved = reloaded.Read(reloadedConfiguration);
+        Assert.Equal(["develop", "release/service"], saved.Repositories.Select(r => r.DefaultBaseBranch));
+        reloaded.Save(saved with { Repositories = [saved.Repositories[0] with { DefaultBaseBranch = "" }, saved.Repositories[1]] }, reloadedConfiguration);
+        Assert.Equal(["", "release/service"], reloaded.Read(reloadedConfiguration).Repositories.Select(r => r.DefaultBaseBranch));
+    }
+
+    [Fact]
+    public void RepositoryDatabasesAreStoredIndependentlyMatchedByRemoteAndCanBeCleared()
+    {
+        var (store, configuration) = Create();
+        store.Save(Settings() with { Repositories = [
+            new("first", _directory, "https://gitlab.test/team/first.git", Database: " FirstDb "),
+            new("second", _directory, "https://gitlab.test/team/second.git", Database: "SecondDb")] }, configuration);
+        var (reloaded, reloadedConfiguration) = Create();
+        Assert.Equal(["FirstDb", "SecondDb"], reloaded.Read(reloadedConfiguration).Repositories.Select(r => r.Database));
+        Assert.Equal("FirstDb", DeveloperSettingsStore.RepositoryDatabase(reloadedConfiguration, "https://gitlab.test/team/first/"));
+        Assert.Equal("SecondDb", DeveloperSettingsStore.RepositoryDatabase(reloadedConfiguration, "https://gitlab.test/team/second.git"));
+        Assert.Null(DeveloperSettingsStore.RepositoryDatabase(reloadedConfiguration, "https://gitlab.test/team/unknown.git"));
+        DeveloperSettings saved = reloaded.Read(reloadedConfiguration);
+        reloaded.Save(saved with { Repositories = [saved.Repositories[0] with { Database = "" }, saved.Repositories[1]] }, reloadedConfiguration);
+        Assert.Equal("", DeveloperSettingsStore.RepositoryDatabase(reloadedConfiguration, "https://gitlab.test/team/first.git"));
+        Assert.Equal("SecondDb", DeveloperSettingsStore.RepositoryDatabase(reloadedConfiguration, "https://gitlab.test/team/second.git"));
+    }
+
+    [Theory]
+    [InlineData("bad\r\ndatabase")]
+    [InlineData(null)]
+    public void RejectsInvalidRepositoryDatabase(string? database)
+    {
+        var (store, configuration) = Create();
+        Assert.Throws<ArgumentException>(() => store.Save(Settings() with {
+            Repositories = [Settings().Repositories[0] with { Database = database! }] }, configuration));
+        Assert.False(File.Exists(Profile));
+    }
+
+    [Fact]
     public void SavesEncryptedProfileAndReloadsWithoutDisclosingTokens()
     {
         var (store, configuration) = Create();
@@ -108,5 +152,60 @@ public sealed class DeveloperSettingsTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
+    }
+
+    [Fact]
+    public void SqlServerSecretsAreEncryptedHiddenPreservedAndExplicitlyCleared()
+    {
+        var (store, configuration) = Create();
+        store.Save(Settings() with { SqlServer = new(true,
+            "Server=sql.test;Database=app;User ID=embedded-user;Password=embedded-secret;Encrypt=True;",
+            "reader", " separate-secret ") }, configuration);
+        var (reloaded, reloadedConfiguration) = Create();
+        SqlServerSettings view = reloaded.Read(reloadedConfiguration).SqlServer!;
+        Assert.True(view.Enabled);
+        Assert.True(view.HasConnectionString);
+        Assert.True(view.HasPassword);
+        Assert.Null(view.ConnectionString);
+        Assert.Null(view.Password);
+        string disk = File.ReadAllText(Profile);
+        Assert.DoesNotContain("embedded-secret", disk);
+        Assert.DoesNotContain("separate-secret", disk);
+        store.Save(store.Read(configuration) with { SqlServer = null }, configuration);
+        Assert.Equal(" separate-secret ", configuration["SqlServer:Password"]);
+        Assert.Contains("embedded-secret", configuration["SqlServer:ConnectionString"]);
+        store.Save(store.Read(configuration) with { SqlServer = view with
+            { Enabled = false, ConnectionString = "", Password = "" } }, configuration);
+        Assert.False(store.Read(configuration).SqlServer!.HasConnectionString);
+        Assert.False(store.Read(configuration).SqlServer!.HasPassword);
+        Assert.Equal("shared-secret", configuration["GitLab:Token"]);
+    }
+
+    [Fact]
+    public void StructuredSqlSettingsSurviveProfileReload()
+    {
+        var (store, configuration) = Create();
+        store.Save(Settings() with { SqlServer = new(Enabled: true, Server: @"SERVER\INSTANCE",
+            Database: "app", UseConnectionString: false, TrustServerCertificate: true) }, configuration);
+        var (reloaded, reloadedConfiguration) = Create();
+        SqlServerSettings view = reloaded.Read(reloadedConfiguration).SqlServer!;
+        Assert.True(view.Enabled);
+        Assert.Equal(@"SERVER\INSTANCE", view.Server);
+        Assert.Equal("app", view.Database);
+        Assert.True(view.UseWindowsAuthentication);
+        Assert.False(view.UseConnectionString);
+        Assert.True(view.TrustServerCertificate);
+        SqlServerSettings.Validate(view, "", "");
+    }
+
+    [Fact]
+    public void RejectsEnabledSqlWithoutConnectionAndNeverEchoesMalformedSecrets()
+    {
+        var (store, configuration) = Create();
+        Assert.Throws<ArgumentException>(() => store.Save(Settings() with { SqlServer = new(true) }, configuration));
+        var error = Assert.Throws<ArgumentException>(() => store.Save(Settings() with
+            { SqlServer = new(ConnectionString: "Secret=sentinel-secret") }, configuration));
+        Assert.DoesNotContain("sentinel-secret", error.ToString());
+        Assert.False(File.Exists(Profile));
     }
 }

@@ -315,6 +315,15 @@ legend { margin-bottom: 10px; color: var(--ink); font-size: 12px; font-weight: 7
   letter-spacing: .04em;
 }
 .setup-step-content fieldset[data-config-category] .legend-row { flex-wrap: wrap; }
+.setup-step-content fieldset[data-config-category="models"] { position: relative; }
+.setup-step-content fieldset[data-config-category="models"] > .legend-row { justify-content: flex-end; }
+.setup-step-content fieldset[data-config-category="models"] > .legend-row > legend {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 20px;
+  transform: translateY(-50%);
+  max-width: calc(100% - 40px);
+}
 .setup-step-content fieldset[data-config-category] > .field-guide:first-of-type { margin-top: 10px; }
 .setup-step-content fieldset[data-config-category="credentials"],
 .setup-step-content fieldset[data-config-category="models"] {
@@ -1146,6 +1155,9 @@ html[data-run-experience="simple"] [data-advanced-only] { display: none !importa
 #developer-settings-dialog .settings-security { display: flex; align-items: center; gap: 9px; margin: 0 0 20px; padding: 11px 14px; color: #276f65; background: #e9f7f2; border: 1px solid #cce9df; border-radius: 10px; font-size: 12px; }
 .settings-security span { color: #168671; }
 .settings-connections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+#developer-settings-dialog .settings-sqlserver { margin-top: 22px; --settings-accent: #197965; --settings-tint: #e9f7f2; }
+#sqlserver-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 560px; overflow: auto; }
+#sqlserver-form > button, #sqlserver-connect { margin-top: 16px; }
 #developer-settings-dialog .settings-card { --settings-accent: #7b4ac4; --settings-tint: #f3edfc; margin: 0; padding: 18px 20px 20px; border: 1px solid #e0d8ef; border-top: 3px solid var(--settings-accent); border-radius: 14px; background: linear-gradient(155deg, var(--settings-tint), #fff 210px); box-shadow: 0 4px 14px #27346205; }
 #developer-settings-dialog .settings-gitlab { --settings-accent: #bc4c24; --settings-tint: #fff3e9; border-color: #f1d8c9; border-top-color: var(--settings-accent); }
 #developer-settings-dialog .settings-jira { --settings-accent: #2d64cc; --settings-tint: #edf3ff; border-color: #d3e0f7; border-top-color: var(--settings-accent); }
@@ -1198,4 +1210,116 @@ html[data-run-experience="simple"] [data-advanced-only] { display: none !importa
 @media (max-width: 460px) {
   .settings-header-icon, .settings-section-tag { display: none; }
   #developer-settings-dialog .settings-repository { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Carry the Repository fieldset's inset title through the whole workflow.
+   Each card keeps its existing category colors and background. */
+#jira-panel .codegraph-card, #manual-change-panel {
+  --panel-accent: var(--jira-accent, #7041ad);
+  --panel-tint: var(--jira-tint, #f5efff);
+  --panel-border: var(--jira-border, #ddccef);
+}
+.run-review-card {
+  --panel-accent: var(--review-accent);
+  --panel-tint: var(--review-tint);
+  --panel-border: var(--review-border);
+}
+.agent-summary-card {
+  --panel-accent: var(--agent-accent);
+  --panel-tint: var(--agent-wash);
+  --panel-border: color-mix(in srgb, var(--agent-accent) 25%, white);
+}
+.team-map { --panel-accent: #4d6fa7; --panel-tint: #f5f3ff; --panel-border: #dbe5f2; }
+.usage-summary { --panel-accent: #1e3a68; --panel-tint: #f3f7ff; --panel-border: #d6e2f5; }
+.jira-problem-notice { --panel-accent: var(--amber); --panel-tint: #fffaf0; --panel-border: #edcf8f; }
+.api-keys-panel {
+  --panel-accent: var(--config-accent, #7041ad);
+  --panel-tint: var(--config-tint, #f5efff);
+  --panel-border: var(--config-border, #ddccef);
+}
+
+:is(#jira-panel .codegraph-card, #manual-change-panel, .run-review-card,
+    .agent-summary-card, .team-map, .usage-summary, .jira-problem-notice, .api-keys-panel) {
+  position: relative;
+  overflow: visible;
+  margin-block-start: 26px;
+  padding-block-start: 24px;
+  border: 1px solid var(--panel-border);
+  border-inline-start: 4px solid var(--panel-accent);
+  border-radius: 14px;
+}
+
+:is(#jira-panel .codegraph-card, #manual-change-panel) > .card-heading h3,
+#jira-panel .jira-results-heading h3,
+#manual-change-panel > h3,
+.run-review-heading h3,
+.agent-summary-card > h4,
+.team-map-heading h3,
+.usage-summary > header h3,
+.api-keys-panel > .llm-subheading,
+.jira-problem-notice > h3 {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 20px;
+  transform: translateY(-50%);
+  max-width: calc(100% - 40px);
+  margin: 0;
+  padding: 6px 11px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--panel-accent);
+  background: var(--panel-tint);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+.run-review-card .run-review-heading {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.agent-summary-cards { row-gap: 24px; }
+.agent-summary-cards > .agent-summary-card { margin-block-start: 8px; }
+
+/* Running and final review use the same frame, with their controls inside. */
+.workspace > :is(.activity-panel, .diff-panel) {
+  width: calc(100% - 32px);
+  height: calc(100% - 40px);
+  margin: 24px 16px 16px;
+  border: 1px solid var(--line);
+  border-inline-start: 4px solid var(--blue);
+  border-radius: 14px;
+}
+.workspace > .diff-panel { border-inline-start-color: var(--green); }
+:is(.activity-panel, .diff-panel) > .section-heading {
+  flex-wrap: wrap;
+  margin: 16px 16px 0;
+  padding: 0 0 14px;
+  border: 0;
+}
+:is(.activity-panel, .diff-panel) > .section-heading h2 {
+  display: inline-block;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--blue);
+  background: #eef5ff;
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.diff-panel > .section-heading h2 { color: var(--green); background: var(--green-bg); }
+@media (max-width: 760px) {
+  :is(#jira-panel .codegraph-card, #manual-change-panel, .run-review-card,
+      .agent-summary-card, .team-map, .usage-summary, .jira-problem-notice, .api-keys-panel) {
+    padding-block-start: 28px;
+  }
+  .run-review-heading h3 { inset-inline-start: 12px; max-width: calc(100% - 24px); }
 }

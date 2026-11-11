@@ -17,7 +17,8 @@ public static class HandoffWorkflowFactory
         string? workflowId = null,
         IJiraIssueSearch? jira = null,
         IWorkflowUserInput? userInput = null,
-        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
+        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null,
+        ISqlServerTools? sqlServer = null)
     {
         AgentTeam team = AgentTeamFactory.Create(
             chatClient,
@@ -30,7 +31,8 @@ public static class HandoffWorkflowFactory
             workflowId,
             jira,
             userInput,
-            jiraIntakeCheckpoint);
+            jiraIntakeCheckpoint,
+            sqlServer);
         return Create(team, settings);
     }
 
@@ -45,7 +47,8 @@ public static class HandoffWorkflowFactory
         string? workflowId = null,
         IJiraIssueSearch? jira = null,
         IWorkflowUserInput? userInput = null,
-        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null)
+        JiraIntakeCheckpoint? jiraIntakeCheckpoint = null,
+        ISqlServerTools? sqlServer = null)
     {
         AgentTeam team = AgentTeamFactory.Create(
             clients,
@@ -58,7 +61,8 @@ public static class HandoffWorkflowFactory
             workflowId,
             jira,
             userInput,
-            jiraIntakeCheckpoint);
+            jiraIntakeCheckpoint,
+            sqlServer);
         string settingsAgent = settingsByAgent[AgentNames.Reviewer].IsMergeRequestReview ? AgentNames.Reviewer : AgentNames.Developer;
         WorkflowSettings workflowSettings = settingsByAgent.TryGetValue(settingsAgent, out WorkflowSettings? value)
             ? value

@@ -7,6 +7,28 @@ namespace Xbank.DevAgent.Tests;
 public sealed class AgentTeamFactoryTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SqlServerToolsAreLimitedToEnabledRelevantAgents(bool enabled)
+    {
+        RecordingChatClient client = new();
+        AgentTeam team = AgentTeamFactory.Create(client, new("https://example.test", "model", "key"),
+            sqlServer: enabled ? new SqlTools() : null);
+        foreach (var agent in team.All)
+        {
+            await agent.RunAsync("Inspect database evidence");
+            string[] names = client.Options!.Tools?.Select(tool => tool.Name).Where(name => name.StartsWith("sql_server_", StringComparison.Ordinal)).ToArray() ?? [];
+            Assert.Equal(enabled && SqlServerToolFactory.IsUsefulFor(agent.Name!) ? 5 : 0, names.Length);
+            Assert.DoesNotContain("run_command", names);
+        }
+    }
+
+    private sealed class SqlTools : ISqlServerTools
+    {
+        public Task<string> ExecuteAsync(SqlServerRequest request, CancellationToken cancellationToken) => Task.FromResult("{}");
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("Use PascalCase for public members.")]
     public async Task EveryEnabledAgentReceivesOnlySelectedCodingRules(string? rules)

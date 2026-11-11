@@ -22,12 +22,26 @@
     clear.checked = false;
   }
   function syncJiraAuth() { field('jira-user').required = field('jira-auth').value === 'Basic'; }
+  function syncSqlAuth() {
+    const advanced = field('sql-advanced').checked;
+    const windows = !advanced && field('sql-windows').checked;
+    field('sql-simple-fields').hidden = advanced;
+    field('sql-advanced-fields').hidden = !advanced;
+    field('sql-credentials').hidden = windows;
+    field('sql-server').required = field('sql-database').required = !advanced && field('sql-enabled').checked;
+    field('sql-user').required = !advanced && !windows && field('sql-enabled').checked;
+    field('sql-user').disabled = windows;
+    field('sql-password').disabled = windows || field('sql-password-clear').checked;
+  }
   function setBusy(busy) {
     form.querySelectorAll('fieldset').forEach(section => { section.disabled = busy; });
   }
   bindClear(field('gitlab-token'), field('gitlab-clear'));
   bindClear(field('jira-token'), field('jira-clear'));
+  bindClear(field('sql-connection'), field('sql-connection-clear'));
+  bindClear(field('sql-password'), field('sql-password-clear'));
   field('jira-auth').addEventListener('change', syncJiraAuth);
+  ['sql-advanced', 'sql-windows', 'sql-enabled', 'sql-password-clear'].forEach(name => field(name).addEventListener('change', syncSqlAuth));
   async function request(options) {
     const response = await fetch('/api/settings', options);
     if (!response.ok) {
@@ -43,7 +57,7 @@
     legend.textContent = `Repository ${++repositoryNumber}`;
     row.append(legend);
     const inputs = {};
-    for (const [key, label, type] of [['key', 'Repository name', 'text'], ['repoPath', 'Absolute local path', 'text'], ['gitLabProjectPath', 'GitLab repository URL', 'url'], ['token', 'Repository access token', 'password']]) {
+    for (const [key, label, type] of [['key', 'Repository name', 'text'], ['repoPath', 'Absolute local path', 'text'], ['gitLabProjectPath', 'GitLab repository URL', 'url'], ['token', 'Repository access token', 'password'], ['database', 'SQL Server database', 'text']]) {
       const wrapper = document.createElement('label');
       wrapper.textContent = label;
       const input = document.createElement('input');
@@ -57,10 +71,22 @@
       if (key === 'repoPath') input.placeholder = 'e.g. C:\\work\\my-repository (optional)';
       if (key === 'gitLabProjectPath') input.placeholder = 'https://gitlab.example.com/team/repository.git';
       if (key === 'key') input.placeholder = 'e.g. my-service';
+      if (key === 'database') {
+        input.placeholder = 'e.g. MyServiceDb (blank uses the shared default)';
+        input.maxLength = 128;
+      }
       wrapper.append(input);
       row.append(wrapper);
       inputs[key] = input;
     }
+    const branchLabel = document.createElement('label');
+    branchLabel.textContent = 'Default base branch';
+    const branchInput = document.createElement('input');
+    branchInput.type = 'text';
+    branchInput.value = repository.defaultBaseBranch || '';
+    branchInput.placeholder = 'e.g. develop (optional)';
+    branchLabel.append(branchInput);
+    row.append(branchLabel);
     const clearLabel = document.createElement('label');
     clearLabel.className = 'settings-check';
     const clear = document.createElement('input');
@@ -74,7 +100,8 @@
     remove.addEventListener('click', () => row.remove());
     row.append(clearLabel, remove);
     row.readSettings = () => ({ key: inputs.key.value.trim(), repoPath: inputs.repoPath.value.trim(),
-      gitLabProjectPath: inputs.gitLabProjectPath.value.trim(), token: secret(inputs.token, clear) });
+      gitLabProjectPath: inputs.gitLabProjectPath.value.trim(), token: secret(inputs.token, clear),
+      database: inputs.database.value.trim(), defaultBaseBranch: branchInput.value.trim() });
     row.refreshCredential = () => refreshCredential(inputs.token, clear, 'Use shared token');
     rows.append(row);
   }
@@ -83,6 +110,8 @@
     form.reset();
     field('gitlab-token').disabled = false;
     field('jira-token').disabled = false;
+    field('sql-connection').disabled = false;
+    field('sql-password').disabled = false;
     repositoryNumber = 0;
     rows.replaceChildren();
     setBusy(true);
@@ -98,7 +127,20 @@
       field('gitlab-token').placeholder = settings.hasGitLabToken ? 'Token saved — leave blank to keep' : 'No shared token saved';
       field('jira-token').placeholder = settings.hasJiraToken ? 'Credential saved — leave blank to keep' : 'No credential saved';
       settings.repositories.forEach(addRepository);
+      const sql = settings.sqlServer || {};
+      field('sql-enabled').checked = !!sql.enabled;
+      field('sql-server').value = sql.server || '';
+      field('sql-database').value = sql.database || '';
+      field('sql-windows').checked = sql.useWindowsAuthentication !== false;
+      field('sql-trust-certificate').checked = !!sql.trustServerCertificate;
+      field('sql-advanced').checked = sql.useConnectionString ?? !!sql.hasConnectionString;
+      field('sql-user').value = sql.username || '';
+      field('sql-rows').value = sql.maxRows || 200;
+      field('sql-timeout').value = sql.commandTimeoutSeconds || 30;
+      field('sql-connection').placeholder = sql.hasConnectionString ? 'Connection string saved - leave blank to keep' : 'Server=localhost;Database=MyDatabase;Integrated Security=True;Encrypt=True;';
+      field('sql-password').placeholder = sql.hasPassword ? 'Password saved - leave blank to keep' : 'Use connection string authentication';
       syncJiraAuth();
+      syncSqlAuth();
       setBusy(false);
       setStatus('');
       form.querySelector('[type="submit"]').disabled = false;
@@ -123,11 +165,24 @@
         jiraBaseUrl: field('jira-url').value.trim(), jiraUser: field('jira-user').value.trim(),
         jiraAuthMode: field('jira-auth').value, jiraToken: secret(field('jira-token'), field('jira-clear')),
         repositories: snapshot.map(row => row.readSettings()),
+        sqlServer: {
+          enabled: field('sql-enabled').checked, connectionString: secret(field('sql-connection'), field('sql-connection-clear')),
+          server: field('sql-server').value.trim(), database: field('sql-database').value.trim(),
+          useWindowsAuthentication: field('sql-windows').checked, useConnectionString: field('sql-advanced').checked,
+          trustServerCertificate: field('sql-trust-certificate').checked,
+          username: field('sql-user').value.trim(),
+          password: field('sql-password-clear').checked ? '' : (field('sql-password').value || null),
+          maxRows: Number(field('sql-rows').value), commandTimeoutSeconds: Number(field('sql-timeout').value),
+        },
       }) });
       if (current !== revision) return;
       refreshCredential(field('gitlab-token'), field('gitlab-clear'), 'No shared token saved');
       refreshCredential(field('jira-token'), field('jira-clear'), 'No credential saved', 'Credential saved — leave blank to keep');
       snapshot.forEach(row => row.refreshCredential());
+      refreshCredential(field('sql-connection'), field('sql-connection-clear'), 'No connection string saved', 'Connection string saved - leave blank to keep');
+      refreshCredential(field('sql-password'), field('sql-password-clear'), 'Use connection string authentication', 'Password saved - leave blank to keep');
+      syncSqlAuth();
+      window.dispatchEvent(new Event('sql-server-settings-changed'));
       setStatus('Settings saved. Reload to refresh repository lists.', 'success');
       field('reload').hidden = false;
     } catch (error) { if (current === revision) setStatus(error.message, 'error'); }

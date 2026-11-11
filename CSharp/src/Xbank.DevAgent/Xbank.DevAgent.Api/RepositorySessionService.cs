@@ -17,7 +17,8 @@ public sealed class RepositorySessionService(
     IConfiguration configuration,
     RunConnectivityCheck? connectivityCheck = null,
     ITalkNotifications? talkNotifications = null,
-    CodingRuleStore? codingRules = null)
+    CodingRuleStore? codingRules = null,
+    SqlServerService? sqlServer = null)
 {
     private readonly ConcurrentDictionary<Guid, SessionState> _sessions = new();
     private readonly string _workspaceRoot = Path.Combine(Path.GetTempPath(), "maf-repository-workspaces");
@@ -501,6 +502,10 @@ public sealed class RepositorySessionService(
                 Persist(state);
             }
         }
+        await using SqlServerConnection? workflowSqlServer = sqlServer is null ? null
+            : await sqlServer.OpenAsync(state.Cancellation.Token, state.Request.RepositoryUrl);
+        if (workflowSqlServer is not null)
+            state.AddEvent(RunEvent.Trace(null, "SQL Server read-only tools enabled for Planner, Developer, Reviewer and Security."));
         HandoffWorkflowRunner runner = new(
             settingsByAgent,
             workspace,
@@ -520,7 +525,7 @@ public sealed class RepositorySessionService(
                 request.JiraValidationEnabled,
                 retryAttempt = state.RetryAttemptId,
                 attachments = (request.JiraAttachmentIds ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
-            }));
+            }), sqlServer: workflowSqlServer);
         string? terminalStatus = null;
 
         await foreach (RunEvent runEvent in runner.RunAsync(
@@ -1328,7 +1333,7 @@ public sealed record CreateSessionRequest(
     public string CodingRulesSnapshot { get; init; } = "";
 }
 
-public sealed record ProjectRepositoryInfo(string Key, string? GitLabProjectPath);
+public sealed record ProjectRepositoryInfo(string Key, string? GitLabProjectPath, string DefaultBaseBranch = "");
 
 public sealed record ApproveSessionRequest(
     string Branch,

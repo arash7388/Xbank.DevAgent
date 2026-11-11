@@ -148,10 +148,6 @@ function initializeSetupSteps() {
   analysisSettings.append(analysisLegend, analysisToggle, analysisGuide);
   connectionSettings.append(analysisSettings);
 
-  const jiraConnection = document.createElement('fieldset');
-  jiraConnection.innerHTML = '<legend>Jira connection</legend><p id="jira-server-settings" class="field-guide">Loading server Jira settings…</p>';
-  connectionSettings.append(jiraConnection);
-
   const jiraSetup = document.querySelector('#jira-panel');
   jiraSetup.dataset.setupStep = 'jira';
   document.querySelector('.setup-panel').append(jiraSetup);
@@ -181,7 +177,6 @@ function initializeSetupSteps() {
     [qdrantSettings, 'search'],
     [cogniaSettings, 'knowledge'],
     [analysisSettings, 'analysis'],
-    [jiraConnection, 'jira'],
     [agentSettings, 'models'],
     [autonomySettings, 'autonomy'],
     [buildSettings, 'verification'],
@@ -479,10 +474,6 @@ function renderRunReview() {
   document.querySelectorAll('#connection-settings > fieldset').forEach(fieldset => {
     const card = section(fieldset.querySelector('legend').textContent.trim(), 'connection', fieldset.dataset?.configCategory || 'connection');
     controls(card, fieldset);
-    if (!fieldset.querySelector('input, select, textarea')) {
-      row(card, 'Server settings', document.querySelector('#jira-server-settings').textContent);
-      row(card, 'Connection status', document.querySelector('#jira-connection-status').textContent);
-    }
   });
 
   controls(section('Agentic turn limits', 'agents', 'limits'), document.querySelector('#agent-turn-limits'));
@@ -682,6 +673,7 @@ async function initializeProjectSelector() {
       projectKeyInput.append(label);
     });
     gitLabRepositoryInput.value = projects[0]?.gitLabProjectPath || '';
+    if (projects[0]?.defaultBaseBranch) baseBranchInput.value = projects[0].defaultBaseBranch;
     status.textContent = projects.length ? '' : 'No GitLab projects are configured. Configure a project before starting a run.';
     status.hidden = projects.length > 0;
     loadRepositoryBranches();
@@ -689,6 +681,7 @@ async function initializeProjectSelector() {
     projectKeyInput.addEventListener('change', event => {
       const project = projects.find(item => item.key === event.target.value);
       if (project?.gitLabProjectPath) gitLabRepositoryInput.value = project.gitLabProjectPath;
+      if (project) baseBranchInput.value = project.defaultBaseBranch || baseBranchInput.defaultValue;
       loadRepositoryBranches();
     });
   } catch (error) {
@@ -709,7 +702,7 @@ const eventDateFormatter = new Intl.DateTimeFormat(undefined, {
 
 const providerCatalog = {
   aifa: {
-    name: 'AIFA', url: 'https://aifa-chatbot.dev.dotin.ir',
+    name: 'AIFA', url: '', // Loaded from the server's shared appsettings.json.
     toolCalling: true, vision: false, thinking: true,
     // Provisional metadata; confirm the service limits and tool support with its owner.
     maxInputTokens: 81920, maxOutputTokens: 20480,
@@ -1065,10 +1058,10 @@ async function loadAgentTools() {
       const name = document.createElement('code');
       name.textContent = tool.name;
       heading.append(name);
-      if (tool.availability === 'with_reference_documents') {
+      if (tool.availability === 'with_reference_documents' || tool.availability === 'with_sql_server_enabled') {
         const availability = document.createElement('span');
         availability.className = 'agent-tool-availability';
-        availability.textContent = 'with knowledge sources';
+        availability.textContent = tool.availability === 'with_sql_server_enabled' ? 'when SQL Server is enabled' : 'with knowledge sources';
         heading.append(availability);
       }
       const description = document.createElement('span');
@@ -2539,14 +2532,16 @@ let codeGraphDatabaseRequest = 0;
 
 document.querySelectorAll('[data-app-mode]').forEach(button => button.addEventListener('click', () => {
   const graphMode = button.dataset.appMode === 'codegraph';
+  const sqlMode = button.dataset.appMode === 'sqlserver';
   document.querySelectorAll('[data-app-mode]').forEach(item => {
     item.classList.toggle('active', item === button);
     item.setAttribute('aria-pressed', String(item === button));
   });
   codeGraphPanel.hidden = !graphMode;
-  jiraPanel.hidden = graphMode || currentSetupStep !== 'jira';
-  document.querySelector('.steps').hidden = graphMode;
-  if (graphMode) workflowPanels.forEach(panel => { panel.hidden = true; });
+  document.querySelector('#sqlserver-panel').hidden = !sqlMode;
+  jiraPanel.hidden = graphMode || sqlMode || currentSetupStep !== 'jira';
+  document.querySelector('.steps').hidden = graphMode || sqlMode;
+  if (graphMode || sqlMode) workflowPanels.forEach(panel => { panel.hidden = true; });
   else {
     setActiveStep(currentWorkflowStep);
   }
@@ -2555,6 +2550,8 @@ document.querySelectorAll('[data-app-mode]').forEach(button => button.addEventLi
 const initialView = new URLSearchParams(window.location.search).get('view');
 if (initialView === 'codegraph')
   document.querySelector('[data-app-mode="codegraph"]').click();
+else if (initialView === 'sqlserver')
+  document.querySelector('[data-app-mode="sqlserver"]').click();
 else if (initialView === 'jira' && currentWorkflowStep === 'setup')
   setSetupStep('jira');
 
@@ -2850,7 +2847,6 @@ let jiraUserEdited = false;
 jiraUser.addEventListener('input', () => { jiraUserEdited = true; });
 const jiraSettingsReady = api('/api/jira/settings').then(settings => {
   if (!jiraUserEdited) jiraUser.value = settings.user || '';
-  document.querySelector('#jira-server-settings').textContent = `Server: ${settings.baseUrl || 'Not configured'} · User: ${settings.user || 'Not configured'} · Authentication: ${settings.authMode || 'Basic'}. Credentials use the server Jira appsettings.`;
 }).catch(error => setJiraError('#jira-search-error', `Could not load the default Jira user: ${error.message}`));
 const jiraResults = document.querySelector('#jira-results');
 const jiraIssueForm = document.querySelector('#jira-issue-form');

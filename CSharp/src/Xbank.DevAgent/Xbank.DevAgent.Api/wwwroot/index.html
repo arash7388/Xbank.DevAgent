@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Xbank.DevAgent</title>
-  <link rel="stylesheet" href="/styles.css?v=20261104-2">
+  <link rel="stylesheet" href="/styles.css?v=20261110-3">
 </head>
 <body>
   <header class="app-header">
@@ -15,6 +15,7 @@
     <nav class="app-mode-nav" aria-label="Workbench views">
       <button class="app-mode active" type="button" data-app-mode="workflow" aria-pressed="true">Agent workflow</button>
       <button class="app-mode" type="button" data-app-mode="codegraph" aria-pressed="false">Code graph</button>
+      <button class="app-mode" type="button" data-app-mode="sqlserver" aria-pressed="false">SQL Server</button>
       <button id="previous-runs-button" class="app-mode" type="button" aria-haspopup="dialog">Previous runs</button>
       <button id="coding-rules-button" class="app-mode" type="button" aria-haspopup="dialog">Coding Rules</button>
       <button id="task-analysis-button" class="app-mode" type="button" aria-haspopup="dialog">Task Analysis</button>
@@ -35,6 +36,36 @@
   </nav>
 
   <main class="workspace">
+    <section id="sqlserver-panel" class="codegraph-panel" aria-labelledby="sqlserver-title" hidden>
+      <div class="section-heading"><div><h2 id="sqlserver-title">SQL Server workbench</h2><p>Inspect your database through Alyio MCP MSSQL. Configure the connection in Settings.</p></div></div>
+      <div class="codegraph-content">
+        <section class="codegraph-card">
+          <h3>Database access</h3>
+          <p>Enable read-only access for this workbench and new agent runs. Planner, Developer, Reviewer and Security can inspect schema, data, migration history and query plans.</p>
+          <label class="check-row"><input id="sqlserver-enabled" type="checkbox"> Enable SQL Server access</label>
+          <button id="sqlserver-connect" class="primary" type="button">Connect / test</button>
+          <p id="sqlserver-status" role="status" aria-live="polite">Connection not checked.</p>
+        </section>
+        <section class="codegraph-card">
+          <form id="sqlserver-form">
+            <label for="sqlserver-operation">Operation</label>
+            <select id="sqlserver-operation"><option value="schema">Browse schema</option><option value="object">Inspect object</option><option value="query">Read data (SELECT)</option><option value="migrations">Migration history</option><option value="analyze">Estimated query plan</option></select>
+            <div id="sqlserver-object-fields" hidden>
+              <label for="sqlserver-schema">Schema</label><input id="sqlserver-schema" placeholder="dbo (optional for browsing)">
+              <label for="sqlserver-name">Object / migration table</label><input id="sqlserver-name" placeholder="__EFMigrationsHistory for migration history">
+              <label for="sqlserver-kind">Object kind</label><select id="sqlserver-kind"><option value="Relation">Table or view</option><option value="Routine">Routine</option></select>
+            </div>
+            <div id="sqlserver-query-fields" hidden>
+              <label for="sqlserver-query">Read-only T-SQL SELECT</label><textarea id="sqlserver-query" rows="5" spellcheck="false">SELECT TOP (20) name, type_desc FROM sys.objects WHERE is_ms_shipped = 0 ORDER BY name</textarea>
+              <label for="sqlserver-parameters">Parameters (JSON object, names without @)</label><textarea id="sqlserver-parameters" rows="2" spellcheck="false">{}</textarea>
+            </div>
+            <p class="field-guide">Results use the row and timeout limits in Settings. Migration history defaults to dbo.__EFMigrationsHistory; discover other history tables in the schema. No migrations are applied.</p>
+            <button class="primary" type="submit">Run operation</button>
+          </form>
+          <pre id="sqlserver-result" class="codegraph-log" tabindex="0" aria-label="SQL Server results"></pre>
+        </section>
+      </div>
+    </section>
     <section id="jira-panel" class="jira-panel" aria-labelledby="jira-title" hidden>
       <div class="section-heading">
         <div>
@@ -759,6 +790,7 @@
     <form id="task-analysis-form">
       <section class="analysis-card analysis-task-card" aria-labelledby="analysis-source-title">
       <div class="analysis-section-heading"><span class="analysis-section-number">01</span><div><h3 id="analysis-source-title">Task &amp; codebase</h3><p>Read the task, its comments, and supported attachments.</p></div></div>
+      <label class="analysis-option"><input id="analysis-include-related-codebase" type="checkbox"><span><strong>Include Related Codebase</strong><small>Fetch configured GitLab repositories matching the task's xbank.* Jira components, using your saved PAT.</small></span></label>
       <div class="analysis-grid">
         <div><label for="analysis-issue">Jira issue key</label><input id="analysis-issue" placeholder="PROJECT-123" required pattern="[A-Za-z][A-Za-z0-9_]*-[0-9]+"></div>
         <div><label for="analysis-repository">Repository for codebase validation</label><select id="analysis-repository"><option value="">Task context only</option></select></div>
@@ -839,10 +871,37 @@
       </fieldset>
       </div>
       <fieldset class="settings-card settings-repos"><legend><span class="settings-section-icon" aria-hidden="true">↗</span> Repositories <span class="settings-section-tag">CODEBASES</span></legend>
-        <p class="settings-card-description">Local paths are used for codebase analysis. Workflows clone the remote repository. A repository token overrides the shared GitLab token.</p>
+        <p class="settings-card-description">Local paths are used for codebase analysis. Workflows clone the remote repository. Set each repository's SQL Server database for its agent runs; blank uses the shared default. Server and authentication come from the SQL Server section. A repository token overrides the shared GitLab token.</p>
         <div id="settings-repositories"></div>
         <p class="settings-empty">No repositories yet. Add a repository to connect your codebase.</p>
         <button id="settings-add-repository" type="button"><span aria-hidden="true">＋</span> Add repository</button>
+      </fieldset>
+      <fieldset class="settings-card settings-sqlserver"><legend>SQL Server <span class="settings-section-tag">ALYIO MCP</span></legend>
+        <p class="settings-card-description">Currently uses <a href="https://github.com/alyiox/mcp-mssql" target="_blank" rel="noopener noreferrer">Alyio MCP MSSQL (github.com/alyiox/mcp-mssql)</a> to connect to SQL Server.</p>
+        <p class="settings-card-description">Connection strings and passwords are encrypted. Use a database account restricted to reading the databases you want agents to inspect.</p>
+        <label class="settings-check"><input id="settings-sql-enabled" type="checkbox"> Enable SQL Server access for workbench and new runs</label>
+        <label class="settings-check"><input id="settings-sql-advanced" type="checkbox"> Use an advanced connection string</label>
+        <div id="settings-sql-simple-fields">
+          <label for="settings-sql-server">Server name</label><input id="settings-sql-server" placeholder="localhost, SERVER\INSTANCE, or sql.example.com,1433" autocomplete="off">
+          <label for="settings-sql-database">Default database name</label><input id="settings-sql-database" placeholder="MyDatabase" autocomplete="off">
+          <label class="settings-check"><input id="settings-sql-windows" type="checkbox" checked> Use Windows authentication</label>
+          <p class="settings-field-hint">Uses the Windows account running the API. Uncheck to use a SQL username and password.</p>
+          <label class="settings-check"><input id="settings-sql-trust-certificate" type="checkbox"> Trust server certificate</label>
+          <p class="settings-field-hint">Connections stay encrypted. For a known development server with a self-signed or untrusted certificate, enable this to skip certificate validation. Otherwise, install a trusted server certificate. Advanced mode uses the connection string's TrustServerCertificate option.</p>
+        </div>
+        <div id="settings-sql-advanced-fields" hidden>
+        <label for="settings-sql-connection">Connection string</label><input id="settings-sql-connection" type="password" autocomplete="new-password" placeholder="Server=localhost;Database=MyDatabase;Integrated Security=True;Encrypt=True;">
+        <label class="settings-check"><input id="settings-sql-connection-clear" type="checkbox"> Clear connection string (disable access first)</label>
+        </div>
+        <div id="settings-sql-credentials">
+        <label for="settings-sql-user">SQL username (optional)</label><input id="settings-sql-user" autocomplete="off">
+        <p class="settings-field-hint">Leave blank to use authentication in the connection string. A username overrides integrated authentication.</p>
+        <label for="settings-sql-password">SQL password (optional)</label><input id="settings-sql-password" type="password" autocomplete="new-password">
+        <label class="settings-check"><input id="settings-sql-password-clear" type="checkbox"> Clear separate password</label>
+        </div>
+        <label for="settings-sql-rows">Maximum result rows</label><input id="settings-sql-rows" type="number" min="1" max="1000" value="200" required>
+        <label for="settings-sql-timeout">Query timeout (seconds)</label><input id="settings-sql-timeout" type="number" min="1" max="300" value="30" required>
+        <p class="settings-field-hint">Save before connecting from the SQL Server section. Leave secret fields blank to keep saved values. Credentials embedded in a connection string are cleared by replacing or clearing that string.</p>
       </fieldset>
       <p class="settings-help">Leave token fields empty to keep saved credentials. Select “Clear” to remove them. Changes apply to new operations.</p>
       </div>
@@ -852,13 +911,14 @@
       </footer>
     </form>
   </dialog>
-  <script src="/developer-settings.js?v=20261107-1" defer></script>
+  <script src="/developer-settings.js?v=20261110-1" defer></script>
+  <script src="/sql-server.js?v=20261109-1" defer></script>
   <script src="/coding-rules.js?v=20261101-2" defer></script>
   <script src="/run-history.js?v=20261031-1" defer></script>
   <script src="/run-diagnostics.js?v=20261007-1" defer></script>
   <script src="/autonomy.js?v=20261016-1" defer></script>
-  <script src="/app.js?v=20261103-1" defer></script>
-  <script src="/task-analysis.js?v=20261107-1" defer></script>
+  <script src="/app.js?v=20261109-1" defer></script>
+  <script src="/task-analysis.js?v=20261109-1" defer></script>
   <script src="/run-settings.js?v=20261028-1" defer></script>
   <script src="/aifa-token-storage.js?v=20261109-1" defer></script>
 </body>

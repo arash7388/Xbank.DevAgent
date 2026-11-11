@@ -19,6 +19,25 @@ public sealed class ApiContractTests(ApiContractTests.ApiFactory factory) : ICla
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+    [Fact]
+    public async Task DisabledSqlServerReturnsOnlyPresenceFlagsAndBlocksExecution()
+    {
+        using HttpClient client = factory.CreateClient();
+        using var status = await client.GetAsync("/api/sql-server");
+        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+        Assert.True(status.Headers.CacheControl?.NoStore);
+        string body = await status.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(ApiFactory.Secret, body);
+        var settings = JsonSerializer.Deserialize<SqlServerSettings>(body, Json)!;
+        Assert.False(settings.Enabled);
+        Assert.True(settings.HasConnectionString);
+        Assert.True(settings.HasPassword);
+        Assert.Null(settings.ConnectionString);
+        Assert.Null(settings.Password);
+        using var execute = await client.PostAsJsonAsync("/api/sql-server/execute", new { operation = "query", sql = "SELECT 1" });
+        await AssertError(execute, HttpStatusCode.Conflict);
+    }
+
     [Theory]
     [InlineData("/api/health")]
     [InlineData("/api/agents/default-prompts")]
@@ -45,6 +64,7 @@ public sealed class ApiContractTests(ApiContractTests.ApiFactory factory) : ICla
     [InlineData("/")]
     [InlineData("/app.js")]
     [InlineData("/developer-settings.js")]
+    [InlineData("/sql-server.js")]
     [InlineData("/styles.css")]
     public async Task WorkbenchAssetsAreServedWithNoCache(string route)
     {
@@ -311,6 +331,9 @@ public sealed class ApiContractTests(ApiContractTests.ApiFactory factory) : ICla
                     ["GitLab:Token"] = Secret,
                     ["Jira:Token"] = Secret,
                     ["Jira:Password"] = Secret,
+                    ["SqlServer:Enabled"] = "false",
+                    ["SqlServer:ConnectionString"] = $"Server=test;Database=app;User ID=reader;Password={Secret};",
+                    ["SqlServer:Password"] = Secret,
                     ["Logging:LogLevel:Default"] = "Warning",
                 });
             });

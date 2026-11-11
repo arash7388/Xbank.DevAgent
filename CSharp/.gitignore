@@ -4,6 +4,7 @@
 **/TestResults/
 **/*.user
 artifacts/
+.tools/
 .artifacts/
 data/
 .env

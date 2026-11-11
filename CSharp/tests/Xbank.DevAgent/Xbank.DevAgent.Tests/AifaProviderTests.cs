@@ -9,6 +9,52 @@ namespace Xbank.DevAgent.Tests;
 public sealed class AifaProviderTests
 {
     [Fact]
+    public async Task LogsAifaCurlBeforeFailureWithCredentialsRedactedAndBodyPreserved()
+    {
+        List<string> logs = [];
+        const string body = "{\"model\":\"developer-model\",\"messages\":[{\"role\":\"user\",\"content\":\"what's $HOME?\"}]}";
+        using HttpClient client = new(new AifaRequestHandler(new("123", "workflow", "request-1"),
+            new CurlFailureHandler(body, logs), logs.Add));
+        using HttpRequestMessage request = new(HttpMethod.Post, AifaRequestContext.Endpoint + "/chat/completions")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Authorization = new("Bearer", "secret-token");
+        request.Headers.Add("Cookie", "secret-cookie");
+        request.Headers.Add("x-api-key", "secret-api-key");
+        using HttpResponseMessage response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        string log = Assert.Single(logs);
+        Assert.Contains("curl --request 'POST' --url '" + AifaRequestContext.Endpoint + "/chat/completions'", log);
+        Assert.Contains("Authorization: [REDACTED]", log);
+        Assert.Contains("Cookie: [REDACTED]", log);
+        Assert.Contains("x-api-key: [REDACTED]", log);
+        Assert.DoesNotContain("secret-", log);
+        Assert.Contains("x-request-id: request-1", log, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("x-session-id: workflow", log, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("x-user-id: 123", log, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Content-Type: application/json; charset=utf-8", log);
+        Assert.Contains("--data-raw '" + body.Replace("'", "'\"'\"'") + "'", log);
+
+        using HttpResponseMessage other = await client.GetAsync("https://example.com/v1");
+        Assert.Single(logs);
+    }
+
+    private sealed class CurlFailureHandler(string expectedBody, List<string> logs) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Content is not null)
+            {
+                Assert.Single(logs); // Diagnostic must exist before the provider returns an error.
+                Assert.Equal(expectedBody, await request.Content.ReadAsStringAsync(cancellationToken));
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
+    }
+
+    [Fact]
     public async Task SendsCurlCompatibleRequestAndReadsToolCallsAndUsage()
     {
         RecordingHandler server = new();
@@ -123,12 +169,23 @@ public sealed class AifaProviderTests
     }
 
     [Theory]
-    [InlineData("https://env.example/v1", "https://config.example/v1", "https://env.example/v1")]
-    [InlineData(" ", "https://config.example/v1", "https://config.example/v1")]
-    [InlineData(null, " https://config.example/v1 ", "https://config.example/v1")]
-    [InlineData(null, null, "https://aifa-chatbot.dev.dotin.ir")]
-    public void ResolvesEndpointWithEnvironmentPrecedence(string? environmentEndpoint, string? configuredEndpoint, string expected) =>
-        Assert.Equal(expected, AifaRequestContext.ResolveEndpoint(environmentEndpoint, configuredEndpoint));
+    [InlineData("https://shared.example/v1", "https://shared.example/v1")]
+    [InlineData(" https://shared.example/v1/chat/completions ", "https://shared.example/v1")]
+    [InlineData("", null)]
+    [InlineData("http://shared.example", null)]
+    public void ReadsAndValidatesSharedEndpointFromAppsettings(string endpoint, string? expected)
+    {
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, JsonSerializer.Serialize(new { Providers = new { AIFA = new { Endpoint = endpoint } } }));
+            if (expected is null)
+                Assert.Throws<ConfigurationException>(() => AifaRequestContext.ReadEndpoint(path));
+            else
+                Assert.Equal(expected, AifaRequestContext.ReadEndpoint(path));
+        }
+        finally { File.Delete(path); }
+    }
 
     private sealed class RetryHandler : HttpMessageHandler
     {

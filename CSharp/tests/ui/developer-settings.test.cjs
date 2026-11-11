@@ -38,10 +38,11 @@ let fail = false;
 const calls = [];
 const settings = { gitLabHost: 'gitlab.test', jiraBaseUrl: 'https://jira.test', jiraUser: '', jiraAuthMode: 'Bearer',
   hasGitLabToken: true, hasJiraToken: true,
-  repositories: [{ key: '<script>example</script>', repoPath: 'C:\\repo', gitLabProjectPath: 'https://gitlab.test/team/repo.git', hasToken: true }] };
+  repositories: [{ key: '<script>example</script>', repoPath: 'C:\\repo', gitLabProjectPath: 'https://gitlab.test/team/repo.git', hasToken: true, database: 'RepositoryDb', defaultBaseBranch: 'release/service' }] };
 const context = {
   document: { querySelector: get, createElement: node, createTextNode: text => ({ textContent: text }) },
-  window: { location: { reload() {} } },
+  Event: class { constructor(type) { this.type = type; } },
+  window: { location: { reload() {} }, dispatchEvent() {} },
   fetch: async (url, options) => {
     calls.push({ url, ...options });
     return { ok: !fail, status: options ? 204 : 200,
@@ -64,12 +65,62 @@ const payload = () => JSON.parse(calls[calls.length - 1].body);
   assert.equal(payload().gitLabToken, null);
   assert.equal(payload().jiraToken, null);
   assert.equal(payload().repositories[0].token, null);
+  assert.equal(payload().repositories[0].database, 'RepositoryDb');
+  assert.equal(row.children[6].children[0].value, 'release/service');
+  assert.equal(payload().repositories[0].defaultBaseBranch, 'release/service');
+  row.children[6].children[0].value = ' develop ';
+  row.children[5].children[0].value = ' ChangedDb ';
+  assert.equal(payload().sqlServer.connectionString, null);
+  assert.equal(payload().sqlServer.password, null);
+  assert.equal(payload().sqlServer.enabled, false);
+  assert.equal(payload().sqlServer.useConnectionString, false);
+  assert.equal(payload().sqlServer.useWindowsAuthentication, true);
+  assert.equal(payload().sqlServer.trustServerCertificate, false);
+  assert.equal(field('sql-credentials').hidden, true);
+
+  field('sql-advanced').checked = true;
+  await event('#settings-sql-advanced', 'change');
+  assert.equal(field('sql-simple-fields').hidden, true);
+  assert.equal(field('sql-credentials').hidden, false);
+  field('sql-connection').value = 'Server=test;Database=test;Integrated Security=True;';
+  field('sql-password').value = ' whitespace password ';
+  field('sql-enabled').checked = true;
+  await event('#developer-settings-form', 'submit');
+  assert.equal(payload().sqlServer.password, ' whitespace password ');
+  assert.equal(payload().sqlServer.enabled, true);
+  assert.equal(payload().repositories[0].database, 'ChangedDb');
+  assert.equal(payload().repositories[0].defaultBaseBranch, 'develop');
+  assert.equal(field('sql-password').value, '');
+  assert.equal(field('sql-connection').value, '');
+
+  field('sql-advanced').checked = false;
+  field('sql-server').value = 'SERVER\\INSTANCE';
+  field('sql-database').value = 'MyDatabase';
+  field('sql-trust-certificate').checked = true;
+  await event('#settings-sql-advanced', 'change');
+  assert.equal(field('sql-credentials').hidden, true);
+  assert.equal(field('sql-user').disabled, true);
+  await event('#developer-settings-form', 'submit');
+  assert.equal(payload().sqlServer.server, 'SERVER\\INSTANCE');
+  assert.equal(payload().sqlServer.database, 'MyDatabase');
+  assert.equal(payload().sqlServer.trustServerCertificate, true);
+  assert.equal(payload().sqlServer.useWindowsAuthentication, true);
+  assert.equal(payload().sqlServer.useConnectionString, false);
+  assert.equal(field('sql-user').disabled, true, 'Windows credentials remain disabled after save');
+  field('sql-windows').checked = false;
+  await event('#settings-sql-windows', 'change');
+  assert.equal(field('sql-credentials').hidden, false);
+  assert.equal(field('sql-user').required, true);
+  field('sql-user').value = 'reader';
+  await event('#developer-settings-form', 'submit');
+  assert.equal(payload().sqlServer.useWindowsAuthentication, false);
+  assert.equal(payload().sqlServer.username, 'reader');
 
   field('gitlab-clear').checked = true;
   await event('#settings-gitlab-clear', 'change');
   assert.equal(field('gitlab-token').disabled, true, 'Clearing a credential disables its input');
   field('jira-token').value = 'new-jira-token';
-  row.children[5].children[0].checked = true;
+  row.children[7].children[0].checked = true;
   await event('#developer-settings-form', 'submit');
   assert.equal(payload().gitLabToken, '');
   assert.equal(payload().jiraToken, 'new-jira-token');
@@ -96,7 +147,7 @@ const payload = () => JSON.parse(calls[calls.length - 1].body);
   assert.equal(get('#developer-settings-status').textContent, 'Save failed');
   assert.equal(get('#developer-settings-status').dataset.state, 'error');
   assert.equal(submit.disabled, false);
-  row.children[6].handlers.click();
+  row.children[8].handlers.click();
   assert.equal(field('repositories').children.length, 0);
   await event('#settings-add-repository');
   const addedRow = field('repositories').lastElementChild;

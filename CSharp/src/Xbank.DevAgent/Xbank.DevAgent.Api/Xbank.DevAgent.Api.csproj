@@ -7,6 +7,8 @@
     <PackageReference Include="DocumentFormat.OpenXml" />
     <PackageReference Include="PdfPig" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
 
   <PropertyGroup>

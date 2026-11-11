@@ -14,7 +14,7 @@ function get(id) {
   });
   return nodes.get(id);
 }
-for (const field of ['analyse', 'summarize', 'sample']) get(`analysis-${field}`).type = 'checkbox';
+for (const field of ['analyse', 'summarize', 'sample', 'include-related-codebase']) get(`analysis-${field}`).type = 'checkbox';
 get('analysis-analyse').checked = true;
 get('analysis-language').value = 'Persian';
 get('analysis-issue').value = 'TASK-1';
@@ -69,13 +69,14 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgen
   assert.equal(payload.model.apiKey, 'private-key');
   assert.equal(payload.model.prompt, 'Keep my existing guidance');
   assert.equal(payload.projectKey, 'sample-repo');
+  assert.equal(payload.includeRelatedCodebase, false);
   assert.equal(payload.model.provider.maxInputTokens, 1000000);
   assert.equal(payload.model.provider.maxOutputTokens, 285000);
-  get('analysis-input-limit').value = 5000000;
-  get('analysis-output-limit').value = 3000000;
+  get('analysis-input-limit').value = 500000;
+  get('analysis-output-limit').value = 250000;
   await get('task-analysis-form').handlers.submit({ preventDefault() {} });
-  assert.equal(payload.model.provider.maxInputTokens, 5000000);
-  assert.equal(payload.model.provider.maxOutputTokens, 3000000);
+  assert.equal(payload.model.provider.maxInputTokens, 500000);
+  assert.equal(payload.model.provider.maxOutputTokens, 250000);
   assert.equal(payload.model.provider.reasoningEffort, 'medium');
   assert.equal(payload.outputLanguage, 'Persian');
   assert.equal(get('analysis-result').dir, 'rtl');
@@ -83,6 +84,18 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/Xbank.DevAgen
   assert.equal(get('analysis-notices').children[0].textContent, 'Unreadable screenshot');
   assert([...saved.values()].every(value => !value.includes('private-key')));
   assert.equal(JSON.stringify(catalog), original);
+  get('analysis-include-related-codebase').checked = true;
+  get('analysis-include-related-codebase').handlers.change();
+  assert.equal(get('analysis-repository').disabled, true);
+  assert.match(get('analysis-repository-status').textContent, /xbank\.\* components/);
+  await get('task-analysis-form').handlers.submit({ preventDefault() {} });
+  assert.equal(payload.includeRelatedCodebase, true);
+  assert.equal(payload.projectKey, null);
+  assert.equal(JSON.parse(saved.get('maf-task-analysis-settings-v2'))['include-related-codebase'], true);
+  get('analysis-include-related-codebase').checked = false;
+  get('analysis-include-related-codebase').handlers.change();
+  assert.equal(get('analysis-repository').disabled, false);
+  assert.equal(get('analysis-repository').value, 'sample-repo');
   failure = true;
   await get('task-analysis-form').handlers.submit({ preventDefault() {} });
   assert.equal(get('analysis-error').textContent, 'Jira unavailable');
