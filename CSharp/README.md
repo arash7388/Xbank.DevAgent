@@ -656,10 +656,10 @@ your organization's endpoint. Set `AIFA_ENDPOINT` to its HTTPS base URL (includi
 starting either the API or CLI, or save it once for the API with user secrets:
 
 ```powershell
-dotnet user-secrets set "Providers:AIFA:Endpoint" "https://aifa-chatbot.dev.dotin.ir" --project CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api
+dotnet user-secrets set "Providers:AIFA:Endpoint" "https://aifa-chatbot.dev.x.ir" --project CSharp/src/Xbank.DevAgent/Xbank.DevAgent.Api
 ```
 
-`AIFA_ENDPOINT` takes precedence when both are set. The bundled `https://aifa-chatbot.dev.dotin.ir` is a placeholder.
+`AIFA_ENDPOINT` takes precedence when both are set. The bundled `https://aifa-chatbot.dev.x.ir` is a placeholder.
 Enter the bearer token in **AIFA API key**
 without the `Bearer` prefix, or save it on the server:
 
